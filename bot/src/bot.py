@@ -12,7 +12,7 @@ log_file = datetime.now().strftime("DRL_PPO_Bot_%Y-%m-%d.log")
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
@@ -33,13 +33,13 @@ def main():
     last_bar_index = current_bar.index[-1]
 
     while True:
-        current_bar = data_fetcher.fetch_current_bar()      
+        current_bar = data_fetcher.fetch_current_bar()
         data = data_fetcher.fetch_data()
 
-        trade_action, sl, tp = model.predict(data)
+        trade_action, sl, tp = model.predict(data.iloc[-1])
         trade_executor.execute_trade(trade_action, sl, tp)
 
-        while last_bar_index == current_bar.index[-1]:            
+        while last_bar_index == current_bar.index[-1]:
             time.sleep(1)
             current_bar = data_fetcher.fetch_current_bar()
 

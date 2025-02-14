@@ -19,8 +19,8 @@ class TradeExecutor:
         
         price = ask if order_type == 'buy' else bid
 
-        sl_price = price - sl if order_type == 'buy' else price + sl
-        tp_price = price + tp if order_type == 'buy' else price - tp
+        sl_price = price - sl - spread if order_type == 'buy' else price + sl + spread
+        tp_price = price + tp + spread if order_type == 'buy' else price - tp - spread
 
         lot = self.get_lot_size(price, sl_price, account_balance)
 

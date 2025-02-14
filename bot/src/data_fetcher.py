@@ -76,4 +76,4 @@ class DataFetcher:
         df.drop(columns=['spread'], inplace = True)
         df.dropna(inplace=True)
 
-        return df.tail(BARS_TO_FETCH)
+        return df
