@@ -67,12 +67,12 @@ class BitcoinTradingEnv(gym.Env):
         self.current_step = 0
         self.initial_balance = initial_balance
         self.balance = initial_balance
-        self.position = 0
         self.lot_percentage = lot_percentage
         self.trades = []
+        self.open_positions = []  # Allows multiple concurrently open positions
 
         # Define discrete price differences for SL/TP
-        self.sl_tp_levels = np.array([100, 200, 300, 400,500,600,700,800,900,1000])
+        self.sl_tp_levels = np.array([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000])
 
         # Action space: (trade action, stop-loss index, take-profit index)
         self.action_space = spaces.MultiDiscrete([
@@ -87,116 +87,98 @@ class BitcoinTradingEnv(gym.Env):
 
     def step(self, action):
         trade_action, sl_index, tp_index = action
-
         current_price = self.data.iloc[self.current_step]["unscaled_close"]
-        
+
+        # Increment step and check if episode is done
         self.current_step += 1
-        sl_value = self.sl_tp_levels[sl_index]
-        tp_value = self.sl_tp_levels[tp_index]
-        reward = 0
         done = self.current_step >= len(self.data) - 1
 
-        # Determine base reward using percentage return relative to entry price
-        if self.position == 1:
-            base_reward = (current_price - self.entry_price) / self.entry_price * 100
-        elif self.position == -1:
-            base_reward = (self.entry_price - current_price) / self.entry_price * 100
-        else:
-            base_reward = 0
+        # Initialize reward for this step
+        reward = 0
 
-        # Initialize reward with the base percentage return
-        reward = base_reward
+        # Loop through open positions and calculate base reward
+        for pos in self.open_positions:
+            reward += calculate_balance_change(pos["lot_size"], pos["entry_price"], current_price, pos["position"])
 
-        # Simulate trade execution
-        if trade_action == 1 and self.position == 0:  # Buy
-            self.position = 1
+        # New trade execution based on action
+        sl_value = self.sl_tp_levels[sl_index]
+        tp_value = self.sl_tp_levels[tp_index]
+
+        if trade_action == 1:  # Buy
+            new_position = {
+                "position": 1,
+                "entry_price": current_price,
+                "sl_price": current_price - sl_value,
+                "tp_price": current_price + tp_value,
+                "lot_size": calculate_lot_size(self.balance, self.lot_percentage, current_price, current_price - sl_value)
+            }
+            self.open_positions.append(new_position)
             reward += 2
-            self.entry_price = current_price
-            self.sl_price = self.entry_price - sl_value
-            self.tp_price = self.entry_price + tp_value
-            # Calculate lot size based on risk percentage and distance to SL
-            self.lot_size = calculate_lot_size(self.balance, self.lot_percentage, self.entry_price, self.sl_price)
-            # print(f"BUY | self.lot_size: {self.lot_size}")
-        elif trade_action == 2 and self.position == 0:  # Sell
-            self.position = -1
+
+        elif trade_action == 2:  # Sell
+            new_position = {
+                "position": -1,
+                "entry_price": current_price,
+                "sl_price": current_price + sl_value,
+                "tp_price": current_price - tp_value,
+                "lot_size": calculate_lot_size(self.balance, self.lot_percentage, current_price, current_price + sl_value)
+            }
+            self.open_positions.append(new_position)
             reward += 2
-            self.entry_price = current_price
-            self.sl_price = self.entry_price + sl_value
-            self.tp_price = self.entry_price - tp_value
-            self.lot_size = calculate_lot_size(self.balance, self.lot_percentage, self.entry_price, self.sl_price)
-            # print(f"SELL | self.lot_size: {self.lot_size}")
-        elif trade_action == 0 and self.position == 0:
-            reward -= 5.0  # Penalty for inaction
 
-        # Reward based on hitting SL/TP
-        if self.position == 1:
-            if current_price >= self.tp_price:
-                profit = calculate_balance_change(self.lot_size, self.entry_price, self.tp_price, self.position)
-                reward = (profit / self.balance) * 100
-                # print(f"TP hit | profit: {profit} | balance: {self.balance} | reward {reward}")
-                self.balance += profit
-                # print(f"new balance: {self.balance}")
-                trade = {
-                    "entry": self.entry_price,
-                    "exit": current_price,
-                    "position": self.position,
-                    "reward": reward,
-                    "pnl": profit
-                }
-                self.trades.append(trade)
-                self.position = 0
-            elif current_price <= self.sl_price:
-                loss = -calculate_balance_change(self.lot_size, self.entry_price, self.sl_price, self.position)
-                reward = -(loss / self.balance) * 100
-                # print(f"SL hit | loss: {loss} | old balance: {self.balance} | reward {reward}")
-                self.balance -= loss
-                # print(f"new balance: {self.balance}")
-                trade = {
-                    "entry": self.entry_price,
-                    "exit": current_price,
-                    "position": self.position,
-                    "reward": reward,
-                    "pnl": -loss
-                }
-                self.trades.append(trade)
-                self.position = 0
-        elif self.position == -1:
-            if current_price <= self.tp_price:
-                profit = calculate_balance_change(self.lot_size, self.entry_price, self.tp_price, self.position)
-                reward = (profit / self.balance) * 100
-                # print(f"TP hit | profit: {profit} | balance: {self.balance} | reward {reward}")
-                self.balance += profit
-                #print(f"new balance: {self.balance}")
-                trade = {
-                    "entry": self.entry_price,
-                    "exit": current_price,
-                    "position": self.position,
-                    "reward": reward,
-                    "pnl": profit
-                }
-                self.trades.append(trade)
-                self.position = 0
-            elif current_price >= self.sl_price:
-                loss = -calculate_balance_change(self.lot_size, self.entry_price, self.sl_price, self.position)
-                reward = -(loss / self.balance) * 100
-                # print(f"SL hit | loss: {loss} | old balance: {self.balance} | reward {reward}")
-                self.balance -= loss
-                # print(f"new balance: {self.balance}")
-                trade = {
-                    "entry": self.entry_price,
-                    "exit": current_price,
-                    "position": self.position,
-                    "reward": reward,
-                    "pnl": -loss
-                }
-                self.trades.append(trade)
-                self.position = 0
+        elif trade_action == 0:  # Inaction
+            reward -= 5.0
 
-        # Optional extra bonus if consecutive wins
+        # Check all open positions for SL or TP triggers
+        closed_positions = []
+        for pos in self.open_positions:
+            if pos["position"] == 1:
+                # For long trades: TP if price has risen; SL if dropped
+                if current_price >= pos["tp_price"]:
+                    profit = calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["tp_price"], pos["position"])
+                    reward += (profit / self.balance) * 100
+                    self.balance += profit
+                    pos["exit"] = current_price
+                    pos["reward"] = (profit / self.balance) * 100
+                    pos["pnl"] = profit
+                    closed_positions.append(pos)
+                elif current_price <= pos["sl_price"]:
+                    loss = -calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["sl_price"], pos["position"])
+                    reward += -(loss / self.balance) * 100
+                    self.balance -= loss
+                    pos["exit"] = current_price
+                    pos["reward"] = -(loss / self.balance) * 100
+                    pos["pnl"] = -loss
+                    closed_positions.append(pos)
+            elif pos["position"] == -1:
+                # For short trades: TP if price has fallen; SL if risen
+                if current_price <= pos["tp_price"]:
+                    profit = calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["tp_price"], pos["position"])
+                    reward += (profit / self.balance) * 100
+                    self.balance += profit
+                    pos["exit"] = current_price
+                    pos["reward"] = (profit / self.balance) * 100
+                    pos["pnl"] = profit
+                    closed_positions.append(pos)
+                elif current_price >= pos["sl_price"]:
+                    loss = -calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["sl_price"], pos["position"])
+                    reward += -(loss / self.balance) * 100
+                    self.balance -= loss
+                    pos["exit"] = current_price
+                    pos["reward"] = -(loss / self.balance) * 100
+                    pos["pnl"] = -loss
+                    closed_positions.append(pos)
+
+        # Remove closed positions from open_positions and record them
+        for pos in closed_positions:
+            self.trades.append(pos)
+            self.open_positions.remove(pos)
+
+        # Optional bonus for consecutive winning trades
         if len(self.trades) > 1 and self.trades[-1]["pnl"] > 0 and self.trades[-2]["pnl"] > 0:
             reward += 1
 
-        # Check for bankruptcy and apply end-of-episode adjustments
+        # Bankruptcy and end-of-episode adjustments
         if self.balance <= 0:
             self.balance = 0
             done = True
@@ -207,17 +189,19 @@ class BitcoinTradingEnv(gym.Env):
         if done and len(self.trades) == 0:
             reward -= 5
 
-        # print(f"Balance: {self.balance} | Reward: {reward}")
-
         obs = self.data.iloc[self.current_step].values
-        return obs, reward, done, {}, {}
+        # Gymnasium expects (obs, reward, terminated, truncated, info)
+        terminated = done
+        truncated = False
+        info = {}
+        return obs, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         if seed is not None:
             np.random.seed(seed)
         self.current_step = 0
         self.balance = self.initial_balance
-        self.open_position = None
+        self.open_positions = []
         self.trades = []
         return self.data.iloc[self.current_step].values, {}
 
@@ -227,17 +211,21 @@ class BitcoinTradingEnv(gym.Env):
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 
+#seed_value = np.random.randint(0, 100000)
+seed_value = 52131
+print(f"Using seed: {seed_value}")
+
 env = BitcoinTradingEnv(df_scaled)
-vec_env = make_vec_env(lambda: env, n_envs=1)
+vec_env = make_vec_env(lambda: env, n_envs=1, seed=seed_value)
 
-model = PPO("MlpPolicy", vec_env, verbose=0, n_epochs=10, learning_rate=0.001, ent_coef=0.01, gamma=0.95)
+model = PPO("MlpPolicy", vec_env, verbose=0, n_epochs=10, learning_rate=0.001, ent_coef=0.01, gamma=0.95, clip_range=0.2)
 model.learn(total_timesteps=100000, progress_bar=True)
-model.save(MODEL_PATH)
+model.save(f"./../results/{seed_value}")
 
-# Test
+# Instantiate a test environment using test_data
 test_env = BitcoinTradingEnv(test_data, initial_balance=10000.0)
-test_env = env
 
+# Reset the test environment and get initial observation
 obs, info = test_env.reset()
 
 balance_over_time = []
@@ -247,19 +235,19 @@ done = False
 while not done:
     action, _ = model.predict(obs)
     actions_log.append(action)
-    obs, reward, done, _, _ = test_env.step(action)
+    obs, reward, done, truncated, info = test_env.step(action)
     balance_over_time.append(test_env.balance)
 
-# Create a DataFrame of completed trades
+# Convert the list of completed trades to a DataFrame
 trades_df = pd.DataFrame(test_env.trades)
 
 def classify_trade(row):
     # For a long trade (position == 1): TP when exit > entry, SL otherwise.
     # For a short trade (position == -1): TP when exit < entry, SL otherwise.
     if row["position"] == 1:
-        return "TP" if row["exit"] > row["entry"] else "SL"
+        return "TP" if row["exit"] > row["entry_price"] else "SL"
     elif row["position"] == -1:
-        return "TP" if row["exit"] < row["entry"] else "SL"
+        return "TP" if row["exit"] < row["entry_price"] else "SL"
     else:
         return "Unknown"
 
@@ -286,7 +274,7 @@ total_return = ((test_env.balance - test_env.initial_balance) / test_env.initial
 expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
 
 # Compute mean win and mean loss using absolute difference between exit and entry prices and trade_type
-trades_df["abs_diff"] = abs(trades_df["exit"] - trades_df["entry"])
+trades_df["abs_diff"] = abs(trades_df["exit"] - trades_df["entry_price"])
 mean_win = trades_df[trades_df["trade_type"] == "TP"]["abs_diff"].mean() if not trades_df[trades_df["trade_type"] == "TP"].empty else 0.0
 mean_loss = trades_df[trades_df["trade_type"] == "SL"]["abs_diff"].mean() if not trades_df[trades_df["trade_type"] == "SL"].empty else 0.0
 
@@ -311,6 +299,7 @@ ax.ticklabel_format(style='plain', axis='y')
 
 # Build multiline string for performance metrics
 metrics_text = (
+    f"Training Seed: {seed_value}\n"
     f"Starting Balance: {test_env.initial_balance}\n"
     f"Current Balance: {test_env.balance}\n"
     f"Total Return: {total_return:.2f}%\n"
@@ -334,4 +323,5 @@ ax.text(0.02, 0.98, metrics_text, transform=ax.transAxes,
         fontsize=10, verticalalignment='top',
         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
+plt.savefig(f"./../results/{seed_value}.png")
 plt.show()
