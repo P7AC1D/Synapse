@@ -26,7 +26,7 @@ def main():
     mt5.connect()
 
     data_fetcher = DataFetcher(mt5, MT5_SYMBOL, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH)
-    model = PPOModel(MODEL_PATH)
+    model = PPOModel(MODEL_PATH, SCALER_PATH)
     trade_executor = TradeExecutor(mt5)
 
     current_bar = data_fetcher.fetch_current_bar()
@@ -36,7 +36,8 @@ def main():
         current_bar = data_fetcher.fetch_current_bar()
         data = data_fetcher.fetch_data()
 
-        trade_action, sl, tp = model.predict(data.iloc[-1])
+        scaled_data = model.scale_data(data)
+        trade_action, sl, tp = model.predict(scaled_data.iloc[-1])
         trade_executor.execute_trade(trade_action, sl, tp)
 
         while last_bar_index == current_bar.index[-1]:

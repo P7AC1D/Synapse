@@ -1,17 +1,33 @@
 import logging
+import pandas as pd
+import joblib
+from sklearn.preprocessing import MinMaxScaler
 from stable_baselines3 import PPO
+from stable_baselines3.common.utils import get_schedule_fn
 from config import *
 import os
 
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
+# Custom functions to replace clip_range and lr_schedule
+def get_custom_clip_range():
+    return 0.2  # Set your desired clipping value here
+
+def get_custom_lr_schedule():
+    return get_schedule_fn(0.001)  # Use your desired learning rate
+
 class PPOModel:
-    def __init__(self, model_path):
+    def __init__(self, model_path, scaler_path):
         self.model = self.load_model(model_path)
-        
+        self.scaler = self.load_scaler(scaler_path)
+
     def load_model(self, model_path):
-        try:
-            model = PPO.load(model_path)
+        try:            
+            # Load the model with custom objects
+            model = PPO.load(model_path, custom_objects={
+                "clip_range": get_custom_clip_range,
+                "lr_schedule": get_custom_lr_schedule
+            })
             logging.info(f"Model loaded successfully from: {model_path}")
 
             # Correct logging to handle the action space
@@ -22,6 +38,15 @@ class PPOModel:
         except Exception as e:
             logging.critical(f"Error loading model: {e}")
             return None
+        
+    def load_scaler(self, scaler_path):
+        try:
+            import joblib
+            scaler = joblib.load(scaler_path)
+            return scaler
+        except Exception as e:
+            logging.critical(f"Error loading scaler: {e}")
+            raise
 
     def predict(self, df):
         # Check if df is a single observation or a batch
@@ -42,3 +67,11 @@ class PPOModel:
         logging.debug(f"Action: {trade_action_string} | SL: {sl} | TP: {tp}")
         
         return trade_action, sl, tp
+    
+    def scale_data(self, df):
+        df_scaled = df.copy()
+
+        df_scaled = pd.DataFrame(self.scaler.fit_transform(df_scaled), columns=df_scaled.columns, index=df_scaled.index)
+        df_scaled["unscaled_close"] = df["close"]
+
+        return df_scaled
