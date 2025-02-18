@@ -54,7 +54,7 @@ class PPOModel:
             logging.debug(f"Received a batch of {df.shape[0]} observations. Expecting a single observation.")
             df = df.iloc[0]  # Use only the first observation from the batch, using iloc for DataFrame indexing
 
-        action, _ = self.model.predict(df)        
+        action, _ = self.model.predict(df, deterministic=True)      
         if len(action) != 3:
             logging.critical(f"Unexpected action length: {len(action)}. Expected 3.")
             raise ValueError(f"Unexpected action length: {len(action)}")

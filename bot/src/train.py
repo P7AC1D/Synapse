@@ -1,13 +1,13 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
 import gymnasium as gym
 import joblib
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
-from gymnasium import spaces
+from stable_baselines3.common.env_util import make_vec_env
 from sklearn.preprocessing import MinMaxScaler
+from trade_environment import BitcoinTradingEnv
+from config import RISK_PERCENTAGE
 
 RATES_CSV_PATH = "../data/rates.csv"
 SCALER_PATH = "../model/scaler.pkl"
@@ -29,201 +29,27 @@ scaler = MinMaxScaler()
 df_scaled = pd.DataFrame(scaler.fit_transform(df_scaled), columns=df_scaled.columns, index=df_scaled.index)
 df_scaled['unscaled_close'] = df['close']
 
-joblib.dump(scaler, SCALER_PATH)
-
-print(df_scaled.shape)
 print(df_scaled.tail())
 
 # Split train/test (80/20)
-split_idx = int(len(df) * 0.8)
+split_idx = int(len(df_scaled) * 0.8)
 train_data = df_scaled.iloc[:split_idx]
 test_data = df_scaled.iloc[split_idx:]
 
-def calculate_lot_size(balance, risk, entry_price, stop_loss, contract_size=1.0):
-    """
-    Calculate lot size as a function of a fixed percentage of balance (risk)
-    """
-    return min(max(round((balance * risk) / (abs(entry_price - stop_loss) * contract_size), 2), 0.01), 100.0)
-
-def calculate_balance_change(lot_size, entry_price, exit_price, position, contract_size=1.0):
-    """
-    Calculate the profit or loss based on trade parameters.
-    
-    For a long trade (position == 1), profit = (exit_price - entry_price) * lot_size * contract_size.
-    For a short trade (position == -1), profit = (entry_price - exit_price) * lot_size * contract_size.
-    """
-    if position == 1:
-        return (exit_price - entry_price) * lot_size * contract_size
-    elif position == -1:
-        return (entry_price - exit_price) * lot_size * contract_size
-    else:
-        return 0.0
-
-
-class BitcoinTradingEnv(gym.Env):
-    def __init__(self, data, initial_balance=10000, lot_percentage=0.01):
-        super(BitcoinTradingEnv, self).__init__()
-        self.data = data
-        self.current_step = 0
-        self.initial_balance = initial_balance
-        self.balance = initial_balance
-        self.lot_percentage = lot_percentage
-        self.trades = []
-        self.open_positions = []  # Allows multiple concurrently open positions
-
-        # Define discrete price differences for SL/TP
-        self.sl_tp_levels = np.array([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000])
-
-        # Action space: (trade action, stop-loss index, take-profit index)
-        self.action_space = spaces.MultiDiscrete([
-            3,  # 0: Hold, 1: Buy, 2: Sell
-            len(self.sl_tp_levels),  # Stop-Loss selection
-            len(self.sl_tp_levels)   # Take-Profit selection
-        ])
-
-        # Observation space (OHLCV + indicators)
-        obs_dim = data.shape[1]
-        self.observation_space = spaces.Box(low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32)
-
-    def step(self, action):
-        trade_action, sl_index, tp_index = action
-        current_price = self.data.iloc[self.current_step]["unscaled_close"]
-
-        # Increment step and check if episode is done
-        self.current_step += 1
-        done = self.current_step >= len(self.data) - 1
-
-        # Initialize reward for this step
-        reward = 0
-
-        # Loop through open positions and calculate base reward
-        for pos in self.open_positions:
-            reward += calculate_balance_change(pos["lot_size"], pos["entry_price"], current_price, pos["position"])
-
-        # New trade execution based on action
-        sl_value = self.sl_tp_levels[sl_index]
-        tp_value = self.sl_tp_levels[tp_index]
-
-        if trade_action == 1:  # Buy
-            new_position = {
-                "position": 1,
-                "entry_price": current_price,
-                "sl_price": current_price - sl_value,
-                "tp_price": current_price + tp_value,
-                "lot_size": calculate_lot_size(self.balance, self.lot_percentage, current_price, current_price - sl_value)
-            }
-            self.open_positions.append(new_position)
-            reward += 2
-
-        elif trade_action == 2:  # Sell
-            new_position = {
-                "position": -1,
-                "entry_price": current_price,
-                "sl_price": current_price + sl_value,
-                "tp_price": current_price - tp_value,
-                "lot_size": calculate_lot_size(self.balance, self.lot_percentage, current_price, current_price + sl_value)
-            }
-            self.open_positions.append(new_position)
-            reward += 2
-
-        elif trade_action == 0:  # Inaction
-            reward -= 5.0
-
-        # Check all open positions for SL or TP triggers
-        closed_positions = []
-        for pos in self.open_positions:
-            if pos["position"] == 1:
-                # For long trades: TP if price has risen; SL if dropped
-                if current_price >= pos["tp_price"]:
-                    profit = calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["tp_price"], pos["position"])
-                    reward += (profit / self.balance) * 100
-                    self.balance += profit
-                    pos["exit"] = current_price
-                    pos["reward"] = (profit / self.balance) * 100
-                    pos["pnl"] = profit
-                    closed_positions.append(pos)
-                elif current_price <= pos["sl_price"]:
-                    loss = -calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["sl_price"], pos["position"])
-                    reward += -(loss / self.balance) * 100
-                    self.balance -= loss
-                    pos["exit"] = current_price
-                    pos["reward"] = -(loss / self.balance) * 100
-                    pos["pnl"] = -loss
-                    closed_positions.append(pos)
-            elif pos["position"] == -1:
-                # For short trades: TP if price has fallen; SL if risen
-                if current_price <= pos["tp_price"]:
-                    profit = calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["tp_price"], pos["position"])
-                    reward += (profit / self.balance) * 100
-                    self.balance += profit
-                    pos["exit"] = current_price
-                    pos["reward"] = (profit / self.balance) * 100
-                    pos["pnl"] = profit
-                    closed_positions.append(pos)
-                elif current_price >= pos["sl_price"]:
-                    loss = -calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["sl_price"], pos["position"])
-                    reward += -(loss / self.balance) * 100
-                    self.balance -= loss
-                    pos["exit"] = current_price
-                    pos["reward"] = -(loss / self.balance) * 100
-                    pos["pnl"] = -loss
-                    closed_positions.append(pos)
-
-        # Remove closed positions from open_positions and record them
-        for pos in closed_positions:
-            self.trades.append(pos)
-            self.open_positions.remove(pos)
-
-        # Optional bonus for consecutive winning trades
-        if len(self.trades) > 1 and self.trades[-1]["pnl"] > 0 and self.trades[-2]["pnl"] > 0:
-            reward += 1
-
-        # Bankruptcy and end-of-episode adjustments
-        if self.balance <= 0:
-            self.balance = 0
-            done = True
-
-        if done and (self.balance > self.initial_balance):
-            reward += (self.balance - self.initial_balance) * 0.1
-
-        if done and len(self.trades) == 0:
-            reward -= 5
-
-        obs = self.data.iloc[self.current_step].values
-        # Gymnasium expects (obs, reward, terminated, truncated, info)
-        terminated = done
-        truncated = False
-        info = {}
-        return obs, reward, terminated, truncated, info
-
-    def reset(self, seed=None, options=None):
-        if seed is not None:
-            np.random.seed(seed)
-        self.current_step = 0
-        self.balance = self.initial_balance
-        self.open_positions = []
-        self.trades = []
-        return self.data.iloc[self.current_step].values, {}
-
-    def _get_obs(self):
-        return self.data.iloc[self.current_step].values
-
-from stable_baselines3 import PPO
-from stable_baselines3.common.env_util import make_vec_env
-
-#seed_value = np.random.randint(0, 100000)
-seed_value = 52131
+seed_value = np.random.randint(0, 100000)
+seed_value = 20760
 print(f"Using seed: {seed_value}")
 
-env = BitcoinTradingEnv(df_scaled)
+env = BitcoinTradingEnv(train_data)
 vec_env = make_vec_env(lambda: env, n_envs=1, seed=seed_value)
 
-model = PPO("MlpPolicy", vec_env, verbose=0, n_epochs=10, learning_rate=0.001, ent_coef=0.01, gamma=0.95, clip_range=0.2)
+model = PPO("MlpPolicy", vec_env, verbose=0, n_epochs=10, learning_rate=0.00001, ent_coef=0.01, gamma=0.95, clip_range=0.2, batch_size=512, n_steps=4096)
 model.learn(total_timesteps=100000, progress_bar=True)
 model.save(f"./../results/{seed_value}")
+joblib.dump(scaler, f"./../results/{seed_value}")
 
 # Instantiate a test environment using test_data
-test_env = BitcoinTradingEnv(test_data, initial_balance=10000.0)
+test_env = BitcoinTradingEnv(test_data, initial_balance=10000.0, lot_percentage=0.01)
 
 # Reset the test environment and get initial observation
 obs, info = test_env.reset()
@@ -233,7 +59,7 @@ actions_log = []
 done = False
 
 while not done:
-    action, _ = model.predict(obs)
+    action, _ = model.predict(obs, deterministic=True)
     actions_log.append(action)
     obs, reward, done, truncated, info = test_env.step(action)
     balance_over_time.append(test_env.balance)
