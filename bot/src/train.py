@@ -41,15 +41,17 @@ seed_value = 20760
 print(f"Using seed: {seed_value}")
 
 env = BitcoinTradingEnv(train_data)
+env.action_space.seed(seed_value)
 vec_env = make_vec_env(lambda: env, n_envs=1, seed=seed_value)
 
-model = PPO("MlpPolicy", vec_env, verbose=0, n_epochs=10, learning_rate=0.00001, ent_coef=0.01, gamma=0.95, clip_range=0.2, batch_size=512, n_steps=4096)
+model = PPO("MlpPolicy", vec_env, verbose=0, n_epochs=10, learning_rate=0.01, ent_coef=0.01, gamma=0.95, clip_range=0.2, batch_size=512, n_steps=4096)
 model.learn(total_timesteps=100000, progress_bar=True)
 model.save(f"./../results/{seed_value}")
 joblib.dump(scaler, f"./../results/{seed_value}")
 
 # Instantiate a test environment using test_data
 test_env = BitcoinTradingEnv(test_data, initial_balance=10000.0, lot_percentage=0.01)
+test_env.action_space.seed(seed_value)
 
 # Reset the test environment and get initial observation
 obs, info = test_env.reset()
