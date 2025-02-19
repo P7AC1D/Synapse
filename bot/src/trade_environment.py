@@ -47,10 +47,13 @@ class BitcoinTradingEnv(gym.Env):
         # Observation space (OHLCV + indicators)
         obs_dim = data.shape[1]
         self.observation_space = spaces.Box(low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32)
-
+        
     def step(self, action):
         trade_action, sl_index, tp_index = action
         current_price = self.data.iloc[self.current_step]["unscaled_close"]
+        
+        # Store balance before updating
+        previous_balance = self.balance
 
         # Increment step and check if episode is done
         self.current_step += 1
@@ -76,7 +79,7 @@ class BitcoinTradingEnv(gym.Env):
                 "lot_size": calculate_lot_size(self.balance, self.lot_percentage, current_price, current_price - sl_value)
             }
             self.open_positions.append(new_position)
-            reward += 2
+            reward += 2  # Bonus for opening trade
 
         elif trade_action == 2:  # Sell
             new_position = {
@@ -87,77 +90,55 @@ class BitcoinTradingEnv(gym.Env):
                 "lot_size": calculate_lot_size(self.balance, self.lot_percentage, current_price, current_price + sl_value)
             }
             self.open_positions.append(new_position)
-            reward += 2
+            reward += 2  # Bonus for opening trade
 
         elif trade_action == 0:  # Inaction
             reward -= 5.0
 
-        # Check all open positions for SL or TP triggers
+        # Track closed positions
         closed_positions = []
-        for pos in self.open_positions:
-            if pos["position"] == 1:
-                # For long trades: TP if price has risen; SL if dropped
-                if current_price >= pos["tp_price"]:
-                    profit = calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["tp_price"], pos["position"])
-                    reward += (profit / self.balance) * 100
-                    self.balance += profit
-                    pos["exit"] = current_price
-                    pos["reward"] = (profit / self.balance) * 100
-                    pos["pnl"] = profit
-                    closed_positions.append(pos)
-                elif current_price <= pos["sl_price"]:
-                    loss = -calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["sl_price"], pos["position"])
-                    reward += -(loss / self.balance) * 100
-                    self.balance -= loss
-                    pos["exit"] = current_price
-                    pos["reward"] = -(loss / self.balance) * 100
-                    pos["pnl"] = -loss
-                    closed_positions.append(pos)
-            elif pos["position"] == -1:
-                # For short trades: TP if price has fallen; SL if risen
-                if current_price <= pos["tp_price"]:
-                    profit = calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["tp_price"], pos["position"])
-                    reward += (profit / self.balance) * 100
-                    self.balance += profit
-                    pos["exit"] = current_price
-                    pos["reward"] = (profit / self.balance) * 100
-                    pos["pnl"] = profit
-                    closed_positions.append(pos)
-                elif current_price >= pos["sl_price"]:
-                    loss = -calculate_balance_change(pos["lot_size"], pos["entry_price"], pos["sl_price"], pos["position"])
-                    reward += -(loss / self.balance) * 100
-                    self.balance -= loss
-                    pos["exit"] = current_price
-                    pos["reward"] = -(loss / self.balance) * 100
-                    pos["pnl"] = -loss
-                    closed_positions.append(pos)
 
-        # Remove closed positions from open_positions and record them
-        for pos in closed_positions:
-            self.trades.append(pos)
-            self.open_positions.remove(pos)
+        for pos in self.open_positions:
+            hit_tp = current_price >= pos["tp_price"] if pos["position"] == 1 else current_price <= pos["tp_price"]
+            hit_sl = current_price <= pos["sl_price"] if pos["position"] == 1 else current_price >= pos["sl_price"]
+
+            if hit_tp or hit_sl:
+                exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
+                pnl = calculate_balance_change(pos["lot_size"], pos["entry_price"], exit_price, pos["position"])
+                reward += (pnl / previous_balance) * 100
+                self.balance += pnl
+
+                pos.update({"exit": current_price, "reward": (pnl / previous_balance) * 100, "pnl": pnl})
+                closed_positions.append(pos)
+
+        # Remove closed positions
+        self.open_positions = [pos for pos in self.open_positions if pos not in closed_positions]
+        self.trades.extend(closed_positions)
 
         # Optional bonus for consecutive winning trades
         if len(self.trades) > 1 and self.trades[-1]["pnl"] > 0 and self.trades[-2]["pnl"] > 0:
             reward += 1
 
-        # Bankruptcy and end-of-episode adjustments
+        # Bankruptcy check
         if self.balance <= 0:
             self.balance = 0
+            self.open_positions.clear()
             done = True
 
+        # End-of-episode adjustments
         if done and (self.balance > self.initial_balance):
             reward += (self.balance - self.initial_balance) * 0.1
-
-        if done and len(self.trades) == 0:
+        elif done and len(self.trades) == 0:
             reward -= 5
 
+        # Observation space
         obs = self.data.iloc[self.current_step].values
-        # Gymnasium expects (obs, reward, terminated, truncated, info)
         terminated = done
         truncated = False
         info = {}
+
         return obs, reward, terminated, truncated, info
+
 
     def reset(self, seed=None, options=None):
         if seed is not None:

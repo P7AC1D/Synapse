@@ -1,7 +1,7 @@
 import logging
 import pandas as pd
 import joblib
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import RobustScaler
 from stable_baselines3 import PPO
 from stable_baselines3.common.utils import get_schedule_fn
 from config import *
