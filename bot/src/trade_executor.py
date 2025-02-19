@@ -48,7 +48,7 @@ class TradeExecutor:
         # Cap the lot size to the min and max values
         lot = round(max(min_lot, min(lot, max_lot)), 2)
 
-        logging.debug(f"Lot size calculation: Contract: {contract_size} | USDZAR: {usd_zar_bid} | Risk: R{risk_amount} | Risk: ${risk_in_usd} | SL: {stop_loss_distance}")
+        logging.debug(f"Lot size calculation: Contract: {contract_size} | USDZAR: {usd_zar_bid:.2f} | Risk: R{risk_amount:.2f} | Risk: ${risk_in_usd:.2f} | SL: {stop_loss_distance:.2f}")
         return lot
 
     def execute_trade(self, trade_action, sl, tp):
