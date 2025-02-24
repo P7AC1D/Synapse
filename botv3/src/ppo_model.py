@@ -78,25 +78,22 @@ class PPOModel:
         open_positions = []
         for pos in positions:
             open_positions.append({
-                "trade_id": pos.ticket,
                 "position": 1 if pos.type == mt5.ORDER_TYPE_BUY else -1,
                 "entry_price": pos.price_open,
                 "sl_price": pos.sl,
                 "tp_price": pos.tp,
-                "lot_size": pos.volume,
-                "entry_step": 0  # Needs to be adjusted based on history
+                "lot_size": pos.volume
             })
 
         for i, pos in enumerate(open_positions[:env.max_positions]):
             position_obs[i] = [
-                pos["trade_id"],
                 pos["position"],
                 pos["entry_price"],
                 pos["sl_price"],
                 pos["tp_price"],
-                pos["lot_size"],
-                pos["entry_step"]
+                pos["lot_size"]
             ]
 
         observation = np.concatenate([history_obs, position_obs.flatten()])
+        assert observation.shape == env.observation_space.shape, f"Observation shape mismatch: {observation.shape} != {env.observation_space.shape}"
         return observation

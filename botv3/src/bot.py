@@ -8,7 +8,7 @@ from config import *
 from datetime import datetime
 
 # Generate log file name based on the current date
-log_file = datetime.now().strftime("DRL_PPO_Bot_%Y-%m-%d.log")
+log_file = datetime.now().strftime("DRL_PPO_BotV3_%Y-%m-%d.log")
 
 # Configure logging
 logging.basicConfig(

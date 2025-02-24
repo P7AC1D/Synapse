@@ -19,7 +19,8 @@ class BitcoinTradingEnv(gym.Env):
     def __init__(self, data, initial_balance=10000, lot_percentage=0.01, bar_count=50):
         super(BitcoinTradingEnv, self).__init__()
         self.max_positions = 5
-        self.position_features = 7  # Includes trade entry step
+        self.position_features = 5
+        self.steps_since_trade = 0
         self.data = data
         self.current_step = 0
         self.initial_balance = initial_balance
@@ -27,7 +28,7 @@ class BitcoinTradingEnv(gym.Env):
         self.lot_percentage = lot_percentage
         self.bar_count = bar_count
         self.trades = []
-        self.open_positions = {}
+        self.open_positions = []
         self.max_balance = initial_balance  # Track highest balance for drawdown calc
 
         # SL/TP Levels
@@ -45,9 +46,6 @@ class BitcoinTradingEnv(gym.Env):
         obs_dim = (bar_count * data.shape[1]) + (self.max_positions * self.position_features)
         self.observation_space = spaces.Box(low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32)
 
-    def generate_trade_id(self):
-        return random.randint(100000, 999999)
-    
     def get_history(self):
         """Returns last 'bar_count' bars."""
         start = max(0, self.current_step - self.bar_count + 1)
@@ -60,17 +58,13 @@ class BitcoinTradingEnv(gym.Env):
     def get_open_positions(self):
         """Returns active positions in a fixed-size array."""
         positions_array = np.zeros((self.max_positions, self.position_features), dtype=np.float32)
-        open_keys = list(self.open_positions.keys())
-        for i, key in enumerate(open_keys[:self.max_positions]):
-            pos = self.open_positions[key]
+        for i, pos in enumerate(self.open_positions[:self.max_positions]):
             positions_array[i] = [
-                pos["trade_id"],
                 pos["position"],
                 pos["entry_price"],
                 pos["sl_price"],
                 pos["tp_price"],
-                pos["lot_size"],
-                pos["entry_step"]  # Track duration
+                pos["lot_size"]
             ]
         return positions_array.flatten()
         
@@ -87,9 +81,12 @@ class BitcoinTradingEnv(gym.Env):
         reward = 0
 
         # Evaluate existing positions
-        for pos in self.open_positions.values():
+        for pos in self.open_positions:
             unrealized_pnl = calculate_balance_change(pos["lot_size"], pos["entry_price"], current_price, pos["position"])
-            reward += (unrealized_pnl / previous_balance) * 10  # Reduced factor to avoid overshadowing
+            # Smaller focus on unrealized PnL
+            reward += (unrealized_pnl / previous_balance) * 2  
+            # Trade holding cost
+            reward -= 0.1  
 
         # Execute new trade
         sl_value = self.sl_tp_levels[sl_index]
@@ -99,7 +96,6 @@ class BitcoinTradingEnv(gym.Env):
             if len(self.open_positions) >= self.max_positions:
                 reward -= 5  # Penalize invalid trade attempt
             else:
-                trade_id = self.generate_trade_id()
                 position = 1 if trade_action == 1 else -1
                 sl_value = self.sl_tp_levels[sl_index]
                 tp_value = self.sl_tp_levels[tp_index]
@@ -108,50 +104,55 @@ class BitcoinTradingEnv(gym.Env):
                 tp_price = entry_price + tp_value if position == 1 else entry_price - tp_value
                 lot_size = calculate_lot_size(self.balance, self.lot_percentage, entry_price, sl_price)
 
-                self.open_positions[trade_id] = {
-                    "trade_id": trade_id,
+                self.open_positions.append({
                     "position": position,
                     "entry_price": entry_price,
                     "sl_price": sl_price,
                     "tp_price": tp_price,
                     "lot_size": lot_size,
                     "entry_step": self.current_step
-                }
+                })
 
-                reward += 2
+                reward += 1
+                self.steps_since_trade = 0
 
         elif trade_action == 3 and self.open_positions:  # Close position
             close_index = action[3]
-            open_keys = list(self.open_positions.keys())
-            if close_index < len(open_keys):
-                trade_key = open_keys[close_index]
-                trade_to_close = self.open_positions.pop(trade_key)
+            if close_index < len(self.open_positions):
+                trade_to_close = self.open_positions.pop(close_index)
                 exit_price = current_price
                 pnl = calculate_balance_change(trade_to_close["lot_size"], trade_to_close["entry_price"], exit_price, trade_to_close["position"])
-                reward += (pnl / previous_balance) * 50
+                reward += (pnl / previous_balance) * 40
                 self.balance += pnl
                 trade_to_close["pnl"] = pnl
                 trade_to_close["exit_price"] = exit_price
                 self.trades.append(trade_to_close)
+            else:
+                # Penalize incorrect index
+                reward -= 5
+        else:
+            # Penalize inactivity
+            self.steps_since_trade += 1
+            reward -= 0.1 * self.steps_since_trade
 
         # Handle stop-loss/take-profit exits
         closed_positions = []
-        for key, pos in list(self.open_positions.items()):
+        for i, pos in enumerate(self.open_positions):
             hit_tp = current_price >= pos["tp_price"] if pos["position"] == 1 else current_price <= pos["tp_price"]
             hit_sl = current_price <= pos["sl_price"] if pos["position"] == 1 else current_price >= pos["sl_price"]
 
             if hit_tp or hit_sl:
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
                 pnl = calculate_balance_change(pos["lot_size"], pos["entry_price"], exit_price, pos["position"])
-                reward += (pnl / previous_balance) * 50
+                reward += (pnl / previous_balance) * 80
                 self.balance += pnl
-                closed_positions.append(key)
+                closed_positions.append(i)
                 pos["pnl"] = pnl
                 pos["exit_price"] = exit_price
                 self.trades.append(pos)
 
-        for key in closed_positions:
-            self.open_positions.pop(key, None)
+        for i in sorted(closed_positions, reverse=True):
+            self.open_positions.pop(i)
 
         # Apply drawdown penalty
         self.max_balance = max(self.max_balance, self.balance)
@@ -186,6 +187,6 @@ class BitcoinTradingEnv(gym.Env):
             print(f"Balance: {self.balance:.2f}")
             print(f"Max Balance: {self.max_balance:.2f}")
             print(f"Open Positions: {len(self.open_positions)}")
-            for trade_id, pos in self.open_positions.items():
-                print(f"  Trade ID: {trade_id} - Position: {pos['position']} Entry: {pos['entry_price']:.2f} SL: {pos['sl_price']:.2f}, TP: {pos['tp_price']:.2f}")
+            for pos in self.open_positions:
+                print(f"  Position: {pos['position']} Entry: {pos['entry_price']:.2f} SL: {pos['sl_price']:.2f}, TP: {pos['tp_price']:.2f}")
             print(f"Total Trades: {len(self.trades)}\n")

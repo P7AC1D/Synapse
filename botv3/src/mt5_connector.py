@@ -175,6 +175,30 @@ class MT5Connector:
         filtered_positions = [pos for pos in positions if pos.comment == comment]
         return filtered_positions
     
+    def close_position(self, ticket):
+        if not self.connected:
+            self.connect()
+
+        position_to_close = mt5.positions_get(ticket=ticket)
+        if not position_to_close:
+            logging.warning(f"Position {ticket} not found.")
+            return
+
+        request = {
+            "action": mt5.TRADE_ACTION_CLOSE_BY,
+            "position": ticket,
+            "symbol": MT5_SYMBOL,
+            "volume": position_to_close.volume,
+            "magic": 0,
+            "comment": MT5_COMMENT
+        }
+
+        result = mt5.order_send(request)
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            logging.warning(f"Failed to close position {position_to_close.ticket}, error: {result.comment}")
+        else:
+            logging.info(f"Closed position {position_to_close.ticket} for {MT5_SYMBOL}.")
+    
     def close_open_positions(self, symbol, comment):
         if not self.connected:
             self.connect()
