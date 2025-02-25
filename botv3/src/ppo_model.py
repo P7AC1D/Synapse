@@ -21,7 +21,7 @@ def get_custom_lr_schedule():
 class PPOModel:
     def __init__(self, model_path, scaler_path):
         self.model = self.load_model(model_path)
-        self.scaler = self.load_scaler(scaler_path)
+        #self.scaler = self.load_scaler(scaler_path)
 
     def load_model(self, model_path):
         try:            

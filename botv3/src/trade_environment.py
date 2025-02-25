@@ -70,7 +70,7 @@ class BitcoinTradingEnv(gym.Env):
         
     def step(self, action):
         trade_action, sl_index, tp_index = action[:3]
-        current_price = self.data.iloc[self.current_step]["unscaled_close"]
+        current_price = self.data.iloc[self.current_step]["close"]
 
         # Track balance before update
         previous_balance = self.balance
@@ -84,9 +84,7 @@ class BitcoinTradingEnv(gym.Env):
         for pos in self.open_positions:
             unrealized_pnl = calculate_balance_change(pos["lot_size"], pos["entry_price"], current_price, pos["position"])
             # Smaller focus on unrealized PnL
-            reward += (unrealized_pnl / previous_balance) * 2  
-            # Trade holding cost
-            reward -= 0.1  
+            reward += (unrealized_pnl / previous_balance)
 
         # Execute new trade
         sl_value = self.sl_tp_levels[sl_index]
@@ -122,7 +120,7 @@ class BitcoinTradingEnv(gym.Env):
                 trade_to_close = self.open_positions.pop(close_index)
                 exit_price = current_price
                 pnl = calculate_balance_change(trade_to_close["lot_size"], trade_to_close["entry_price"], exit_price, trade_to_close["position"])
-                reward += (pnl / previous_balance) * 40
+                reward += (pnl / previous_balance)
                 self.balance += pnl
                 trade_to_close["pnl"] = pnl
                 trade_to_close["exit_price"] = exit_price
@@ -133,7 +131,7 @@ class BitcoinTradingEnv(gym.Env):
         else:
             # Penalize inactivity
             self.steps_since_trade += 1
-            reward -= 0.1 * self.steps_since_trade
+            reward -= self.steps_since_trade
 
         # Handle stop-loss/take-profit exits
         closed_positions = []
@@ -144,7 +142,7 @@ class BitcoinTradingEnv(gym.Env):
             if hit_tp or hit_sl:
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
                 pnl = calculate_balance_change(pos["lot_size"], pos["entry_price"], exit_price, pos["position"])
-                reward += (pnl / previous_balance) * 80
+                reward += (pnl / previous_balance) * 2
                 self.balance += pnl
                 closed_positions.append(i)
                 pos["pnl"] = pnl
@@ -154,16 +152,11 @@ class BitcoinTradingEnv(gym.Env):
         for i in sorted(closed_positions, reverse=True):
             self.open_positions.pop(i)
 
-        # Apply drawdown penalty
-        self.max_balance = max(self.max_balance, self.balance)
-        drawdown = (self.max_balance - self.balance) / self.max_balance
-        reward -= drawdown * 10
-
         # Encourage higher R:R
         for trade in self.trades:
             risk = abs(trade["entry_price"] - trade["sl_price"])
             rr_ratio = abs(trade["exit_price"] - trade["entry_price"]) / risk
-            reward += 5 if rr_ratio >= 2 else -2
+            reward += 5 if rr_ratio >= 1 else -2
 
         # Build observation
         obs = np.concatenate([self.get_history(), self.get_open_positions()])

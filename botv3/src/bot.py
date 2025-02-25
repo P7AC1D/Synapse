@@ -37,8 +37,8 @@ def main():
         data = data_fetcher.fetch_data()
 
         open_positions = mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
-        scaled_data = model.scale_data(data)
-        observation = model.get_observation(scaled_data, open_positions)
+        # scaled_data = model.scale_data(data)
+        observation = model.get_observation(data, open_positions)
  
         trade_action, sl, tp, close_trade_id = model.predict(observation)
         trade_executor.execute_trade(trade_action, sl, tp, close_trade_id)
