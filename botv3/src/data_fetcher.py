@@ -76,4 +76,8 @@ class DataFetcher:
         df.drop(columns=['spread'], inplace = True)
         df.dropna(inplace=True)
 
+        start_datetime = df.index[0]
+        end_datetime = df.index[-1]
+        logging.debug(f"Data collected from {start_datetime} to {end_datetime}")
+
         return df.tail(self.num_bars)

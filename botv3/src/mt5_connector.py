@@ -173,6 +173,7 @@ class MT5Connector:
             return []
 
         filtered_positions = [pos for pos in positions if pos.comment == comment]
+        logging.debug(f"Fetched {len(filtered_positions)} open positions for {symbol}.")
         return filtered_positions
     
     def close_position(self, ticket):
