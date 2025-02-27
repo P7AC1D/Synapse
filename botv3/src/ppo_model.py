@@ -72,6 +72,7 @@ class PPOModel:
     
     def get_observation(self, rates, positions):
         env = BitcoinTradingEnv(rates)
+        env.reset()
         history_obs = env.get_history()
         position_obs = np.zeros((env.max_positions, env.position_features), dtype=np.float32)
 

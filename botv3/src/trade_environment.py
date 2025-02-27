@@ -84,7 +84,7 @@ class BitcoinTradingEnv(gym.Env):
         for pos in self.open_positions:
             unrealized_pnl = calculate_balance_change(pos["lot_size"], pos["entry_price"], current_price, pos["position"])
             # Smaller focus on unrealized PnL
-            reward += (unrealized_pnl / previous_balance)
+            reward += (unrealized_pnl / previous_balance) * 0.1
 
         # Execute new trade
         sl_value = self.sl_tp_levels[sl_index]
@@ -111,7 +111,7 @@ class BitcoinTradingEnv(gym.Env):
                     "entry_step": self.current_step
                 })
 
-                reward += 1
+                reward += 2
                 self.steps_since_trade = 0
 
         elif trade_action == 3 and self.open_positions:  # Close position
@@ -120,18 +120,18 @@ class BitcoinTradingEnv(gym.Env):
                 trade_to_close = self.open_positions.pop(close_index)
                 exit_price = current_price
                 pnl = calculate_balance_change(trade_to_close["lot_size"], trade_to_close["entry_price"], exit_price, trade_to_close["position"])
-                reward += (pnl / previous_balance)
+                reward += (pnl / previous_balance) * 2
                 self.balance += pnl
                 trade_to_close["pnl"] = pnl
                 trade_to_close["exit_price"] = exit_price
                 self.trades.append(trade_to_close)
             else:
                 # Penalize incorrect index
-                reward -= 5
+                reward -= 1
         else:
             # Penalize inactivity
             self.steps_since_trade += 1
-            reward -= self.steps_since_trade
+            reward -= self.steps_since_trade * 0.1
 
         # Handle stop-loss/take-profit exits
         closed_positions = []
@@ -152,11 +152,21 @@ class BitcoinTradingEnv(gym.Env):
         for i in sorted(closed_positions, reverse=True):
             self.open_positions.pop(i)
 
-        # Encourage higher R:R
-        for trade in self.trades:
-            risk = abs(trade["entry_price"] - trade["sl_price"])
-            rr_ratio = abs(trade["exit_price"] - trade["entry_price"]) / risk
-            reward += 5 if rr_ratio >= 1 else -2
+        # Additional rewards and penalties
+        balance_change = self.balance - previous_balance
+        if balance_change > 0:
+            reward += balance_change * 0.01  # Reward for increasing balance
+        else:
+            reward += balance_change * 0.01  # Penalize for decreasing balance
+
+        if self.balance < self.initial_balance * 0.8:
+            reward -= 5  # Penalize for significant drawdown
+
+        if len(self.open_positions) > 1:
+            long_positions = sum(1 for pos in self.open_positions if pos["position"] == 1)
+            short_positions = sum(1 for pos in self.open_positions if pos["position"] == -1)
+            if long_positions > 0 and short_positions > 0:
+                reward += 1  # Reward for diversification
 
         # Build observation
         obs = np.concatenate([self.get_history(), self.get_open_positions()])
@@ -183,3 +193,6 @@ class BitcoinTradingEnv(gym.Env):
             for pos in self.open_positions:
                 print(f"  Position: {pos['position']} Entry: {pos['entry_price']:.2f} SL: {pos['sl_price']:.2f}, TP: {pos['tp_price']:.2f}")
             print(f"Total Trades: {len(self.trades)}\n")
+
+    def seed(self, seed=None):
+        np.random.seed(seed)

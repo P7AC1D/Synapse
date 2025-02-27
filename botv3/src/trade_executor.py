@@ -55,7 +55,6 @@ class TradeExecutor:
 
         if position_to_close_index < len(open_positions):
             position_to_close = open_positions[position_to_close_index]
-            pnl = self.calculate_balance_change(position_to_close)
             self.mt5_connector.close_position(position_to_close.ticket)
         else:
             logging.warning(f"Invalid position index: {position_to_close_index}")
