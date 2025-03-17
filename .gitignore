@@ -124,9 +124,4 @@ cython_debug/
 train/src/creds.py
 bot/src/creds.py
 train/data/rates.csv
-bot/results/65782.pkl
-bot/results/65782.png
-bot/results/65782.zip
-bot/results/75443.pkl
-bot/results/75443.png
-bot/results/75443.zip
+botv3/results/*

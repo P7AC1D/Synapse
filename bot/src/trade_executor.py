@@ -5,7 +5,24 @@ class TradeExecutor:
     def __init__(self, mt5_connector):
         self.mt5_connector = mt5_connector
 
-    def open_trade(self, order_type, sl, tp):
+    def apply_trailing_stops(self, trailing_points):
+        positions = self.mt5_connector.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
+
+        if positions is None or len(positions) == 0:
+            return
+
+        for pos in positions:
+            if pos.type == 0:  # Buy position
+                new_sl = pos.price_current - trailing_points
+                if new_sl > pos.sl and new_sl >= pos.price_open:
+                    self.mt5_connector.modify_stop_loss(pos.ticket, new_sl, pos.tp)
+
+            elif pos.type == 1:  # Sell position
+                new_sl = pos.price_current + trailing_points
+                if new_sl < pos.sl and new_sl <= pos.price_open:
+                    self.mt5_connector.modify_stop_loss(pos.ticket, new_sl, pos.tp)
+
+    def open_trade(self, order_type, rrr, atr):
         account_balance = self.mt5_connector.get_account_balance()
         filling_type = self.mt5_connector.check_filling_type(order_type)
 
@@ -19,8 +36,8 @@ class TradeExecutor:
         
         price = ask if order_type == 'buy' else bid
 
-        sl_price = price - sl - spread if order_type == 'buy' else price + sl + spread
-        tp_price = price + tp + spread if order_type == 'buy' else price - tp - spread
+        sl_price = price - atr - spread if order_type == 'buy' else price + atr + spread
+        tp_price = price + (rrr * atr) + spread if order_type == 'buy' else price - (rrr * atr) - spread
 
         lot = self.get_lot_size(price, sl_price, account_balance)
 
@@ -28,6 +45,19 @@ class TradeExecutor:
             logging.info(f"Trade executed successfully. Balance: {account_balance} | Order: {order_type} | Lot: {lot} | Price: {price} | SL: {round(sl_price, 3)} | TP: {round(tp_price, 3)}")
             return True
         return False
+    
+    def close_position(self, position_to_close_index):
+        open_positions = self.mt5_connector.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
+        if open_positions is None or len(open_positions) == 0:
+            return
+        
+        logging.debug(f"Open positions: {len(open_positions)} | Position to close: {position_to_close_index}")
+
+        if position_to_close_index < len(open_positions):
+            position_to_close = open_positions[position_to_close_index]
+            self.mt5_connector.close_position(position_to_close.ticket)
+        else:
+            logging.warning(f"Invalid position index: {position_to_close_index}")
 
     def get_lot_size(self, entry_price, stop_loss_price, account_balance):        
         contract_size, min_lot, max_lot = self.mt5_connector.get_symbol_info(MT5_SYMBOL)
@@ -48,11 +78,15 @@ class TradeExecutor:
         # Cap the lot size to the min and max values
         lot = round(max(min_lot, min(lot, max_lot)), 2)
 
-        logging.debug(f"Lot size calculation: Contract: {contract_size} | USDZAR: {usd_zar_bid} | Risk: R{risk_amount} | Risk: ${risk_in_usd} | SL: {stop_loss_distance}")
+        logging.debug(f"Lot size calculation: Contract: {contract_size} | USDZAR: {usd_zar_bid:.2f} | Risk: R{risk_amount:.2f} | Risk: ${risk_in_usd:.2f} | SL: {stop_loss_distance:.2f}")
         return lot
 
-    def execute_trade(self, trade_action, sl, tp):
-        if trade_action == 1:
-            self.open_trade('buy', sl, tp)
-        elif trade_action == 2:
-            self.open_trade('sell', sl, tp)
+    def execute_trade(self, prediction):
+        trade_action = prediction['action_type']
+        risk_reward_ratio = prediction['risk_reward_ratio']
+        atr = prediction['atr']
+
+        if trade_action == 'BUY':
+            self.open_trade('buy', risk_reward_ratio, atr)
+        elif trade_action == 'SELL':
+            self.open_trade('sell', risk_reward_ratio, atr)
