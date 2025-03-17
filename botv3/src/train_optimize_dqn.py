@@ -167,6 +167,9 @@ class DQNTrainer:
         """Initialize the DQN trainer with data and configuration."""
         self.train_data = train_data
         self.test_data = test_data
+        # Create a full dataset by concatenating train and test
+        self.full_data = pd.concat([train_data, test_data])
+        
         self.config = config or {
             'base_dir': './../',
             'seed': 42,
@@ -195,23 +198,30 @@ class DQNTrainer:
             json.dump(self.log_data, f, indent=4)
             
     def create_environments(self, env_params=None):
-        """Create training and testing environments."""
+        """Create training and full-data environments."""
         default_params = {
             'initial_balance': self.config['initial_balance'],
             'bar_count': 50,
             'normalization_window': 100,
-            'random_start': True
+            'random_start': True  # Use random start for training
         }
         
+        # Non-random start for evaluation
+        eval_params = {**default_params, 'random_start': False}
+        
         # Merge default with provided params
-        params = {**default_params, **(env_params or {})}
+        train_params = {**default_params, **(env_params or {})}
+        eval_params = {**eval_params, **(env_params or {})}
         
         # Create environments
-        train_env = Monitor(TradingEnv(self.train_data, **params))
-        test_env = Monitor(TradingEnv(self.test_data, **params))
-        test_env.action_space.seed(self.seed)
+        train_env = Monitor(TradingEnv(self.train_data, **train_params))
+        full_env = Monitor(TradingEnv(self.full_data, **eval_params))
         
-        return train_env, test_env
+        # Set seeds
+        train_env.action_space.seed(self.seed)
+        full_env.action_space.seed(self.seed)
+        
+        return train_env, full_env
         
     def create_model(self, train_env, params=None):
         """Create a DQN model with given parameters."""
@@ -243,31 +253,25 @@ class DQNTrainer:
         )
         return model
         
-    def create_callbacks(self, test_env, include_render=False):
-        """Create training callbacks with balance-based evaluation."""
-        # Callback that stops training if no improvement in balance
-        stop_training_callback = StopTrainingOnNoModelImprovement(
-            max_no_improvement_evals=10, 
-            min_evals=5, 
+    def create_callbacks(self, full_env, include_render=False):
+        """Create training callbacks with evaluation on full dataset."""
+        # Full data evaluation callback
+        full_eval_callback = BalanceEvalCallback(
+            full_env,
+            best_model_save_path=os.path.join(self.results_dir, "best_model"),
+            log_path=os.path.join(self.results_dir, "eval"),
+            eval_freq=50000,
+            deterministic=True,
+            n_eval_episodes=5,
             verbose=1
         )
         
-        # Balance-based evaluation callback
-        balance_eval_callback = BalanceEvalCallback(
-            test_env,
-            best_model_save_path=self.results_dir,
-            log_path=self.results_dir,
-            eval_freq=50000,
-            deterministic=True,
-            n_eval_episodes=5,  # Number of episodes to evaluate
-        )
-        
-        callbacks = [balance_eval_callback]
+        callbacks = [full_eval_callback]
         
         # Add rendering callback if requested
         if include_render:
             render_freq = 100000  # Display metrics every 100k steps
-            render_callback = CustomRenderCallback(test_env, eval_freq=render_freq)
+            render_callback = CustomRenderCallback(full_env, eval_freq=render_freq)
             callbacks.append(render_callback)
         
         return callbacks
@@ -295,19 +299,19 @@ class DQNTrainer:
             }
             
             # Create environments and model
-            train_env, test_env = self.create_environments(env_params)
+            train_env, full_env = self.create_environments(env_params)
             model = self.create_model(train_env, model_params)
-            callbacks = self.create_callbacks(test_env)
+            callbacks = self.create_callbacks(full_env, include_render=True)
             
             # Train with limited timesteps for hyperparameter search
             try:
                 model.learn(total_timesteps=100000, callback=callbacks)
                 
-                # Evaluate model and get final balance
-                final_balance = self.evaluate_model_balance(model, test_env, n_episodes=5)
+                # Evaluate model on FULL dataset for optimization
+                final_balance = self.evaluate_model_balance(model, full_env, n_episodes=5)
                 
                 # Print progress for visibility
-                print(f"Trial {trial.number} completed with final balance: {final_balance:.2f}")
+                print(f"Trial {trial.number} completed with full dataset balance: {final_balance:.2f}")
                 
                 # Log the trial results
                 self.log_data.append({
@@ -328,7 +332,7 @@ class DQNTrainer:
         study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
         
         print("Broad search best parameters:", study.best_params)
-        print("Best mean reward:", study.best_value)
+        print("Best mean balance:", study.best_value)
         
         # Save study
         joblib.dump(study, f"{self.results_dir}/broad_study.pkl")
@@ -437,9 +441,9 @@ class DQNTrainer:
         }
         
         # Create environments and model
-        train_env, test_env = self.create_environments(env_params)
+        train_env, test_env, full_env = self.create_environments(env_params)
         model = self.create_model(train_env, model_params)
-        callbacks = self.create_callbacks(test_env, include_render=True)  # Enable rendering
+        callbacks = self.create_callbacks(test_env, full_env, include_render=True)  # Enable rendering
         
         # Train with longer timesteps
         model.learn(total_timesteps=timesteps, callback=callbacks, progress_bar=True)
@@ -453,6 +457,13 @@ class DQNTrainer:
         with open(f"{self.results_dir}/best_params.json", 'w') as f:
             json.dump({**env_params, **model_params}, f, indent=4)
             
+        # Evaluate on both test and full datasets
+        print("\nEvaluating model on test data:")
+        self.evaluate_model(model, test_env)
+        
+        print("\nEvaluating model on full dataset:")
+        self.evaluate_model(model, full_env)
+        
         return model, final_model_path
         
     def evaluate_model(self, model, test_env):
@@ -590,14 +601,20 @@ class DQNTrainer:
         # Step 3: Final training
         model, model_path = self.final_training(best_params, timesteps=final_timesteps)
         
-        # Step 4: Evaluate final model
-        _, test_env = self.create_environments(env_params={
-            'bar_count': best_params['bar_count'],
-            'normalization_window': best_params['normalization_window'],
+        # Step 4: Evaluate on both test data and full data
+        env_params = {
+            'bar_count': 50,
+            'normalization_window': 100,
             'initial_balance': self.config['initial_balance'],
             'random_start': False  # Don't use random start for evaluation
-        })
+        }
+        _, test_env, full_env = self.create_environments(env_params=env_params)
+        
+        print("\nFinal evaluation on test data:")
         self.evaluate_model(model, test_env)
+        
+        print("\nFinal evaluation on full dataset:")
+        self.evaluate_model(model, full_env)
         
         return model, model_path
 

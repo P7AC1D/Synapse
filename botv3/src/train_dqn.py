@@ -144,17 +144,18 @@ class BalanceEvalCallback(BaseCallback):
         return mean_balance, std_balance, mean_reward
 
 class DQNTrainer:
-    def __init__(self, train_data, test_data, config=None):
-        """Initialize the DQN trainer with data and configuration."""
+    def __init__(self, train_data, full_data, config=None):
+        """Initialize the DQN trainer with training data and full dataset."""
         self.train_data = train_data
-        self.test_data = test_data
+        self.full_data = full_data
+        
         self.config = config or {
             'base_dir': './../',
             'seed': 42,
             'initial_balance': 10000.0,
             'device': 'cuda',
-            'eval_freq': 50000,  # Add this parameter
-            'render_freq': 100000  # Add this parameter
+            'eval_freq': 50000,
+            'render_freq': 100000
         }
         self.seed = self.config['seed']
         self.results_dir = f"{self.config['base_dir']}results/{self.seed}"
@@ -178,21 +179,30 @@ class DQNTrainer:
             json.dump(self.log_data, f, indent=4)
             
     def create_environments(self, env_params):
-        """Create training and testing environments."""
-        default_params = {
+        """Create training and full dataset environments."""
+        # Training environment with random start
+        train_params = {
             'initial_balance': self.config['initial_balance'],
-            'random_start': True
+            'random_start': True,
+            **env_params
         }
         
-        # Merge default with provided params
-        params = {**default_params, **env_params}
+        # Full environment for evaluation (no random start)
+        full_params = {
+            'initial_balance': self.config['initial_balance'],
+            'random_start': False,  # Always start from beginning for evaluation
+            **env_params
+        }
         
         # Create environments
-        train_env = Monitor(TradingEnv(self.train_data, **params))
-        test_env = Monitor(TradingEnv(self.test_data, **params))
-        test_env.action_space.seed(self.seed)
+        train_env = Monitor(TradingEnv(self.train_data, **train_params))
+        full_env = Monitor(TradingEnv(self.full_data, **full_params))
         
-        return train_env, test_env
+        # Set seeds
+        train_env.action_space.seed(self.seed)
+        full_env.action_space.seed(self.seed)
+        
+        return train_env, full_env
         
     def create_model(self, train_env, params):
         """Create a DQN model with given parameters."""
@@ -210,17 +220,17 @@ class DQNTrainer:
         )
         return model
         
-    def create_callbacks(self, test_env):
-        """Create training callbacks with explicit rendering."""
+    def create_callbacks(self, full_env):
+        """Create training callbacks using full environment for evaluation."""
         # Balance-based evaluation callback
         balance_eval_callback = BalanceEvalCallback(
-            test_env,
+            full_env,
             best_model_save_path=self.results_dir,
             log_path=self.results_dir,
             eval_freq=self.config.get('eval_freq', 50000),
             deterministic=True,
             verbose=1,
-            n_eval_episodes=5  # Number of episodes to evaluate
+            n_eval_episodes=5
         )
         
         # Checkpoint callback to save model periodically
@@ -234,20 +244,20 @@ class DQNTrainer:
         
         # Custom rendering callback
         render_callback = CustomRenderCallback(
-            test_env,
+            full_env,
             eval_freq=self.config.get('render_freq', 100000)
         )
         
-        return [balance_eval_callback, checkpoint_callback, render_callback]  # All callbacks
+        return [balance_eval_callback, checkpoint_callback, render_callback]
     
     def train_model(self, env_params, model_params, timesteps=3000000):
         """Train the model with the fixed parameters."""
         print("Starting training with fixed parameters...")
         
         # Create environments and model
-        train_env, test_env = self.create_environments(env_params)
+        train_env, full_env = self.create_environments(env_params)
         model = self.create_model(train_env, model_params)
-        callbacks = self.create_callbacks(test_env)  # Now returns a list of callbacks
+        callbacks = self.create_callbacks(full_env)
         
         # Log the parameters
         self.log_data.append({
@@ -277,14 +287,14 @@ class DQNTrainer:
             shutil.copy(best_model_path, best_saved_path)
             print(f"Best balance model copied to {best_saved_path}")
             
-            # Evaluate on test data using best model
-            print("\nEvaluating best balance model on test data...")
-            self.evaluate_model(best_model, test_env)
+            # Evaluate on full data using best model
+            print("\nEvaluating best balance model on full data...")
+            self.evaluate_model(best_model, full_env)
             return best_model, best_saved_path
         else:
             # If no best model was saved, use the final model
-            print("\nEvaluating final model on test data...")
-            self.evaluate_model(model, test_env)
+            print("\nEvaluating final model on full data...")
+            self.evaluate_model(model, full_env)
             return model, final_model_path
             
     def evaluate_model(self, model, test_env):
@@ -416,7 +426,7 @@ class DQNTrainer:
         print(f"Continuing training from checkpoint: {checkpoint_path}")
         
         # Create environments
-        train_env, test_env = self.create_environments(env_params)
+        train_env, full_env = self.create_environments(env_params)
         
         # Load model from checkpoint
         model = DQN.load(
@@ -444,7 +454,7 @@ class DQNTrainer:
                 setattr(model, param, value)
                 
         # Create callbacks
-        callbacks = self.create_callbacks(test_env)
+        callbacks = self.create_callbacks(full_env)
         
         # Continue training - now we'll see the correct progress
         model.learn(
@@ -461,7 +471,7 @@ class DQNTrainer:
         print(f"Continued model saved to {final_model_path}")
         
         # Evaluate best or final model
-        best_model_path = f"{self.results_dir}/best_model.zip"
+        best_model_path = f"{self.results_dir}/best_balance_model.zip"
         if os.path.exists(best_model_path):
             print(f"Loading best model from {best_model_path}")
             best_model = DQN.load(best_model_path)
@@ -472,19 +482,19 @@ class DQNTrainer:
             shutil.copy(best_model_path, best_saved_path)
             print(f"Best model copied to {best_saved_path}")
             
-            # Evaluate on test data using best model
-            print("\nEvaluating best model on test data...")
-            self.evaluate_model(best_model, test_env)
+            # Evaluate on full data using best model
+            print("\nEvaluating best model on full data...")
+            self.evaluate_model(best_model, full_env)
             return best_model, best_saved_path
         else:
             # If no best model was saved, use the final model
-            print("\nEvaluating final model on test data...")
-            self.evaluate_model(model, test_env)
+            print("\nEvaluating final model on full data...")
+            self.evaluate_model(model, full_env)
             return model, final_model_path
 
 
 def load_data():
-    """Load and prepare training and testing data according to specifications."""
+    """Load and prepare training and full dataset according to specifications."""
     # Load data from CSV
     RATES_CSV_PATH = "../data/BTCUSDm_60min.csv"
     df = pd.read_csv(RATES_CSV_PATH)
@@ -501,15 +511,15 @@ def load_data():
     # Remove rows with NaN values
     df.dropna(inplace=True)
     
-    # Split train/test (80/20)
+    # Split data: 80% for training, but keep full dataset too
     split_idx = int(len(df) * 0.8)
     train_data = df.iloc[:split_idx]
-    test_data = df.iloc[split_idx:]
+    full_data = df  # Keep the full dataset
     
     print(f"Train data shape: {train_data.shape}, from {train_data.index[0]} to {train_data.index[-1]}")
-    print(f"Test data shape: {test_data.shape}, from {test_data.index[0]} to {test_data.index[-1]}")
+    print(f"Full data shape: {full_data.shape}, from {full_data.index[0]} to {full_data.index[-1]}")
     
-    return train_data, test_data
+    return train_data, full_data
 
 
 if __name__ == "__main__":
@@ -518,7 +528,7 @@ if __name__ == "__main__":
     print(f"Using seed: {seed_value}")
     
     # Load data
-    train_data, test_data = load_data()
+    train_data, full_data = load_data()
     
     # Fixed parameters from the best trial
     env_params = {
@@ -527,21 +537,21 @@ if __name__ == "__main__":
     }
     
     model_params = {
-        'learning_rate': 8.683466805193546e-06,  # Reduced learning rate
-        'batch_size': 96,                        # Smaller batch size
-        'gamma': 0.8724738178987883,             # Slightly modified discount factor
-        'buffer_size': 25000,                    # Smaller replay buffer
-        'target_update_interval': 1500,          # Less frequent target updates
-        'exploration_fraction': 0.3772233918444839,  # Slightly higher exploration
-        'exploration_final_eps': 0.061288914160504124  # Much higher final exploration
+        'learning_rate': 8.683466805193546e-06,
+        'batch_size': 96,
+        'gamma': 0.8724738178987883,
+        'buffer_size': 25000,
+        'target_update_interval': 1500,
+        'exploration_fraction': 0.3772233918444839,
+        'exploration_final_eps': 0.061288914160504124
     }
     
     print("Fixed parameters for training:")
     print(f"Environment parameters: {env_params}")
     print(f"Model parameters: {model_params}")
     
-    # Create trainer
-    trainer = DQNTrainer(train_data, test_data, config={
+    # Create trainer with train and full data
+    trainer = DQNTrainer(train_data, full_data, config={
         'base_dir': './../',
         'seed': seed_value,
         'initial_balance': 10000.0,
