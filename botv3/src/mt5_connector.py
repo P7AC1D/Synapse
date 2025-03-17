@@ -37,7 +37,7 @@ class MT5Connector:
                           login=MT5_LOGIN,
                           password=MT5_PASSWORD,
                           server=MT5_SERVER,
-                          timeout=60000,
+                          timeout=600000,
                           portable=False):
             logging.info("Platform MT5 launched correctly")
 
@@ -129,7 +129,7 @@ class MT5Connector:
             "type_filling": filling_type,
         }
 
-        logging.debug(f"Sending order. Type: {order_type} | Price: {price} | SL: {sl_price} | TP: {tp_price} | Lot: {lot}")
+        logging.debug(f"Sending order. Type: {order_type} | Price: {price:.2f} | SL: {sl_price:.2f} | TP: {tp_price:.2f} | Lot: {lot}")
         result = mt5.order_send(request)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             logging.warning(f"Failed to send order: {result.retcode} | {result.comment}")

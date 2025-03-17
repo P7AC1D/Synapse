@@ -39,6 +39,9 @@ def main():
         scaled_data = model.scale_data(data)
         trade_action, sl, tp = model.predict(scaled_data.iloc[-1])
         trade_executor.execute_trade(trade_action, sl, tp)
+        
+        if ENABLE_TAILING_STOP:
+            trade_executor.apply_trailing_stops(TRAILING_STOP)
 
         while last_bar_index == current_bar.index[-1]:
             time.sleep(1)

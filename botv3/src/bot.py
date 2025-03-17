@@ -2,13 +2,13 @@ import time
 import logging
 from mt5_connector import MT5Connector
 from data_fetcher import DataFetcher
-from ppo_model import PPOModel
+from trade_model import TradeModel
 from trade_executor import TradeExecutor
 from config import *
 from datetime import datetime
 
 # Generate log file name based on the current date
-log_file = datetime.now().strftime("DRL_PPO_BotV3_%Y-%m-%d.log")
+log_file = datetime.now().strftime("DRL_DQN_Bot_%Y-%m-%d.log")
 
 # Configure logging
 logging.basicConfig(
@@ -26,7 +26,7 @@ def main():
     mt5.connect()
 
     data_fetcher = DataFetcher(mt5, MT5_SYMBOL, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH + 1)
-    model = PPOModel(MODEL_PATH, SCALER_PATH)
+    model = TradeModel(MODEL_PATH)
     trade_executor = TradeExecutor(mt5)
 
     current_bar = data_fetcher.fetch_current_bar()
@@ -35,13 +35,9 @@ def main():
     while True:
         current_bar = data_fetcher.fetch_current_bar()
         data = data_fetcher.fetch_data()
-
-        open_positions = mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
-        # scaled_data = model.scale_data(data)
-        observation = model.get_observation(data, open_positions)
  
-        trade_action, sl, tp, close_trade_id = model.predict(observation)
-        trade_executor.execute_trade(trade_action, sl, tp, close_trade_id)
+        prediction = model.predict_single(data)
+        trade_executor.execute_trade(prediction)
 
         while last_bar_index == current_bar.index[-1]:
             time.sleep(1)

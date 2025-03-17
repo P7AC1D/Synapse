@@ -53,27 +53,20 @@ class DataFetcher:
         df = df.iloc[:-1]
 
         # Trend Indicators
-        # df['EMA_fast'] = ta.trend.ema_indicator(df['close'], window=9)
-        # df['EMA_medium'] = ta.trend.ema_indicator(df['close'], window=21)
-        # df['EMA_slow'] = ta.trend.ema_indicator(df['close'], window=50)	
-        # df['MACD'] = ta.trend.macd_diff(df['close'])
+        df['EMA_fast'] = ta.trend.ema_indicator(df['close'], window=9)
+        df['EMA_slow'] = ta.trend.ema_indicator(df['close'], window=50)
 
         # # Momentum Indicators
-        # df['RSI'] = ta.momentum.rsi(df['close'])
-        # df['Stoch'] = ta.momentum.stoch(df['high'], df['low'], df['close'])
+        df['RSI'] = ta.momentum.rsi(df['close'])
 
         # # Volatility Indicators
-        # df['BB_upper'] = ta.volatility.bollinger_hband(df['close'])
-        # df['BB_middle'] = ta.volatility.bollinger_mavg(df['close'])
-        # df['BB_lower'] = ta.volatility.bollinger_lband(df['close'])
-        # df['ATR'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'])
+        df['ATR'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'])
 
-        # # Volume Indicators
-        # df['OBV'] = ta.volume.on_balance_volume(df['close'], df['volume'])
-        # df['VWAP'] = ta.volume.volume_weighted_average_price(df['high'], df['low'], df['close'], df['volume'])	
+        # Volume Indicators
+        df['OBV'] = ta.volume.on_balance_volume(df['close'], df['volume'])
+        df['VWAP'] = ta.volume.volume_weighted_average_price(df['high'], df['low'], df['close'], df['volume'])	
 
         df.drop(columns=['real_volume', 'tick_volume'], inplace = True)
-        df.drop(columns=['spread'], inplace = True)
         df.dropna(inplace=True)
 
         start_datetime = df.index[0]

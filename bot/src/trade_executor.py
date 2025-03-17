@@ -5,6 +5,23 @@ class TradeExecutor:
     def __init__(self, mt5_connector):
         self.mt5_connector = mt5_connector
 
+    def apply_trailing_stops(self, trailing_points):
+        positions = self.mt5_connector.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
+
+        if positions is None or len(positions) == 0:
+            return
+
+        for pos in positions:
+            if pos.type == 0:  # Buy position
+                new_sl = pos.price_current - trailing_points
+                if new_sl > pos.sl and new_sl >= pos.price_open:
+                    self.mt5_connector.modify_stop_loss(pos.ticket, new_sl, pos.tp)
+
+            elif pos.type == 1:  # Sell position
+                new_sl = pos.price_current + trailing_points
+                if new_sl < pos.sl and new_sl <= pos.price_open:
+                    self.mt5_connector.modify_stop_loss(pos.ticket, new_sl, pos.tp)
+
     def open_trade(self, order_type, sl, tp):
         account_balance = self.mt5_connector.get_account_balance()
         filling_type = self.mt5_connector.check_filling_type(order_type)

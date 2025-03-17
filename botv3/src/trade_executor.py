@@ -22,7 +22,7 @@ class TradeExecutor:
                 if new_sl < pos.sl and new_sl <= pos.price_open:
                     self.mt5_connector.modify_stop_loss(pos.ticket, new_sl, pos.tp)
 
-    def open_trade(self, order_type, sl, tp):
+    def open_trade(self, order_type, rrr, atr):
         account_balance = self.mt5_connector.get_account_balance()
         filling_type = self.mt5_connector.check_filling_type(order_type)
 
@@ -36,8 +36,8 @@ class TradeExecutor:
         
         price = ask if order_type == 'buy' else bid
 
-        sl_price = price - sl - spread if order_type == 'buy' else price + sl + spread
-        tp_price = price + tp + spread if order_type == 'buy' else price - tp - spread
+        sl_price = price - atr - spread if order_type == 'buy' else price + atr + spread
+        tp_price = price + (rrr * atr) + spread if order_type == 'buy' else price - (rrr * atr) - spread
 
         lot = self.get_lot_size(price, sl_price, account_balance)
 
@@ -81,12 +81,12 @@ class TradeExecutor:
         logging.debug(f"Lot size calculation: Contract: {contract_size} | USDZAR: {usd_zar_bid:.2f} | Risk: R{risk_amount:.2f} | Risk: ${risk_in_usd:.2f} | SL: {stop_loss_distance:.2f}")
         return lot
 
-    def execute_trade(self, trade_action, sl, tp, close_trade_id):
-        if trade_action == 0:
-            return
-        if trade_action == 1:
-            self.open_trade('buy', sl, tp)
-        elif trade_action == 2:
-            self.open_trade('sell', sl, tp)
-        elif trade_action == 3:
-            self.close_position(close_trade_id)
+    def execute_trade(self, prediction):
+        trade_action = prediction['action_type']
+        risk_reward_ratio = prediction['risk_reward_ratio']
+        atr = prediction['atr']
+
+        if trade_action == 'BUY':
+            self.open_trade('buy', risk_reward_ratio, atr)
+        elif trade_action == 'SELL':
+            self.open_trade('sell', risk_reward_ratio, atr)
