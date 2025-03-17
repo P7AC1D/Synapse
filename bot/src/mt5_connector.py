@@ -37,7 +37,7 @@ class MT5Connector:
                           login=MT5_LOGIN,
                           password=MT5_PASSWORD,
                           server=MT5_SERVER,
-                          timeout=60000,
+                          timeout=600000,
                           portable=False):
             logging.info("Platform MT5 launched correctly")
 
@@ -129,7 +129,7 @@ class MT5Connector:
             "type_filling": filling_type,
         }
 
-        logging.debug(f"Sending order. Type: {order_type} | Price: {price} | SL: {sl_price} | TP: {tp_price} | Lot: {lot}")
+        logging.debug(f"Sending order. Type: {order_type} | Price: {price:.2f} | SL: {sl_price:.2f} | TP: {tp_price:.2f} | Lot: {lot}")
         result = mt5.order_send(request)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
             logging.warning(f"Failed to send order: {result.retcode} | {result.comment}")
@@ -173,8 +173,40 @@ class MT5Connector:
             return []
 
         filtered_positions = [pos for pos in positions if pos.comment == comment]
+        logging.debug(f"Fetched {len(filtered_positions)} open positions for {symbol}.")
         return filtered_positions
     
+    def close_position(self, ticket):
+        if not self.connected:
+            self.connect()
+
+        positions = mt5.positions_get(ticket=ticket)
+        if not positions:
+            logging.warning(f"Position {ticket} not found.")
+            return
+
+        position_to_close = positions[0]  # Extract the position object from the tuple
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "position": ticket,
+            "symbol": position_to_close.symbol,
+            "volume": position_to_close.volume,
+            "type": mt5.ORDER_TYPE_SELL if position_to_close.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
+            "price": mt5.symbol_info_tick(position_to_close.symbol).bid if position_to_close.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(position_to_close.symbol).ask,
+            "deviation": 20,
+            "magic": 0,
+            "comment": MT5_COMMENT,
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": mt5.ORDER_FILLING_IOC,
+        }
+
+        result = mt5.order_send(request)
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            logging.warning(f"Failed to close position {position_to_close.ticket}, error: {result.comment}")
+        else:
+            logging.info(f"Closed position {position_to_close.ticket} for {position_to_close.symbol}.")
+            
     def close_open_positions(self, symbol, comment):
         if not self.connected:
             self.connect()
