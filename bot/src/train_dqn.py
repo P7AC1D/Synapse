@@ -537,13 +537,13 @@ if __name__ == "__main__":
     }
     
     model_params = {
-        'learning_rate': 8.683466805193546e-06,
-        'batch_size': 96,
-        'gamma': 0.8724738178987883,
-        'buffer_size': 25000,
-        'target_update_interval': 1500,
-        'exploration_fraction': 0.3772233918444839,
-        'exploration_final_eps': 0.061288914160504124
+        "learning_rate": 1.1095997861139097e-05,
+        "batch_size": 64,
+        "gamma": 0.8491191077581287,
+        "buffer_size": 50000,
+        "target_update_interval": 1000,
+        "exploration_fraction": 0.2670911524393592,
+        "exploration_final_eps": 0.013074681149208102
     }
     
     print("Fixed parameters for training:")

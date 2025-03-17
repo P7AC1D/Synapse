@@ -378,7 +378,6 @@ class TradingEnv(gym.Env):
         
         # Bankruptcy is still a major failure
         if self.balance <= 0:
-            self.balance = 0
             self.open_positions.clear()
             reward = -10
             done = True

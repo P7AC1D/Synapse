@@ -124,4 +124,4 @@ cython_debug/
 train/src/creds.py
 bot/src/creds.py
 train/data/rates.csv
-botv3/results/*
+bot/results/*

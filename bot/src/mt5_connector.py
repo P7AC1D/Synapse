@@ -1,11 +1,25 @@
-import MetaTrader5 as mt5
+"""MetaTrader 5 connection and trading interface."""
+
 import logging
 import pytz
-from config import *
-from creds import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 from datetime import datetime
+from typing import Optional, Tuple, List, Any, Dict, Union
 
-def to_mt5_timeframe(timeframe_minutes):
+import MetaTrader5 as mt5
+
+from config import MT5_PATH, MT5_COMMENT, MT5_BASE_SYMBOL
+from creds import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
+
+
+def to_mt5_timeframe(timeframe_minutes: int) -> int:
+    """Convert minutes to MT5 timeframe constant.
+    
+    Args:
+        timeframe_minutes: Timeframe in minutes
+        
+    Returns:
+        MT5 timeframe constant
+    """
     timeframe_map = {
         1: mt5.TIMEFRAME_M1,
         2: mt5.TIMEFRAME_M2,
@@ -26,53 +40,121 @@ def to_mt5_timeframe(timeframe_minutes):
         10080: mt5.TIMEFRAME_W1,
         43200: mt5.TIMEFRAME_MN1
     }
-    return timeframe_map.get(timeframe_minutes, None)
+    return timeframe_map.get(timeframe_minutes, mt5.TIMEFRAME_M1)
+
 
 class MT5Connector:
+    """Connector for interacting with MetaTrader 5 platform."""
+    
     def __init__(self):
+        """Initialize MT5 connector."""
         self.connected = False
+        self.logger = logging.getLogger(__name__)
 
-    def connect(self):    
-        if mt5.initialize(path=MT5_PATH,
-                          login=MT5_LOGIN,
-                          password=MT5_PASSWORD,
-                          server=MT5_SERVER,
-                          timeout=600000,
-                          portable=False):
-            logging.info("Platform MT5 launched correctly")
-
-            account_info = mt5.account_info()
-            if account_info is None:
-                logging.critical("Failed to connect to the account!")
-            else:
-                logging.info(f"Connected to account: {account_info.login}")
-                self.connected = True            
-        else:
-            logging.critical(f"There has been a problem with initialization: {mt5.last_error()}")
+    def connect(self) -> bool:
+        """Connect to MT5 platform.
+        
+        Returns:
+            bool: True if connection successful, False otherwise
+        """
+        if self.connected:
+            return True
+            
+        success = mt5.initialize(
+            path=MT5_PATH,
+            login=MT5_LOGIN,
+            password=MT5_PASSWORD,
+            server=MT5_SERVER,
+            timeout=600000,
+            portable=False
+        )
+        
+        if not success:
+            self.logger.critical(f"MT5 initialization failed: {mt5.last_error()}")
             self.connected = False
+            return False
 
-    def disconnect(self):
-        mt5.shutdown()
+        account_info = mt5.account_info()
+        if account_info is None:
+            self.logger.critical(f"Failed to connect to account: {mt5.last_error()}")
+            self.connected = False
+            return False
+            
+        self.logger.info(f"Connected to MT5 account: {account_info.login}")
+        self.connected = True
+        return True
+
+    def disconnect(self) -> None:
+        """Disconnect from MT5 platform."""
+        if self.connected:
+            mt5.shutdown()
+            self.logger.info("Disconnected from MT5")
         self.connected = False
 
-    def is_connected(self):
-        return self.connected
+    def _ensure_connected(self) -> bool:
+        """Ensure connection to MT5 is active.
+        
+        Returns:
+            bool: True if connected, False if connection failed
+        """
+        if not self.connected:
+            return self.connect()
+        return True
     
-    def fetch_current_bar(self, symbol, timeframe_minutes):
-        if self.connected == False:
-            self.connect()
+    def fetch_current_bar(self, symbol: str, timeframe_minutes: int) -> Optional[Any]:
+        """Fetch current price bar.
+        
+        Args:
+            symbol: Trading symbol
+            timeframe_minutes: Timeframe in minutes
+            
+        Returns:
+            Current bar data or None if failed
+        """
+        if not self._ensure_connected():
+            return None
 
-        return mt5.copy_rates_from(symbol, to_mt5_timeframe(timeframe_minutes), datetime.now(pytz.utc), 1)
+        return mt5.copy_rates_from(
+            symbol, 
+            to_mt5_timeframe(timeframe_minutes), 
+            datetime.now(pytz.utc), 
+            1
+        )
     
-    def fetch_data(self, symbol, timeframe_minutes, bar_count):
-        if self.connected == False:
-            self.connect()
+    def fetch_data(self, symbol: str, timeframe_minutes: int, bar_count: int) -> Optional[Any]:
+        """Fetch historical price data.
+        
+        Args:
+            symbol: Trading symbol
+            timeframe_minutes: Timeframe in minutes
+            bar_count: Number of bars to fetch
+            
+        Returns:
+            Historical bar data or None if failed
+        """
+        if not self._ensure_connected():
+            return None
 
-        return mt5.copy_rates_from(symbol, to_mt5_timeframe(timeframe_minutes), datetime.now(pytz.utc), bar_count)
+        return mt5.copy_rates_from(
+            symbol, 
+            to_mt5_timeframe(timeframe_minutes), 
+            datetime.now(pytz.utc), 
+            bar_count
+        )
     
-    def modify_stop_loss(self, ticket, sl, tp):
-        if self.connected == False:
-            self.connect()
+    def modify_stop_loss(self, ticket: int, sl: float, tp: float) -> bool:
+        """Modify stop loss and take profit for a position.
+        
+        Args:
+            ticket: Position ticket
+            sl: New stop loss price
+            tp: New take profit price
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self._ensure_connected():
+            return False
 
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
@@ -83,80 +165,137 @@ class MT5Connector:
         result = mt5.order_send(request)
         
         if result.retcode != mt5.TRADE_RETCODE_DONE:
-            logging.warning(f"Failed to update SL for ticket {ticket}, error code: {result.retcode}")
+            self.logger.warning(f"Failed to update SL for ticket {ticket}, error code: {result.retcode}")
+            return False
+        return True
 
-    def check_filling_type(self, order_type):
-        if self.connected == False:
-            self.connect()
-    
-        symbol = MT5_SYMBOL
+    def check_filling_type(self, order_type: str) -> int:
+        """Check appropriate filling type for the symbol.
+        
+        Args:
+            order_type: Order type ('buy' or 'sell')
+            
+        Returns:
+            int: Appropriate filling type
+        """
+        if not self._ensure_connected():
+            return mt5.ORDER_FILLING_IOC  # Default filling type
+
+        symbol = MT5_BASE_SYMBOL
         price = mt5.symbol_info_tick(symbol).ask if order_type == 'buy' else mt5.symbol_info_tick(symbol).bid
 
-        for i in range(2):
+        for filling_type in range(2):
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": symbol,
                 "volume": mt5.symbol_info(symbol).volume_min,
                 "type": mt5.ORDER_TYPE_BUY if order_type == 'buy' else mt5.ORDER_TYPE_SELL,
                 "price": price,
-                "type_filling": i,
+                "type_filling": filling_type,
                 "type_time": mt5.ORDER_TIME_GTC
             }
 
             result = mt5.order_check(request)
-
-            if result.comment == "Done":
-                break
-        return i
+            if result and result.comment == "Done":
+                return filling_type
+                
+        return mt5.ORDER_FILLING_IOC  # Default to IOC if no valid filling type found
     
-    def open_trade(self, lot, price, sl_price, tp_price, order_type, filling_type):
-        if self.connected == False:
-            self.connect()
+    def open_trade(self, lot: float, price: float, sl_price: float, 
+                   tp_price: float, order_type: str, filling_type: int) -> bool:
+        """Open a new trade.
+        
+        Args:
+            lot: Lot size
+            price: Entry price
+            sl_price: Stop loss price
+            tp_price: Take profit price
+            order_type: Order type ('buy' or 'sell')
+            filling_type: Order filling type
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self._ensure_connected():
+            return False
 
-        deviation = 20
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": MT5_SYMBOL,
+            "symbol": MT5_BASE_SYMBOL,
             "volume": lot,
             "type": mt5.ORDER_TYPE_BUY if order_type == 'buy' else mt5.ORDER_TYPE_SELL,
             "price": price,
             "sl": sl_price,
             "tp": tp_price,
-            "deviation": deviation,
+            "deviation": 20,
             "magic": 0,
             "comment": MT5_COMMENT,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling_type,
         }
 
-        logging.debug(f"Sending order. Type: {order_type} | Price: {price:.2f} | SL: {sl_price:.2f} | TP: {tp_price:.2f} | Lot: {lot}")
+        self.logger.debug(
+            f"Sending order. Type: {order_type} | Price: {price:.2f} | "
+            f"SL: {sl_price:.2f} | TP: {tp_price:.2f} | Lot: {lot}"
+        )
+        
         result = mt5.order_send(request)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
-            logging.warning(f"Failed to send order: {result.retcode} | {result.comment}")
+            self.logger.warning(f"Failed to send order: {result.retcode} | {result.comment}")
             return False
         return True
     
-    def get_account_balance(self):
-        if self.connected == False:
-            self.connect()
+    def get_account_balance(self) -> float:
+        """Get account balance.
+        
+        Returns:
+            float: Account balance
+        
+        Raises:
+            Exception: If failed to get account info
+        """
+        if not self._ensure_connected():
+            raise Exception("Not connected to MT5")
 
         account_info = mt5.account_info()
         if account_info is None:
             raise Exception("Failed to get account info")
         return account_info.balance
     
-    def get_symbol_info(self, symbol):
-        if self.connected == False:
-            self.connect()
+    def get_symbol_info(self, symbol: str) -> Tuple[float, float, float]:
+        """Get symbol trading information.
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            Tuple containing contract size, min lot, max lot
+            
+        Raises:
+            Exception: If failed to get symbol info
+        """
+        if not self._ensure_connected():
+            raise Exception(f"Not connected to MT5")
         
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
             raise Exception(f"Failed to get symbol info for {symbol}")
         return symbol_info.trade_contract_size, symbol_info.volume_min, symbol_info.volume_max
     
-    def get_symbol_info_tick(self, symbol):
-        if self.connected == False:
-            self.connect()
+    def get_symbol_info_tick(self, symbol: str) -> Tuple[float, float]:
+        """Get current bid/ask prices.
+        
+        Args:
+            symbol: Trading symbol
+            
+        Returns:
+            Tuple of (bid, ask) prices
+            
+        Raises:
+            Exception: If failed to get symbol tick info
+        """
+        if not self._ensure_connected():
+            raise Exception(f"Not connected to MT5")
 
         symbol_info_tick = mt5.symbol_info_tick(symbol)
         if symbol_info_tick is None:
@@ -164,36 +303,53 @@ class MT5Connector:
         
         return symbol_info_tick.bid, symbol_info_tick.ask
     
-    def get_open_positions(self, symbol, comment):
-        if self.connected == False:
-            self.connect()
+    def get_open_positions(self, symbol: str, comment: str) -> List[Any]:
+        """Get open positions for a symbol.
+        
+        Args:
+            symbol: Trading symbol
+            comment: Position comment to filter by
+            
+        Returns:
+            List of open positions
+        """
+        if not self._ensure_connected():
+            return []
 
         positions = mt5.positions_get(symbol=symbol)
         if positions is None:
             return []
 
         filtered_positions = [pos for pos in positions if pos.comment == comment]
-        logging.debug(f"Fetched {len(filtered_positions)} open positions for {symbol}.")
+        self.logger.debug(f"Fetched {len(filtered_positions)} open positions for {symbol}.")
         return filtered_positions
     
-    def close_position(self, ticket):
-        if not self.connected:
-            self.connect()
+    def close_position(self, ticket: int) -> bool:
+        """Close a specific position.
+        
+        Args:
+            ticket: Position ticket
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self._ensure_connected():
+            return False
 
         positions = mt5.positions_get(ticket=ticket)
         if not positions:
-            logging.warning(f"Position {ticket} not found.")
-            return
+            self.logger.warning(f"Position {ticket} not found.")
+            return False
 
-        position_to_close = positions[0]  # Extract the position object from the tuple
-
+        position = positions[0]
+        
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "position": ticket,
-            "symbol": position_to_close.symbol,
-            "volume": position_to_close.volume,
-            "type": mt5.ORDER_TYPE_SELL if position_to_close.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
-            "price": mt5.symbol_info_tick(position_to_close.symbol).bid if position_to_close.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(position_to_close.symbol).ask,
+            "symbol": position.symbol,
+            "volume": position.volume,
+            "type": mt5.ORDER_TYPE_SELL if position.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
+            "price": mt5.symbol_info_tick(position.symbol).bid if position.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(position.symbol).ask,
             "deviation": 20,
             "magic": 0,
             "comment": MT5_COMMENT,
@@ -203,35 +359,33 @@ class MT5Connector:
 
         result = mt5.order_send(request)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
-            logging.warning(f"Failed to close position {position_to_close.ticket}, error: {result.comment}")
-        else:
-            logging.info(f"Closed position {position_to_close.ticket} for {position_to_close.symbol}.")
+            self.logger.warning(f"Failed to close position {position.ticket}, error: {result.comment}")
+            return False
             
-    def close_open_positions(self, symbol, comment):
-        if not self.connected:
-            self.connect()
+        self.logger.info(f"Closed position {position.ticket} for {position.symbol}.")
+        return True
+            
+    def close_open_positions(self, symbol: str, comment: str) -> int:
+        """Close all open positions for a symbol.
+        
+        Args:
+            symbol: Trading symbol
+            comment: Position comment to filter by
+            
+        Returns:
+            int: Number of positions successfully closed
+        """
+        if not self._ensure_connected():
+            return 0
 
         positions = self.get_open_positions(symbol, comment)
         if not positions:
-            return
+            return 0
 
+        closed_count = 0
         for position in positions:
-            request = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "position": position.ticket,
-                "symbol": symbol,
-                "volume": position.volume,
-                "type": mt5.ORDER_TYPE_SELL if position.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
-                "price": mt5.symbol_info_tick(symbol).bid if position.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(symbol).ask,
-                "deviation": 20,
-                "magic": 0,
-                "comment": "Closing position",
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
-            }
-
-            result = mt5.order_send(request)
-            if result.retcode != mt5.TRADE_RETCODE_DONE:
-                logging.warning(f"Failed to close position {position.ticket}, error: {result.comment}")
-            else:
-                logging.info(f"Closed position {position.ticket} for {symbol}.")
+            success = self.close_position(position.ticket)
+            if success:
+                closed_count += 1
+                
+        return closed_count
