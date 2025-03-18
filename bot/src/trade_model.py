@@ -66,7 +66,7 @@ class TradeModel:
         # Check if all required columns are present
         missing_columns = [col for col in self.required_columns if col not in data.columns]
         
-        if missing_columns:
+        if (missing_columns):
             error_msg = f"Data is missing required columns: {missing_columns}"
             self.logger.error(error_msg)
             raise ValueError(error_msg)
@@ -120,12 +120,14 @@ class TradeModel:
         self.logger.debug(f"Prediction: {result}")
         return result
     
-    def backtest(self, data: pd.DataFrame) -> Dict[str, Any]:
+    def backtest(self, data: pd.DataFrame, initial_balance: float = 10000.0, risk_percentage: float = 1.0) -> Dict[str, Any]:
         """
         Run a backtest with the model.
         
         Args:
             data: DataFrame with market data
+            initial_balance: Starting account balance
+            risk_percentage: Risk percentage per trade (1.0 = 1%)
             
         Returns:
             Dictionary with backtest results and trade history
@@ -144,31 +146,38 @@ class TradeModel:
             data=data,
             bar_count=self.bar_count,
             normalization_window=self.normalization_window,
-            random_start=False
+            random_start=False,
+            initial_balance=initial_balance,
+            lot_percentage=risk_percentage
         )
         
         # Run backtest
         obs, _ = env.reset()
         done = False
         step = 0
+        total_reward = 0.0
         
         while not done:
             action, _ = self.model.predict(obs, deterministic=True)
             obs, reward, done, _, _ = env.step(action)
+            total_reward += reward
             step += 1
             
-        return self._calculate_backtest_metrics(env)
+        return self._calculate_backtest_metrics(env, step, total_reward)
 
-    def _calculate_backtest_metrics(self, env: TradingEnv) -> Dict[str, Any]:
+    def _calculate_backtest_metrics(self, env: TradingEnv, total_steps: int, total_reward: float) -> Dict[str, Any]:
         """
         Calculate metrics from backtest results.
         
         Args:
             env: Trading environment with completed backtest
+            total_steps: Total number of steps in the backtest
+            total_reward: Total reward accumulated during backtest
             
         Returns:
             Dictionary with calculated metrics
         """
+        # Handle case with no trades
         if not env.trades:
             return {
                 'final_balance': float(env.balance),
@@ -178,33 +187,96 @@ class TradeModel:
                 'win_count': 0,
                 'loss_count': 0,
                 'win_rate': 0.0,
-                'avg_profit': 0.0,
-                'avg_loss': 0.0,
                 'profit_factor': 0.0,
+                'max_drawdown_pct': 0.0,
+                'total_steps': total_steps,
+                'total_reward': total_reward,
+                'open_positions': len(getattr(env, 'open_positions', [])),
                 'trades': []
             }
             
-        # Calculate profit metrics
+        # Create DataFrame from trades for easier analysis
+        trades_df = pd.DataFrame(env.trades)
+        
+        # Basic profit metrics
         winning_trades = [t['pnl'] for t in env.trades if t['pnl'] > 0]
         losing_trades = [t['pnl'] for t in env.trades if t['pnl'] < 0]
         
+        # Winning/losing trades statistics
+        total_trades = len(env.trades)
+        win_count = len(winning_trades)
+        loss_count = len(losing_trades)
+        win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0.0
+        
+        # Profit/loss statistics
         avg_profit = np.mean(winning_trades) if winning_trades else 0.0
         avg_loss = abs(np.mean(losing_trades)) if losing_trades else 0.0
-        
         total_profit = sum(winning_trades)
         total_loss = abs(sum(losing_trades))
         profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
+        
+        # Position-specific statistics
+        if 'position' in trades_df.columns:
+            num_buy = trades_df[trades_df["position"] == 1].shape[0]
+            num_sell = trades_df[trades_df["position"] == -1].shape[0]
+            buy_win_count = trades_df[(trades_df["position"] == 1) & (trades_df["pnl"] > 0.0)].shape[0]
+            sell_win_count = trades_df[(trades_df["position"] == -1) & (trades_df["pnl"] > 0.0)].shape[0]
+            buy_win_rate = (buy_win_count / num_buy * 100) if num_buy > 0 else 0.0
+            sell_win_rate = (sell_win_count / num_sell * 100) if num_sell > 0 else 0.0
+        else:
+            num_buy = num_sell = 0
+            buy_win_rate = sell_win_rate = 0.0
+        
+        # Risk metrics
+        rrr = avg_profit / avg_loss if avg_loss > 0 else 0.0
+        expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
+        
+        # Kelly criterion
+        kelly = (win_rate/100.0) - ((1 - (win_rate/100.0)) / rrr) if rrr > 0 else 0.0
+        
+        # Calculate drawdowns
+        balance_history = []
+        current_balance = env.initial_balance
+        peak_balance = current_balance
+        max_drawdown = 0.0
+        
+        for trade in env.trades:
+            current_balance += trade['pnl']
+            balance_history.append(current_balance)
+            peak_balance = max(peak_balance, current_balance)
+            drawdown = (peak_balance - current_balance) / peak_balance if peak_balance > 0 else 0
+            max_drawdown = max(max_drawdown, drawdown)
+        
+        # Sharpe ratio calculation
+        if total_trades > 1:
+            daily_returns = trades_df["pnl"] / env.initial_balance
+            excess_returns = np.array(daily_returns)
+            sharpe = np.mean(excess_returns) / np.std(excess_returns, ddof=1) * np.sqrt(252) if np.std(excess_returns, ddof=1) > 0 else 0.0
+        else:
+            sharpe = 0.0
         
         return {
             'final_balance': float(env.balance),
             'initial_balance': float(env.initial_balance),
             'return_pct': float(((env.balance / env.initial_balance) - 1) * 100),
-            'total_trades': len(env.trades),
-            'win_count': env.win_count,
-            'loss_count': env.loss_count,
-            'win_rate': float((env.win_count / len(env.trades)) * 100) if env.trades else 0.0,
+            'total_trades': total_trades,
+            'win_count': win_count,
+            'loss_count': loss_count,
+            'win_rate': float(win_rate),
             'avg_profit': float(avg_profit),
             'avg_loss': float(avg_loss),
             'profit_factor': float(profit_factor),
+            'max_drawdown_pct': float(max_drawdown * 100),
+            'long_trades': int(num_buy),
+            'short_trades': int(num_sell),
+            'long_win_rate': float(buy_win_rate),
+            'short_win_rate': float(sell_win_rate),
+            'risk_reward_ratio': float(rrr),
+            'expected_value': float(expected_value),
+            'kelly_criterion': float(kelly),
+            'sharpe_ratio': float(sharpe),
+            'total_steps': total_steps,
+            'total_reward': total_reward,
+            'open_positions': len(getattr(env, 'open_positions', [])),
             'trades': env.trades
         }

@@ -68,49 +68,79 @@ def print_data_info(data: pd.DataFrame) -> None:
     logging.info(f"Last 5 rows:\n{data.tail()}")
 
 
-def run_backtest(data: pd.DataFrame, model_path: str, bar_count: int, 
-               normalization_window: int, test_size: int) -> Dict[str, Any]:
+def run_backtest(data: pd.DataFrame, model_path: str, test_size: int,
+                initial_balance: float, risk_percentage: float) -> Dict[str, Any]:
     """
     Run backtest on historical data using the specified model.
     
     Args:
         data: DataFrame with market data
         model_path: Path to the saved model file
-        bar_count: Number of bars in each observation
-        normalization_window: Window size for normalization
         test_size: Number of bars to use for testing
+        initial_balance: Starting account balance
+        risk_percentage: Risk percentage per trade
         
     Returns:
         Dictionary with backtest results
     """
     # Create trade model with specified hyperparameters
-    model = TradeModel(
-        model_path=model_path,
-        bar_count=bar_count,
-        normalization_window=normalization_window
-    )
+    model = TradeModel(model_path=model_path)
     
     # Use last test_size bars for backtest
     backtest_data = data.iloc[-test_size:]
     logging.info(f"Running backtest on {len(backtest_data)} bars...")
     
-    # Run backtest
-    return model.backtest(backtest_data)
+    # Run backtest with specified initial balance and risk
+    return model.backtest(backtest_data, initial_balance, risk_percentage)
 
 
 def print_results(results: Dict[str, Any]) -> None:
     """
-    Print backtest results.
+    Print backtest results in a detailed format matching the evaluation output.
     
     Args:
         results: Dictionary with backtest results
     """
-    logging.info(f"\nBacktest Results:")
-    logging.info(f"Final Balance: ${results['final_balance']:.2f}")
-    logging.info(f"Return: {results['return_pct']:.2f}%")
-    logging.info(f"Total Trades: {results['total_trades']}")
-    logging.info(f"Win Rate: {results['win_rate']:.2f}%")
-    logging.info(f"Profit Factor: {results['profit_factor']:.2f}")
+    # Get total trades (to check if anything happened)
+    total_trades = results.get('total_trades', 0)
+    
+    logging.info("\n===== EVALUATION METRICS =====")
+    logging.info(f"Backtest complete. Total reward: {results.get('total_reward', 0.0):.2f}")
+    
+    logging.info(f"\n===== Environment State at Step {results.get('total_steps', 0)} =====")
+    logging.info(f"Open Positions: {results.get('open_positions', 0)}")
+    
+    logging.info("\n===== Trading Performance Metrics =====")
+    logging.info(f"Current Balance: {results['final_balance']:.2f}")
+    logging.info(f"Initial Balance: {results['initial_balance']:.2f}")
+    logging.info(f"Total Return: {results['return_pct']:.2f}%")
+    logging.info(f"Total Trades: {total_trades}")
+    logging.info(f"Total Win Rate: {results['win_rate']:.2f}%")
+    
+    if 'long_trades' in results and 'short_trades' in results:
+        logging.info(f"Long Trades: {results['long_trades']}")
+        logging.info(f"Long Win Rate: {results.get('long_win_rate', 0.0):.2f}%")
+        logging.info(f"Short Trades: {results['short_trades']}")
+        logging.info(f"Short Win Rate: {results.get('short_win_rate', 0.0):.2f}%")
+        
+    if 'avg_profit' in results and 'avg_loss' in results:
+        logging.info(f"Average Win: {results['avg_profit']:.2f}")
+        logging.info(f"Average Loss: {results['avg_loss']:.2f}")
+        
+    if 'risk_reward_ratio' in results:
+        logging.info(f"Average RRR: {results['risk_reward_ratio']:.2f}")
+        
+    if 'expected_value' in results:
+        logging.info(f"Expected Value: {results['expected_value']:.2f}")
+        
+    if 'kelly_criterion' in results:
+        logging.info(f"Kelly Criterion: {results['kelly_criterion']:.2f}")
+        
+    if 'sharpe_ratio' in results:
+        logging.info(f"Sharpe Ratio: {results['sharpe_ratio']:.2f}")
+        
+    if 'profit_factor' in results:
+        logging.info(f"Profit Factor: {results['profit_factor']:.2f}")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -135,22 +165,22 @@ def parse_arguments() -> argparse.Namespace:
         help="Path to model file"
     )
     parser.add_argument(
-        "--bars", 
-        type=int, 
-        default=50,
-        help="Number of bars in each observation"
-    )
-    parser.add_argument(
-        "--norm-window", 
-        type=int, 
-        default=100,
-        help="Window size for normalization"
-    )
-    parser.add_argument(
         "--test-size", 
         type=int, 
-        default=10000,
+        default=150000,
         help="Number of bars to use for testing"
+    )
+    parser.add_argument(
+        "--initial-balance", 
+        type=float, 
+        default=10000.0,
+        help="Initial account balance"
+    )
+    parser.add_argument(
+        "--risk-percentage", 
+        type=float, 
+        default=0.01,
+        help="Risk percentage per trade (0.01 = 1%)"
     )
     
     return parser.parse_args()
@@ -181,10 +211,10 @@ def main() -> int:
         # Run backtest
         results = run_backtest(
             data, 
-            args.model, 
-            args.bars, 
-            args.norm_window, 
-            args.test_size
+            args.model,
+            args.test_size,
+            args.initial_balance,
+            args.risk_percentage
         )
         
         # Print results
