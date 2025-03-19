@@ -43,7 +43,20 @@ class TradeModel:
             bool: True if model loaded successfully, False otherwise
         """
         try:
-            self.model = DQN.load(self.model_path)
+            # Create a temporary environment for model loading
+            env = TradingEnv(
+                data=pd.DataFrame(columns=self.required_columns),  # Empty DataFrame with correct columns
+                bar_count=self.bar_count,
+                normalization_window=self.normalization_window,
+                random_start=False
+            )
+            
+            # Load model with environment context
+            self.model = DQN.load(
+                self.model_path,
+                env=env,
+                force_reset=True
+            )
             self.logger.info(f"Model successfully loaded from {self.model_path}")
             return True
         except Exception as e:

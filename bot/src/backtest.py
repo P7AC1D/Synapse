@@ -1,230 +1,247 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Backtest script for evaluating trading model performance on historical data.
-"""
-
-import argparse
-import logging
-import sys
-from pathlib import Path
-from typing import Dict, Any, Optional
-
+import os
+import json
+import numpy as np
 import pandas as pd
+from stable_baselines3 import DQN, PPO
+from trade_environment import TradingEnv
+import matplotlib.pyplot as plt
+from datetime import datetime
+import argparse
 
-from trade_model import TradeModel
-
-
-def setup_logging() -> None:
-    """Configure logging with console output."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler()]
-    )
-
-
-def load_data(file_path: str) -> Optional[pd.DataFrame]:
-    """
-    Load and preprocess historical market data.
+def load_model(model_path, model_type, env, device='cpu'):
+    """Load a trained model with proper environment context."""
+    model_class = DQN if model_type == 'DQN' else PPO
     
-    Args:
-        file_path: Path to CSV data file
-        
-    Returns:
-        Preprocessed DataFrame or None if loading failed
-    """
     try:
-        data = pd.read_csv(file_path)
-        data.set_index('time', inplace=True)
-        
-        # Drop unnecessary columns if they exist
-        columns_to_drop = ['EMA_medium', 'MACD', 'Stoch', 'BB_upper', 'BB_middle', 'BB_lower']
-        existing_columns = [col for col in columns_to_drop if col in data.columns]
-        if existing_columns:
-            data.drop(columns=existing_columns, inplace=True)
-            
-        # Remove rows with NaN values
-        data.dropna(inplace=True)
-        
-        return data
+        model = model_class.load(
+            model_path,
+            env=env,
+            device=device,
+            force_reset=True
+        )
+        return model
     except Exception as e:
-        logging.error(f"Failed to load data: {e}")
-        return None
+        print(f"Error loading model: {str(e)}")
+        raise
 
-
-def print_data_info(data: pd.DataFrame) -> None:
-    """
-    Print information about the loaded data.
+def backtest_model(model, env, initial_balance):
+    """Run backtest on the model and return performance metrics."""
+    obs, _ = env.reset()
+    done = False
     
-    Args:
-        data: DataFrame with market data
-    """
-    start_datetime = data.index[0]
-    end_datetime = data.index[-1]
-    logging.info(f"Data range: {start_datetime} to {end_datetime}")
-    logging.info(f"Data shape: {data.shape}")
-    logging.info(f"Last 5 rows:\n{data.tail()}")
-
-
-def run_backtest(data: pd.DataFrame, model_path: str, test_size: int,
-                initial_balance: float, risk_percentage: float) -> Dict[str, Any]:
-    """
-    Run backtest on historical data using the specified model.
+    # Track metrics
+    balance_history = [initial_balance]
+    reward_history = []
+    position_history = []
+    trades = []
     
-    Args:
-        data: DataFrame with market data
-        model_path: Path to the saved model file
-        test_size: Number of bars to use for testing
-        initial_balance: Starting account balance
-        risk_percentage: Risk percentage per trade
+    while not done:
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
         
-    Returns:
-        Dictionary with backtest results
-    """
-    # Create trade model with specified hyperparameters
-    model = TradeModel(model_path=model_path)
+        # Record metrics
+        balance_history.append(env.balance)
+        reward_history.append(reward)
+        position_history.append(action)
     
-    # Use last test_size bars for backtest
-    backtest_data = data.iloc[-test_size:]
-    logging.info(f"Running backtest on {len(backtest_data)} bars...")
+    if hasattr(env, 'trades'):
+        trades = env.trades
     
-    # Run backtest with specified initial balance and risk
-    return model.backtest(backtest_data, initial_balance, risk_percentage)
+    return {
+        'balance_history': balance_history,
+        'reward_history': reward_history,
+        'position_history': position_history,
+        'trades': trades,
+        'final_balance': env.balance,
+        'total_reward': sum(reward_history)
+    }
 
+def plot_results(results, save_path=None):
+    """Plot backtest results."""
+    plt.figure(figsize=(15, 10))
+    
+    # Plot balance over time
+    plt.subplot(311)
+    plt.plot(results['balance_history'], label='Account Balance')
+    plt.title('Backtest Results')
+    plt.xlabel('Steps')
+    plt.ylabel('Balance')
+    plt.legend()
+    plt.grid(True)
+    
+    # Plot cumulative rewards
+    plt.subplot(312)
+    plt.plot(np.cumsum(results['reward_history']), label='Cumulative Reward')
+    plt.xlabel('Steps')
+    plt.ylabel('Cumulative Reward')
+    plt.legend()
+    plt.grid(True)
+    
+    # Plot positions
+    plt.subplot(313)
+    plt.plot(results['position_history'], label='Position')
+    plt.xlabel('Steps')
+    plt.ylabel('Position')
+    plt.legend()
+    plt.grid(True)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path)
+    plt.show()
 
-def print_results(results: Dict[str, Any]) -> None:
-    """
-    Print backtest results in a detailed format matching the evaluation output.
+def calculate_metrics(results, initial_balance):
+    """Calculate trading performance metrics."""
+    trades_df = pd.DataFrame(results['trades'])
+    if len(trades_df) == 0:
+        return "No trades were executed during backtesting."
+        
+    # Basic metrics
+    final_balance = results['final_balance']
+    total_return = ((final_balance - initial_balance) / initial_balance) * 100
+    total_trades = len(trades_df)
     
-    Args:
-        results: Dictionary with backtest results
-    """
-    # Get total trades (to check if anything happened)
-    total_trades = results.get('total_trades', 0)
+    # Win rate calculations
+    winning_trades = trades_df[trades_df['pnl'] > 0]
+    losing_trades = trades_df[trades_df['pnl'] < 0]
+    win_rate = len(winning_trades) / total_trades * 100 if total_trades > 0 else 0
     
-    logging.info("\n===== EVALUATION METRICS =====")
-    logging.info(f"Backtest complete. Total reward: {results.get('total_reward', 0.0):.2f}")
+    # Average trade metrics
+    avg_win = winning_trades['pnl'].mean() if len(winning_trades) > 0 else 0
+    avg_loss = abs(losing_trades['pnl'].mean()) if len(losing_trades) > 0 else 0
     
-    logging.info(f"\n===== Environment State at Step {results.get('total_steps', 0)} =====")
-    logging.info(f"Open Positions: {results.get('open_positions', 0)}")
+    # Risk/Reward
+    risk_reward_ratio = avg_win / avg_loss if avg_loss != 0 else 0
     
-    logging.info("\n===== Trading Performance Metrics =====")
-    logging.info(f"Current Balance: {results['final_balance']:.2f}")
-    logging.info(f"Initial Balance: {results['initial_balance']:.2f}")
-    logging.info(f"Total Return: {results['return_pct']:.2f}%")
-    logging.info(f"Total Trades: {total_trades}")
-    logging.info(f"Total Win Rate: {results['win_rate']:.2f}%")
+    # Position-specific metrics
+    long_trades = trades_df[trades_df['position'] == 1]
+    short_trades = trades_df[trades_df['position'] == -1]
+    long_win_rate = (len(long_trades[long_trades['pnl'] > 0]) / len(long_trades) * 100) if len(long_trades) > 0 else 0
+    short_win_rate = (len(short_trades[short_trades['pnl'] > 0]) / len(short_trades) * 100) if len(short_trades) > 0 else 0
     
-    if 'long_trades' in results and 'short_trades' in results:
-        logging.info(f"Long Trades: {results['long_trades']}")
-        logging.info(f"Long Win Rate: {results.get('long_win_rate', 0.0):.2f}%")
-        logging.info(f"Short Trades: {results['short_trades']}")
-        logging.info(f"Short Win Rate: {results.get('short_win_rate', 0.0):.2f}%")
-        
-    if 'avg_profit' in results and 'avg_loss' in results:
-        logging.info(f"Average Win: {results['avg_profit']:.2f}")
-        logging.info(f"Average Loss: {results['avg_loss']:.2f}")
-        
-    if 'risk_reward_ratio' in results:
-        logging.info(f"Average RRR: {results['risk_reward_ratio']:.2f}")
-        
-    if 'expected_value' in results:
-        logging.info(f"Expected Value: {results['expected_value']:.2f}")
-        
-    if 'kelly_criterion' in results:
-        logging.info(f"Kelly Criterion: {results['kelly_criterion']:.2f}")
-        
-    if 'sharpe_ratio' in results:
-        logging.info(f"Sharpe Ratio: {results['sharpe_ratio']:.2f}")
-        
-    if 'profit_factor' in results:
-        logging.info(f"Profit Factor: {results['profit_factor']:.2f}")
+    metrics = {
+        'Initial Balance': initial_balance,
+        'Final Balance': final_balance,
+        'Total Return (%)': total_return,
+        'Total Trades': total_trades,
+        'Win Rate (%)': win_rate,
+        'Average Win': avg_win,
+        'Average Loss': avg_loss,
+        'Risk/Reward Ratio': risk_reward_ratio,
+        'Long Trades': len(long_trades),
+        'Long Win Rate (%)': long_win_rate,
+        'Short Trades': len(short_trades),
+        'Short Win Rate (%)': short_win_rate
+    }
+    
+    return metrics
 
-
-def parse_arguments() -> argparse.Namespace:
-    """
-    Parse command line arguments.
+def main():
+    parser = argparse.ArgumentParser(description='Backtest a trained trading model')
+    parser.add_argument('--model_path', type=str, required=True,
+                      help='Path to the trained model')
+    parser.add_argument('--model_type', type=str, choices=['DQN', 'PPO'], required=True,
+                      help='Type of model (DQN or PPO)')
+    parser.add_argument('--bar_count', type=int, default=50,
+                      help='Number of bars to include in state (default: 50)')
+    parser.add_argument('--normalization_window', type=int, default=100,
+                      help='Window size for normalization (default: 100)')
+    parser.add_argument('--data_path', type=str, required=True,
+                      help='Path to the test data CSV file')
+    parser.add_argument('--results_dir', type=str, default='../results/backtest',
+                      help='Directory to save backtest results')
+    parser.add_argument('--initial_balance', type=float, default=10000.0,
+                      help='Initial account balance')
+    parser.add_argument('--device', type=str, choices=['cpu', 'cuda'], default='cpu',
+                      help='Device to run inference on')
+    parser.add_argument('--risk_percentage', type=float, default=0.01,
+                      help='Risk percentage per trade (default: 0.01)')
     
-    Returns:
-        Parsed arguments
-    """
-    parser = argparse.ArgumentParser(description="Run backtest on trading model")
+    args = parser.parse_args()
     
-    parser.add_argument(
-        "--data", 
-        type=str, 
-        default="../data/BTCUSDm_60min.csv",
-        help="Path to CSV data file"
-    )
-    parser.add_argument(
-        "--model", 
-        type=str, 
-        default="../results/65478/best_balance_model.zip",
-        help="Path to model file"
-    )
-    parser.add_argument(
-        "--test-size", 
-        type=int, 
-        default=150000,
-        help="Number of bars to use for testing"
-    )
-    parser.add_argument(
-        "--initial-balance", 
-        type=float, 
-        default=10000.0,
-        help="Initial account balance"
-    )
-    parser.add_argument(
-        "--risk-percentage", 
-        type=float, 
-        default=0.01,
-        help="Risk percentage per trade (0.01 = 1%)"
-    )
-    
-    return parser.parse_args()
-
-
-def main() -> int:
-    """
-    Main entry point for the backtest script.
-    
-    Returns:
-        Exit code (0 for success, 1 for failure)
-    """
-    # Set up logging
-    setup_logging()
-    
-    # Parse command line arguments
-    args = parse_arguments()
+    # Create results directory
+    os.makedirs(args.results_dir, exist_ok=True)
     
     # Load data
-    data = load_data(args.data)
-    if data is None:
-        return 1
-    
-    # Print data information
-    print_data_info(data)
-    
     try:
-        # Run backtest
-        results = run_backtest(
-            data, 
-            args.model,
-            args.test_size,
-            args.initial_balance,
-            args.risk_percentage
-        )
+        # Load and preprocess data
+        print("\nLoading and preprocessing data...")
+        df = pd.read_csv(args.data_path)
+        print(f"Initial columns: {df.columns.tolist()}")
+        print(f"Initial shape: {df.shape}")
         
-        # Print results
-        print_results(results)
-        return 0
+        df.set_index('time', inplace=True)
+        
+        # Handle technical indicator columns - wrapped in try/except for flexibility
+        columns_to_drop = ['EMA_medium', 'MACD', 'Stoch', 'BB_upper', 'BB_middle', 'BB_lower']
+        existing_columns = [col for col in columns_to_drop if col in df.columns]
+        if existing_columns:
+            df.drop(columns=existing_columns, inplace=True)
+            print(f"Dropped columns: {existing_columns}")
+        
+        # Print final data shape and columns
+        print(f"Final shape: {df.shape}")
+        print(f"Final columns: {df.columns.tolist()}")
+        
+        # Calculate expected observation space size
+        expected_obs_size = df.shape[1] * args.bar_count
+        print(f"Expected observation space size: {expected_obs_size}")
         
     except Exception as e:
-        logging.error(f"Error during backtest: {e}")
-        return 1
-
+        print(f"Error loading/preprocessing data: {str(e)}")
+        return
+    
+    # Print environment parameters
+    print(f"\nEnvironment Parameters:")
+    print(f"Bar Count: {args.bar_count}")
+    print(f"Normalization Window: {args.normalization_window}")
+    print(f"Risk Percentage: {args.risk_percentage}")
+    print(f"Initial Balance: {args.initial_balance}")
+    
+    # Create environment
+    env = TradingEnv(
+        df,
+        initial_balance=args.initial_balance,
+        bar_count=args.bar_count,
+        normalization_window=args.normalization_window,
+        random_start=False,  # No random start for backtesting
+        lot_percentage=args.risk_percentage  # Using risk_percentage as lot_percentage
+    )
+    
+    # Load model
+    try:
+        model = load_model(args.model_path, args.model_type, env, args.device)
+    except Exception as e:
+        print(f"Failed to load model: {str(e)}")
+        return
+    
+    # Run backtest
+    print("Running backtest...")
+    results = backtest_model(model, env, args.initial_balance)
+    
+    # Calculate and save metrics
+    metrics = calculate_metrics(results, args.initial_balance)
+    metrics_file = os.path.join(args.results_dir, 'backtest_metrics.json')
+    with open(metrics_file, 'w') as f:
+        json.dump(metrics, f, indent=4)
+    
+    # Print metrics
+    print("\nBacktest Results:")
+    for key, value in metrics.items():
+        print(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value}")
+    
+    # Plot and save results
+    plot_path = os.path.join(args.results_dir, 'backtest_plot.png')
+    plot_results(results, save_path=plot_path)
+    
+    # Save trades log if available
+    if results['trades']:
+        trades_df = pd.DataFrame(results['trades'])
+        trades_file = os.path.join(args.results_dir, 'trades_log.csv')
+        trades_df.to_csv(trades_file)
+        print(f"\nTrades log saved to: {trades_file}")
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
