@@ -221,8 +221,16 @@ def main():
     print("Running backtest...")
     results = backtest_model(model, env, args.initial_balance)
     
-    # Calculate and save metrics
+    # Calculate metrics
     metrics = calculate_metrics(results, args.initial_balance)
+    
+    # Handle string response (no trades case)
+    if isinstance(metrics, str):
+        print("\nBacktest Results:")
+        print(metrics)
+        return
+    
+    # Save metrics
     metrics_file = os.path.join(args.results_dir, 'backtest_metrics.json')
     with open(metrics_file, 'w') as f:
         json.dump(metrics, f, indent=4)
@@ -232,7 +240,7 @@ def main():
     for key, value in metrics.items():
         print(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value}")
     
-    # Plot and save results
+    # Plot and save results if we have trades
     plot_path = os.path.join(args.results_dir, 'backtest_plot.png')
     plot_results(results, save_path=plot_path)
     
