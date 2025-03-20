@@ -1,4 +1,6 @@
 import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
+
 import json
 import numpy as np
 import pandas as pd

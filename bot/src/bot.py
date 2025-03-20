@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
+
 # -*- coding: utf-8 -*-
 """
 Deep Reinforcement Learning Trading Bot using DQN model.
