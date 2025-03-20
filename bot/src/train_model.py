@@ -293,10 +293,15 @@ class ModelTrainer:
                     'n_epochs': trial.suggest_int('n_epochs', 5, 20)
                 }
             
+            # For hyperparameter optimization, use fixed start points
+            env_params['random_start'] = False
+            
             # Create environments and model
             train_env, full_env = self.create_environments(env_params)
             model = self.create_model(train_env, model_params)
             callbacks = self.create_callbacks(full_env)
+            
+            print(f"\nOptimization trial {trial.number} using fixed start points")
             
             # Train with limited timesteps for hyperparameter search
             try:
@@ -400,11 +405,16 @@ class ModelTrainer:
                                                max(3, best_broad_params['n_epochs'] - 5),
                                                min(25, best_broad_params['n_epochs'] + 5))
                 }
+
+            # For hyperparameter optimization, use fixed start points
+            env_params['random_start'] = False
             
             # Create environments and model
             train_env, full_env = self.create_environments(env_params)
             model = self.create_model(train_env, model_params)
             callbacks = self.create_callbacks(full_env)
+
+            print(f"\nOptimization trial {trial.number} using fixed start points")
             
             try:
                 model.learn(total_timesteps=200000, callback=callbacks)
@@ -622,10 +632,17 @@ class ModelTrainer:
         
         train_env, full_env = self.create_environments(env_params)
         
+        # Define custom objects for loading
+        custom_objects = {
+            "lr_schedule": lambda _: 1e-4,
+            "exploration_schedule": lambda _: 0.01  # Fixed exploration value at the final epsilon
+        }
+
         model = self.model_class.load(
             checkpoint_path,
             env=train_env,
-            device=self.config['device']
+            device=self.config['device'],
+            custom_objects=custom_objects
         )
         
         import re

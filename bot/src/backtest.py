@@ -12,12 +12,18 @@ def load_model(model_path, model_type, env, device='cpu'):
     """Load a trained model with proper environment context."""
     model_class = DQN if model_type == 'DQN' else PPO
     
+    # Define custom objects for loading
+    custom_objects = {
+        "lr_schedule": lambda _: 1e-4,
+        "exploration_schedule": lambda _: 0.01  # Fixed exploration value at the final epsilon
+    }
+    
     try:
         model = model_class.load(
             model_path,
             env=env,
             device=device,
-            force_reset=True
+            custom_objects=custom_objects
         )
         return model
     except Exception as e:

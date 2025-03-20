@@ -51,11 +51,17 @@ class TradeModel:
                 random_start=False
             )
             
+            # Define custom objects for loading
+            custom_objects = {
+                "lr_schedule": lambda _: 1e-4,
+                "exploration_schedule": lambda _: 0.01  # Fixed exploration value at the final epsilon
+            }
+            
             # Load model with environment context
             self.model = DQN.load(
                 self.model_path,
                 env=env,
-                force_reset=True
+                custom_objects=custom_objects
             )
             self.logger.info(f"Model successfully loaded from {self.model_path}")
             return True
