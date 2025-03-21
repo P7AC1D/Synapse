@@ -236,7 +236,7 @@ def train_model(train_env, val_env, args):
     
     render_callback = CustomRenderCallback(
         val_env,
-        eval_freq=50000
+        eval_freq=10000
     )
     callbacks.append(render_callback)
     
@@ -329,16 +329,24 @@ def main():
     
     # Load data
     data = load_data(args.data_path)
-    print("\nCreating environments with full dataset for comprehensive evaluation")
+    print("\nCreating environments for training and validation")
     
-    # Create environments - training with random starts, validation with sequential
+    # Split data for training (80%) but use full dataset for validation
+    split_idx = int(len(data) * 0.8)
+    train_data = data.iloc[:split_idx]
+    
+    print(f"\nEnvironment Configuration:")
+    print(f"Training Data: {len(train_data)} bars ({train_data.index[0]} to {train_data.index[-1]})")
+    print(f"Validation Data: {len(data)} bars (full dataset for comprehensive evaluation)")
+    
+    # Create environments - training with 80% and random starts, validation with full data and sequential
     env_params = {
         'initial_balance': args.initial_balance,
         'bar_count': args.bar_count,
         'normalization_window': args.normalization_window
     }
     
-    train_env = create_env(data, {**env_params, 'random_start': True})
+    train_env = create_env(train_data, {**env_params, 'random_start': True})
     val_env = create_env(data, {**env_params, 'random_start': False})
     
     # Check for existing checkpoints
