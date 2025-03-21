@@ -1,4 +1,7 @@
 import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
+
+import re
 import json
 import numpy as np
 import pandas as pd
@@ -694,7 +697,7 @@ class ModelTrainer:
 
 def load_data():
     """Load and prepare training and full dataset according to specifications."""
-    RATES_CSV_PATH = "../data/BTCUSDm_60min.csv"
+    RATES_CSV_PATH = "../data/BTCUSDm_15min.csv"
     df = pd.read_csv(RATES_CSV_PATH)
     df.set_index('time', inplace=True)
     df.drop(columns=['EMA_medium', 'MACD', 'Stoch', 'BB_upper', 'BB_middle', 'BB_lower'], inplace=True)
