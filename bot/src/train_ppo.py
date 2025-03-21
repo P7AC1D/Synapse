@@ -236,7 +236,7 @@ def train_model(train_env, val_env, args):
     
     render_callback = CustomRenderCallback(
         val_env,
-        eval_freq=10000
+        eval_freq=args.render_freq
     )
     callbacks.append(render_callback)
     
@@ -314,6 +314,8 @@ def main():
                       help='Maximum gradient norm for clipping')
     parser.add_argument('--eval_freq', type=int, default=50000,
                       help='Evaluation frequency in timesteps')
+    parser.add_argument('--render_freq', type=int, default=50000,
+                      help='Render frequency in timesteps')
     
     args = parser.parse_args()
     
