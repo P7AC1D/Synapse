@@ -6,13 +6,12 @@ from typing import Dict, List, Optional, Union, Any, Tuple
 
 import numpy as np
 import pandas as pd
-from stable_baselines3 import DQN
+from sb3_contrib.ppo_recurrent import RecurrentPPO
 
-from trade_environment import TradingEnv, ActionType
-
+from trade_environment import TradingEnv
 
 class TradeModel:
-    """Class for loading and making predictions with a trained DQN model."""
+    """Class for loading and making predictions with a trained PPO-LSTM model."""
     
     def __init__(self, model_path: str, bar_count: int = 50, normalization_window: int = 100):
         """
@@ -33,11 +32,13 @@ class TradeModel:
             'EMA_fast', 'EMA_slow', 'RSI', 'ATR', 'OBV', 'VWAP'
         ]
         
+        self.lstm_states = None  # Store LSTM states for continuous prediction
+        
         # Load the model
         self.load_model()
         
     def load_model(self) -> bool:
-        """Load the pre-trained DQN model.
+        """Load the pre-trained PPO-LSTM model.
         
         Returns:
             bool: True if model loaded successfully, False otherwise
@@ -51,20 +52,11 @@ class TradeModel:
                 random_start=False
             )
             
-            # Define custom objects for loading
-            custom_objects = {
-                "lr_schedule": lambda _: 1e-4,
-                "exploration_schedule": lambda _: 0.01  # Fixed exploration value at the final epsilon
-            }
-            
-            # Load model with environment context
-            self.model = DQN.load(
-                self.model_path,
-                env=env,
-                custom_objects=custom_objects
-            )
+            # Load the PPO model
+            self.model = RecurrentPPO.load(self.model_path, env=env)
             self.logger.info(f"Model successfully loaded from {self.model_path}")
             return True
+            
         except Exception as e:
             self.logger.error(f"Error loading model: {e}")
             return False
@@ -85,7 +77,7 @@ class TradeModel:
         # Check if all required columns are present
         missing_columns = [col for col in self.required_columns if col not in data.columns]
         
-        if (missing_columns):
+        if missing_columns:
             error_msg = f"Data is missing required columns: {missing_columns}"
             self.logger.error(error_msg)
             raise ValueError(error_msg)
@@ -122,22 +114,34 @@ class TradeModel:
         # Get the observation
         observation = env.get_history()
         
-        # Make prediction
-        action, _states = self.model.predict(observation, deterministic=True)
+        # Make prediction with LSTM state management
+        action, self.lstm_states = self.model.predict(
+            observation, 
+            state=self.lstm_states,
+            deterministic=True
+        )
         
-        # Decode the action
-        action_type, rrr_idx, risk_reward_ratio = env._decode_action(action)        
+        # Process the continuous action
+        position, sl_points, tp_points = env._process_action(action)
+        
+        # Calculate rrr
+        rrr = tp_points / sl_points if sl_points > 0 else 0
         
         # Create prediction result
         result = {
-            'action': int(action),
-            'action_type': action_type.name,
-            'risk_reward_ratio': float(risk_reward_ratio),
+            'position': int(position),  # -1 for sell, 0 for hold, 1 for buy
+            'sl_points': float(sl_points),
+            'tp_points': float(tp_points),
+            'risk_reward_ratio': float(rrr),
             'atr': float(data.iloc[-1]['ATR'])
         }
 
         self.logger.debug(f"Prediction: {result}")
         return result
+    
+    def reset_states(self) -> None:
+        """Reset the LSTM states. Call this when starting a new prediction sequence."""
+        self.lstm_states = None
     
     def backtest(self, data: pd.DataFrame, initial_balance: float = 10000.0, risk_percentage: float = 1.0) -> Dict[str, Any]:
         """
@@ -170,6 +174,9 @@ class TradeModel:
             lot_percentage=risk_percentage
         )
         
+        # Reset LSTM states for backtest
+        lstm_states = None
+        
         # Run backtest
         obs, _ = env.reset()
         done = False
@@ -177,7 +184,7 @@ class TradeModel:
         total_reward = 0.0
         
         while not done:
-            action, _ = self.model.predict(obs, deterministic=True)
+            action, lstm_states = self.model.predict(obs, state=lstm_states, deterministic=True)
             obs, reward, done, _, _ = env.step(action)
             total_reward += reward
             step += 1
@@ -247,11 +254,11 @@ class TradeModel:
             buy_win_rate = sell_win_rate = 0.0
         
         # Risk metrics
-        rrr = avg_profit / avg_loss if avg_loss > 0 else 0.0
+        avg_rrr = trades_df["rrr"].mean() if 'rrr' in trades_df.columns else 0.0
         expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
         
         # Kelly criterion
-        kelly = (win_rate/100.0) - ((1 - (win_rate/100.0)) / rrr) if rrr > 0 else 0.0
+        kelly = (win_rate/100.0) - ((1 - (win_rate/100.0)) / avg_rrr) if avg_rrr > 0 else 0.0
         
         # Calculate drawdowns
         balance_history = []
@@ -290,7 +297,7 @@ class TradeModel:
             'short_trades': int(num_sell),
             'long_win_rate': float(buy_win_rate),
             'short_win_rate': float(sell_win_rate),
-            'risk_reward_ratio': float(rrr),
+            'avg_rrr': float(avg_rrr),
             'expected_value': float(expected_value),
             'kelly_criterion': float(kelly),
             'sharpe_ratio': float(sharpe),

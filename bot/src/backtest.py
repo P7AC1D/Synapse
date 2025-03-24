@@ -4,29 +4,16 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
 import json
 import numpy as np
 import pandas as pd
-from stable_baselines3 import DQN, PPO
+from sb3_contrib.ppo_recurrent import RecurrentPPO
 from trade_environment import TradingEnv
 import matplotlib.pyplot as plt
 from datetime import datetime
 import argparse
 
-def load_model(model_path, model_type, env, device='cpu'):
-    """Load a trained model with proper environment context."""
-    model_class = DQN if model_type == 'DQN' else PPO
-    
-    # Define custom objects for loading
-    custom_objects = {
-        "lr_schedule": lambda _: 1e-4,
-        "exploration_schedule": lambda _: 0.01  # Fixed exploration value at the final epsilon
-    }
-    
+def load_model(model_path, env, device='cpu'):
+    """Load a trained PPO-LSTM model with proper environment context."""
     try:
-        model = model_class.load(
-            model_path,
-            env=env,
-            device=device,
-            custom_objects=custom_objects
-        )
+        model = RecurrentPPO.load(model_path, env=env, device=device)
         return model
     except Exception as e:
         print(f"Error loading model: {str(e)}")
@@ -41,17 +28,27 @@ def backtest_model(model, env, initial_balance):
     balance_history = [initial_balance]
     reward_history = []
     position_history = []
+    rrr_history = []  # Track RRR for trades
     trades = []
     
+    # Initialize LSTM states
+    lstm_states = None
+    
     while not done:
-        action, _ = model.predict(obs, deterministic=True)
+        # Get prediction with LSTM state management
+        action, lstm_states = model.predict(obs, state=lstm_states, deterministic=True)
         obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
+        
+        # Process action for metrics
+        position, sl_points, tp_points = env._process_action(action)
+        rrr = tp_points / sl_points if sl_points > 0 else 0
         
         # Record metrics
         balance_history.append(env.balance)
         reward_history.append(reward)
-        position_history.append(action)
+        position_history.append(position)
+        rrr_history.append(rrr)
     
     if hasattr(env, 'trades'):
         trades = env.trades
@@ -60,17 +57,18 @@ def backtest_model(model, env, initial_balance):
         'balance_history': balance_history,
         'reward_history': reward_history,
         'position_history': position_history,
+        'rrr_history': rrr_history,
         'trades': trades,
         'final_balance': env.balance,
         'total_reward': sum(reward_history)
     }
 
 def plot_results(results, save_path=None):
-    """Plot backtest results."""
-    plt.figure(figsize=(15, 10))
+    """Plot backtest results with RRR."""
+    plt.figure(figsize=(15, 12))
     
     # Plot balance over time
-    plt.subplot(311)
+    plt.subplot(411)
     plt.plot(results['balance_history'], label='Account Balance')
     plt.title('Backtest Results')
     plt.xlabel('Steps')
@@ -79,7 +77,7 @@ def plot_results(results, save_path=None):
     plt.grid(True)
     
     # Plot cumulative rewards
-    plt.subplot(312)
+    plt.subplot(412)
     plt.plot(np.cumsum(results['reward_history']), label='Cumulative Reward')
     plt.xlabel('Steps')
     plt.ylabel('Cumulative Reward')
@@ -87,10 +85,18 @@ def plot_results(results, save_path=None):
     plt.grid(True)
     
     # Plot positions
-    plt.subplot(313)
+    plt.subplot(413)
     plt.plot(results['position_history'], label='Position')
     plt.xlabel('Steps')
     plt.ylabel('Position')
+    plt.legend()
+    plt.grid(True)
+    
+    # Plot RRR
+    plt.subplot(414)
+    plt.plot(results['rrr_history'], label='Risk-Reward Ratio')
+    plt.xlabel('Steps')
+    plt.ylabel('RRR')
     plt.legend()
     plt.grid(True)
     
@@ -120,14 +126,19 @@ def calculate_metrics(results, initial_balance):
     avg_win = winning_trades['pnl'].mean() if len(winning_trades) > 0 else 0
     avg_loss = abs(losing_trades['pnl'].mean()) if len(losing_trades) > 0 else 0
     
-    # Risk/Reward
-    risk_reward_ratio = avg_win / avg_loss if avg_loss != 0 else 0
+    # Risk/Reward metrics
+    avg_rrr = trades_df['rrr'].mean() if 'rrr' in trades_df.columns else 0
+    win_rrr = winning_trades['rrr'].mean() if len(winning_trades) > 0 and 'rrr' in trades_df.columns else 0
+    lose_rrr = losing_trades['rrr'].mean() if len(losing_trades) > 0 and 'rrr' in trades_df.columns else 0
     
     # Position-specific metrics
     long_trades = trades_df[trades_df['position'] == 1]
     short_trades = trades_df[trades_df['position'] == -1]
     long_win_rate = (len(long_trades[long_trades['pnl'] > 0]) / len(long_trades) * 100) if len(long_trades) > 0 else 0
     short_win_rate = (len(short_trades[short_trades['pnl'] > 0]) / len(short_trades) * 100) if len(short_trades) > 0 else 0
+    
+    # Kelly Criterion
+    kelly = win_rate/100 - ((1 - win_rate/100) / avg_rrr) if avg_rrr > 0 else 0
     
     metrics = {
         'Initial Balance': initial_balance,
@@ -137,21 +148,22 @@ def calculate_metrics(results, initial_balance):
         'Win Rate (%)': win_rate,
         'Average Win': avg_win,
         'Average Loss': avg_loss,
-        'Risk/Reward Ratio': risk_reward_ratio,
+        'Average RRR': avg_rrr,
+        'Winning Trades RRR': win_rrr,
+        'Losing Trades RRR': lose_rrr,
         'Long Trades': len(long_trades),
         'Long Win Rate (%)': long_win_rate,
         'Short Trades': len(short_trades),
-        'Short Win Rate (%)': short_win_rate
+        'Short Win Rate (%)': short_win_rate,
+        'Kelly Criterion': kelly
     }
     
     return metrics
 
 def main():
-    parser = argparse.ArgumentParser(description='Backtest a trained trading model')
+    parser = argparse.ArgumentParser(description='Backtest a trained PPO-LSTM trading model')
     parser.add_argument('--model_path', type=str, required=True,
                       help='Path to the trained model')
-    parser.add_argument('--model_type', type=str, choices=['DQN', 'PPO'], required=True,
-                      help='Type of model (DQN or PPO)')
     parser.add_argument('--bar_count', type=int, default=50,
                       help='Number of bars to include in state (default: 50)')
     parser.add_argument('--normalization_window', type=int, default=100,
@@ -174,23 +186,11 @@ def main():
     
     # Load data
     try:
-        # Load and preprocess data
         print("\nLoading and preprocessing data...")
         df = pd.read_csv(args.data_path)
-        print(f"Initial columns: {df.columns.tolist()}")
         print(f"Initial shape: {df.shape}")
         
         df.set_index('time', inplace=True)
-        
-        # Handle technical indicator columns - wrapped in try/except for flexibility
-        columns_to_drop = ['EMA_medium', 'MACD', 'Stoch', 'BB_upper', 'BB_middle', 'BB_lower']
-        existing_columns = [col for col in columns_to_drop if col in df.columns]
-        if existing_columns:
-            df.drop(columns=existing_columns, inplace=True)
-            print(f"Dropped columns: {existing_columns}")
-        
-        # Print final data shape and columns
-        print(f"Final shape: {df.shape}")
         print(f"Final columns: {df.columns.tolist()}")
         
         # Calculate expected observation space size
@@ -215,12 +215,12 @@ def main():
         bar_count=args.bar_count,
         normalization_window=args.normalization_window,
         random_start=False,  # No random start for backtesting
-        lot_percentage=args.risk_percentage  # Using risk_percentage as lot_percentage
+        lot_percentage=args.risk_percentage
     )
     
     # Load model
     try:
-        model = load_model(args.model_path, args.model_type, env, args.device)
+        model = load_model(args.model_path, env, args.device)
     except Exception as e:
         print(f"Failed to load model: {str(e)}")
         return
