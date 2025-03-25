@@ -132,35 +132,35 @@ def train_model(train_env, val_env, args):
     lr_schedule = get_linear_fn(
         start=args.learning_rate,
         end=args.final_learning_rate,
-        end_fraction=0.9  # Longer learning rate decay
+        end_fraction=0.9
     )
     
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=4096,        # Increased from 2048 for better value estimation
-        batch_size=1024,     # Increased from 512 for stability
+        n_steps=2048,
+        batch_size=512,
         gamma=0.99,
-        gae_lambda=0.98,     # Increased from 0.95 for longer-term rewards
-        clip_range=0.2,      # Reduced from 0.3 for more conservative updates
+        gae_lambda=0.95,
+        clip_range=0.3,
         clip_range_vf=0.2,
-        ent_coef=0.01,      # Reduced from 0.02 for more focused exploitation
-        vf_coef=1.0,        # Increased from 0.7 for better value estimation
-        max_grad_norm=1.0,   # Increased from 0.7 for bigger updates
+        ent_coef=0.02,
+        vf_coef=0.7,
+        max_grad_norm=0.7, 
         use_sde=False,
         policy_kwargs={
             "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 256,     # Increased from 128
-            "n_lstm_layers": 3,          # Increased from 2
+            "lstm_hidden_size": 128,
+            "n_lstm_layers": 2,
             "shared_lstm": False,
             "enable_critic_lstm": True,
             "net_arch": {
-                "pi": [256, 256, 128],   # Deeper network
-                "vf": [256, 256, 128]
+                "pi": [128, 64, 32],
+                "vf": [128, 64, 32]
             },
             "optimizer_kwargs": {
-                "eps": 1e-5              # Added epsilon for Adam stability
+                "eps": 1e-5
             }
         },
         verbose=0,
@@ -171,9 +171,9 @@ def train_model(train_env, val_env, args):
     callbacks = []
     
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.2,               # Reduced from 0.3 for more focused initial exploration
-        end_eps=0.02,               # Reduced from 0.05
-        decay_timesteps=int(args.total_timesteps * 0.8)  # Longer decay
+        start_eps=0.3, 
+        end_eps=0.05,
+        decay_timesteps=int(args.total_timesteps * 0.8)
     )
     callbacks.append(epsilon_callback)
     
@@ -232,13 +232,13 @@ def main():
     parser.add_argument('--normalization_window', type=int, default=100,
                       help='Window size for data normalization')
     
-    parser.add_argument('--total_timesteps', type=int, default=1000000,  # Increased from 500K
+    parser.add_argument('--total_timesteps', type=int, default=500000,
                       help='Total timesteps for training')
-    parser.add_argument('--learning_rate', type=float, default=1e-4,    # Reduced from 3e-4
+    parser.add_argument('--learning_rate', type=float, default=3e-4,
                       help='Initial learning rate')
-    parser.add_argument('--final_learning_rate', type=float, default=5e-5,  # Reduced from 1e-4
+    parser.add_argument('--final_learning_rate', type=float, default=1e-4,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=25000,
+    parser.add_argument('--eval_freq', type=int, default=50000,
                       help='Evaluation frequency in timesteps')
     
     args = parser.parse_args()
