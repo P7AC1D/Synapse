@@ -33,7 +33,7 @@ class CustomEpsilonCallback(BaseCallback):
 
 class UnifiedEvalCallback(BaseCallback):
     """Optimized evaluation callback with enhanced progress tracking."""
-    def __init__(self, eval_env, eval_freq=25000, best_model_save_path=None, 
+    def __init__(self, eval_env, eval_freq=50000, best_model_save_path=None, 
                  log_path=None, deterministic=True, verbose=1):
         super(UnifiedEvalCallback, self).__init__(verbose=verbose)
         self.eval_env = eval_env
@@ -128,7 +128,7 @@ class UnifiedEvalCallback(BaseCallback):
         return True
 
 def train_model(train_env, val_env, args):
-    """Train the PPO model with improved stability parameters."""
+    """Train the PPO model with optimized hyperparameters for BTC trading."""
     lr_schedule = get_linear_fn(
         start=args.learning_rate,
         end=args.final_learning_rate,
@@ -139,25 +139,25 @@ def train_model(train_env, val_env, args):
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=2048,
-        batch_size=512,
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.3,
-        clip_range_vf=0.2,
-        ent_coef=0.02,
-        vf_coef=0.7,
-        max_grad_norm=0.7, 
+        n_steps=2048,  # Longer sequences for better context
+        batch_size=512,  # Larger batches for more stable updates
+        gamma=0.99,  # Standard discount for trading timescale
+        gae_lambda=0.95,  # Standard GAE parameter
+        clip_range=0.1,  # Very conservative policy updates
+        clip_range_vf=0.1,  # Match policy clip range
+        ent_coef=0.005,  # Much lower entropy to discourage random trading
+        vf_coef=0.8,  # Balance between value and policy learning
+        max_grad_norm=0.3,  # Very conservative gradient clipping
         use_sde=False,
         policy_kwargs={
             "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 128,
-            "n_lstm_layers": 2,
-            "shared_lstm": False,
-            "enable_critic_lstm": True,
+            "lstm_hidden_size": 128,  # Larger LSTM for better pattern recognition
+            "n_lstm_layers": 2,  # Two layers for hierarchical feature learning
+            "shared_lstm": False,  # Separate LSTMs for policy and value
+            "enable_critic_lstm": True,  # Dedicated value network memory
             "net_arch": {
-                "pi": [128, 64, 32],
-                "vf": [128, 64, 32]
+                "pi": [128, 64],  # Deeper policy network
+                "vf": [128, 64]  # Matching value network
             },
             "optimizer_kwargs": {
                 "eps": 1e-5
@@ -171,8 +171,8 @@ def train_model(train_env, val_env, args):
     callbacks = []
     
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.3, 
-        end_eps=0.05,
+        start_eps=0.1,  # Much lower initial exploration
+        end_eps=0.01,  # Very low final exploration
         decay_timesteps=int(args.total_timesteps * 0.8)
     )
     callbacks.append(epsilon_callback)
@@ -227,12 +227,10 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--bar_count', type=int, default=50,
+    parser.add_argument('--bar_count', type=int, default=10,  # Reduced to focus on recent data
                       help='Number of bars to use for each observation')
-    parser.add_argument('--normalization_window', type=int, default=100,
-                      help='Window size for data normalization')
     
-    parser.add_argument('--total_timesteps', type=int, default=500000,
+    parser.add_argument('--total_timesteps', type=int, default=1000000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=3e-4,
                       help='Initial learning rate')
@@ -265,8 +263,7 @@ def main():
     
     env_params = {
         'initial_balance': args.initial_balance,
-        'bar_count': args.bar_count,
-        'normalization_window': args.normalization_window
+        'bar_count': args.bar_count
     }
     
     train_env = Monitor(TradingEnv(train_data, **{**env_params, 'random_start': True}))

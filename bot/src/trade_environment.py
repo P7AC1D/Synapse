@@ -4,19 +4,26 @@ import pandas as pd
 from enum import IntEnum
 from typing import Dict, List, Tuple, Any, Optional, Union
 from gymnasium import spaces
-from sklearn.preprocessing import StandardScaler
 
 class TradingEnv(gym.Env):
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
                  lot_percentage: float = 0.01, bar_count: int = 50, 
-                 normalization_window: int = 100, random_start: bool = False):
+                 random_start: bool = False):
         """Trading environment focused on balance growth."""
         super(TradingEnv, self).__init__()
         
-        self.raw_data = data.copy()
+        # Store raw prices first
+        self.prices = {
+            'close': data['close'].values,
+            'high': data['high'].values,
+            'low': data['low'].values,
+            'spread': data['spread'].values
+        }
+        
+        # Preprocess the data to select and compute the most relevant features
+        self.raw_data = self._preprocess_data(data)
         self.current_step = 0
         self.bar_count = bar_count
-        self.normalization_window = normalization_window
         self.random_start = random_start
         
         self.initial_balance = initial_balance
@@ -32,7 +39,72 @@ class TradingEnv(gym.Env):
         self.reward = 0
         
         self._setup_action_space()
-        self._setup_observation_space(data.shape[1])
+        self._setup_observation_space(self.raw_data.shape[1])
+    
+    def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Preprocess data with advanced price action indicators and safe calculations."""
+        df = pd.DataFrame(index=data.index)
+        
+        # Safe returns calculation
+        df['returns'] = data['close'].pct_change().fillna(0).clip(-0.1, 0.1)
+        
+        # Safe volatility calculation
+        returns_std = df['returns'].rolling(20, min_periods=1).std()
+        df['volatility'] = returns_std.fillna(returns_std.mean()).clip(1e-8, 0.1)
+        
+        # Normalized price range
+        high_low_range = (data['high'] - data['low']) / data['close']
+        df['avg_range'] = high_low_range.rolling(10, min_periods=1).mean().clip(0, 0.1)
+        
+        # Technical indicators with safe normalization
+        df['rsi'] = ((data['RSI'] - 50) / 25).clip(-2, 2)  # Normalized RSI
+        df['trend'] = np.where(data['EMA_fast'] > data['EMA_slow'], 1, -1)
+        
+        # Safe trend strength calculation
+        ema_diff = (data['EMA_fast'] - data['EMA_slow']).abs()
+        df['trend_strength'] = (ema_diff / data['close']).clip(0, 0.1)
+        
+        # Safe momentum calculation
+        returns_mean = df['returns'].rolling(10, min_periods=1).mean()
+        df['momentum'] = (returns_mean / df['volatility']).clip(-3, 3)
+        
+        # Volume analysis with safe normalization
+        volume_sma = data['volume'].rolling(20, min_periods=1).mean()
+        volume_std = data['volume'].rolling(20, min_periods=1).std()
+        volume_std = volume_std.replace(0, volume_std.mean())
+        df['volume'] = ((data['volume'] - volume_sma) / volume_std).clip(-3, 3)
+        
+        # Relative spread
+        df['spread'] = (data['spread'] / data['close']).clip(0, 0.01)
+        
+        # ATR ratio with safe calculation
+        atr_ma = data['ATR'].rolling(50, min_periods=1).mean()
+        atr_ma = atr_ma.replace(0, atr_ma.mean())
+        df['atr_ratio'] = (data['ATR'] / atr_ma).clip(0.1, 10)
+        
+        # Combined entry signal
+        rsi_signal = -1 * df['rsi']  # Invert RSI for better signal alignment
+        volume_signal = df['volume']
+        trend_signal = df['trend'] * df['trend_strength']
+        
+        df['entry_signal'] = ((rsi_signal + volume_signal + trend_signal) / 3).clip(-1, 1)
+        
+        # Price deviation from trend
+        df['price_vs_ema'] = ((data['close'] / data['EMA_slow'] - 1) * 100).clip(-2, 2)
+        
+        # Safe swing calculations
+        high_max = data['high'].rolling(5, min_periods=1).max()
+        low_min = data['low'].rolling(5, min_periods=1).min()
+        df['swing_high'] = ((high_max - data['close']) / data['close']).clip(0, 0.1)
+        df['swing_low'] = ((data['close'] - low_min) / data['close']).clip(0, 0.1)
+        
+        # Replace any remaining NaN values with 0
+        df = df.fillna(0)
+        
+        # Ensure all values are finite
+        df = df.replace([np.inf, -np.inf], 0)
+        
+        return df
     
     def _setup_action_space(self) -> None:
         """Configure combined continuous action space."""
@@ -46,29 +118,21 @@ class TradingEnv(gym.Env):
         """Configure the observation space dimensions."""
         obs_dim = self.bar_count * feature_count
         self.observation_space = spaces.Box(
-            low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32
+            low=-10, high=10, shape=(obs_dim,), dtype=np.float32
         )
         
-    def normalize_window(self, window: np.ndarray) -> np.ndarray:
-        """Normalize data using only past information."""
-        lookback_start = max(0, self.current_step - self.normalization_window)
-        lookback_end = self.current_step + 1
-        history_window = self.raw_data.iloc[lookback_start:lookback_end].values
-        scaler = StandardScaler()
-        scaler.fit(history_window)
-        return scaler.transform(window)
-
     def get_history(self) -> np.ndarray:
-        """Return normalized data window for observation."""
+        """Return feature window for observation."""
         start = max(0, self.current_step - self.bar_count + 1)
         end = self.current_step + 1
         window = self.raw_data.iloc[start:end].values
-        normalized_window = self.normalize_window(window)
-        if normalized_window.shape[0] < self.bar_count:
-            padding = np.zeros((self.bar_count - normalized_window.shape[0], normalized_window.shape[1]))
-            normalized_window = np.vstack((padding, normalized_window))
-        return normalized_window.flatten()
-
+        
+        if window.shape[0] < self.bar_count:
+            padding = np.zeros((self.bar_count - window.shape[0], window.shape[1]))
+            window = np.vstack((padding, window))
+            
+        return window.flatten().astype(np.float32)
+    
     def _process_action(self, action: np.ndarray) -> Tuple[int, float, float]:
         """Process the continuous action into position and SL/TP points."""
         # Convert continuous position (-1 to 1) into discrete decision
@@ -199,10 +263,10 @@ class TradingEnv(gym.Env):
         """Take one environment step focusing on balance growth."""
         position, sl_points, tp_points = self._process_action(action)
 
-        current_price = self.raw_data.iloc[self.current_step]["close"]
-        high_price = self.raw_data.iloc[self.current_step]["high"]
-        low_price = self.raw_data.iloc[self.current_step]["low"]
-        spread = self.raw_data.iloc[self.current_step]["spread"] / 100.0
+        current_price = self.prices['close'][self.current_step]
+        high_price = self.prices['high'][self.current_step]
+        low_price = self.prices['low'][self.current_step]
+        spread = self.prices['spread'][self.current_step] / 100.0
 
         previous_balance = self.balance
         self.max_balance = max(self.balance, self.max_balance)
