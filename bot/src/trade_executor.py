@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, Optional
 
 import numpy as np
+import MetaTrader5 as mt5
 from mt5_connector import MT5Connector
 from config import MT5_SYMBOL, MT5_BASE_SYMBOL, RISK_PERCENTAGE, MT5_COMMENT
 
@@ -85,6 +86,15 @@ class TradeExecutor:
                 self.logger.debug("Hold signal - no trade execution")
                 return True
             
+            # Get symbol info for stop levels
+            symbol_info = mt5.symbol_info(MT5_SYMBOL)
+            if symbol_info is None:
+                self.logger.error("Failed to get symbol info")
+                return False
+
+            # Convert stop level from points to price units
+            min_stop_level = symbol_info.point * symbol_info.trade_stops_level
+
             # Get current price
             if position == 1:
                 current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[1]  # Ask for buy
@@ -94,14 +104,16 @@ class TradeExecutor:
             if current_price is None:
                 self.logger.error("Failed to get current price")
                 return False
-                
-            # Set SL/TP based on points
+
+            # Ensure stops are at least minimum distance away
             if position == 1:  # Buy
-                sl_price = current_price - sl_points
-                tp_price = current_price + tp_points
+                sl_price = min(current_price - sl_points, current_price - min_stop_level)  # Keep SL closer (smaller distance down)
+                tp_price = max(current_price + tp_points, current_price + min_stop_level)  # Allow TP further (larger distance up)
             else:  # Sell
-                sl_price = current_price + sl_points
-                tp_price = current_price - tp_points
+                sl_price = max(current_price + sl_points, current_price + min_stop_level)  # Keep SL closer (smaller distance up)
+                tp_price = min(current_price - tp_points, current_price - min_stop_level)  # Allow TP further (larger distance down)
+
+            self.logger.debug(f"Stop levels - Min: {min_stop_level}, SL Distance: {abs(current_price - sl_price)}, TP Distance: {abs(current_price - tp_price)}")
             
             # Check existing positions
             positions = self.mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
@@ -138,10 +150,14 @@ class TradeExecutor:
             )
             
             # Get filling type
-            filling_type = self.mt5.check_filling_type('buy' if position == 1 else 'sell')
+            filling_type = self.mt5.check_filling_type(
+                MT5_SYMBOL, 
+                'buy' if position == 1 else 'sell'
+            )
             
             # Execute the trade
             success = self.mt5.open_trade(
+                symbol=MT5_SYMBOL,
                 lot=lot_size,
                 price=current_price,
                 sl_price=sl_price,

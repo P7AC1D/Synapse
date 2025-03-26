@@ -7,19 +7,11 @@ from typing import Optional, Tuple, List, Any, Dict, Union
 
 import MetaTrader5 as mt5
 
-from config import MT5_PATH, MT5_COMMENT, MT5_BASE_SYMBOL
+from config import MT5_PATH, MT5_COMMENT, MT5_BASE_SYMBOL, MT5_SYMBOL
 from creds import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER
 
-
 def to_mt5_timeframe(timeframe_minutes: int) -> int:
-    """Convert minutes to MT5 timeframe constant.
-    
-    Args:
-        timeframe_minutes: Timeframe in minutes
-        
-    Returns:
-        MT5 timeframe constant
-    """
+    """Convert minutes to MT5 timeframe constant."""
     timeframe_map = {
         1: mt5.TIMEFRAME_M1,
         2: mt5.TIMEFRAME_M2,
@@ -42,7 +34,6 @@ def to_mt5_timeframe(timeframe_minutes: int) -> int:
     }
     return timeframe_map.get(timeframe_minutes, mt5.TIMEFRAME_M1)
 
-
 class MT5Connector:
     """Connector for interacting with MetaTrader 5 platform."""
     
@@ -52,11 +43,7 @@ class MT5Connector:
         self.logger = logging.getLogger(__name__)
 
     def connect(self) -> bool:
-        """Connect to MT5 platform.
-        
-        Returns:
-            bool: True if connection successful, False otherwise
-        """
+        """Connect to MT5 platform."""
         if self.connected:
             return True
             
@@ -92,25 +79,13 @@ class MT5Connector:
         self.connected = False
 
     def _ensure_connected(self) -> bool:
-        """Ensure connection to MT5 is active.
-        
-        Returns:
-            bool: True if connected, False if connection failed
-        """
+        """Ensure connection to MT5 is active."""
         if not self.connected:
             return self.connect()
         return True
     
     def fetch_current_bar(self, symbol: str, timeframe_minutes: int) -> Optional[Any]:
-        """Fetch current price bar.
-        
-        Args:
-            symbol: Trading symbol
-            timeframe_minutes: Timeframe in minutes
-            
-        Returns:
-            Current bar data or None if failed
-        """
+        """Fetch current price bar."""
         if not self._ensure_connected():
             return None
 
@@ -122,16 +97,7 @@ class MT5Connector:
         )
     
     def fetch_data(self, symbol: str, timeframe_minutes: int, bar_count: int) -> Optional[Any]:
-        """Fetch historical price data.
-        
-        Args:
-            symbol: Trading symbol
-            timeframe_minutes: Timeframe in minutes
-            bar_count: Number of bars to fetch
-            
-        Returns:
-            Historical bar data or None if failed
-        """
+        """Fetch historical price data."""
         if not self._ensure_connected():
             return None
 
@@ -143,16 +109,7 @@ class MT5Connector:
         )
     
     def modify_stop_loss(self, ticket: int, sl: float, tp: float) -> bool:
-        """Modify stop loss and take profit for a position.
-        
-        Args:
-            ticket: Position ticket
-            sl: New stop loss price
-            tp: New take profit price
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
+        """Modify stop loss and take profit for a position."""
         if not self._ensure_connected():
             return False
 
@@ -169,19 +126,11 @@ class MT5Connector:
             return False
         return True
 
-    def check_filling_type(self, order_type: str) -> int:
-        """Check appropriate filling type for the symbol.
-        
-        Args:
-            order_type: Order type ('buy' or 'sell')
-            
-        Returns:
-            int: Appropriate filling type
-        """
+    def check_filling_type(self, symbol: str, order_type: str) -> int:
+        """Check appropriate filling type for the symbol."""
         if not self._ensure_connected():
             return mt5.ORDER_FILLING_IOC  # Default filling type
 
-        symbol = MT5_BASE_SYMBOL
         price = mt5.symbol_info_tick(symbol).ask if order_type == 'buy' else mt5.symbol_info_tick(symbol).bid
 
         for filling_type in range(2):
@@ -201,27 +150,15 @@ class MT5Connector:
                 
         return mt5.ORDER_FILLING_IOC  # Default to IOC if no valid filling type found
     
-    def open_trade(self, lot: float, price: float, sl_price: float, 
+    def open_trade(self, symbol: str, lot: float, price: float, sl_price: float, 
                    tp_price: float, order_type: str, filling_type: int) -> bool:
-        """Open a new trade.
-        
-        Args:
-            lot: Lot size
-            price: Entry price
-            sl_price: Stop loss price
-            tp_price: Take profit price
-            order_type: Order type ('buy' or 'sell')
-            filling_type: Order filling type
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
+        """Open a new trade."""
         if not self._ensure_connected():
             return False
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": MT5_BASE_SYMBOL,
+            "symbol": symbol,  # Use provided symbol
             "volume": lot,
             "type": mt5.ORDER_TYPE_BUY if order_type == 'buy' else mt5.ORDER_TYPE_SELL,
             "price": price,
@@ -235,7 +172,7 @@ class MT5Connector:
         }
 
         self.logger.debug(
-            f"Sending order. Type: {order_type} | Price: {price:.2f} | "
+            f"Sending order for {symbol}. Type: {order_type} | Price: {price:.2f} | "
             f"SL: {sl_price:.2f} | TP: {tp_price:.2f} | Lot: {lot}"
         )
         
@@ -246,14 +183,7 @@ class MT5Connector:
         return True
     
     def get_account_balance(self) -> float:
-        """Get account balance.
-        
-        Returns:
-            float: Account balance
-        
-        Raises:
-            Exception: If failed to get account info
-        """
+        """Get account balance."""
         if not self._ensure_connected():
             raise Exception("Not connected to MT5")
 
@@ -263,17 +193,7 @@ class MT5Connector:
         return account_info.balance
     
     def get_symbol_info(self, symbol: str) -> Tuple[float, float, float]:
-        """Get symbol trading information.
-        
-        Args:
-            symbol: Trading symbol
-            
-        Returns:
-            Tuple containing contract size, min lot, max lot
-            
-        Raises:
-            Exception: If failed to get symbol info
-        """
+        """Get symbol trading information."""
         if not self._ensure_connected():
             raise Exception(f"Not connected to MT5")
         
@@ -283,17 +203,7 @@ class MT5Connector:
         return symbol_info.trade_contract_size, symbol_info.volume_min, symbol_info.volume_max
     
     def get_symbol_info_tick(self, symbol: str) -> Tuple[float, float]:
-        """Get current bid/ask prices.
-        
-        Args:
-            symbol: Trading symbol
-            
-        Returns:
-            Tuple of (bid, ask) prices
-            
-        Raises:
-            Exception: If failed to get symbol tick info
-        """
+        """Get current bid/ask prices."""
         if not self._ensure_connected():
             raise Exception(f"Not connected to MT5")
 
@@ -304,15 +214,7 @@ class MT5Connector:
         return symbol_info_tick.bid, symbol_info_tick.ask
     
     def get_open_positions(self, symbol: str, comment: str) -> List[Any]:
-        """Get open positions for a symbol.
-        
-        Args:
-            symbol: Trading symbol
-            comment: Position comment to filter by
-            
-        Returns:
-            List of open positions
-        """
+        """Get open positions for a symbol."""
         if not self._ensure_connected():
             return []
 
@@ -325,14 +227,7 @@ class MT5Connector:
         return filtered_positions
     
     def close_position(self, ticket: int) -> bool:
-        """Close a specific position.
-        
-        Args:
-            ticket: Position ticket
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
+        """Close a specific position."""
         if not self._ensure_connected():
             return False
 
@@ -366,15 +261,7 @@ class MT5Connector:
         return True
             
     def close_open_positions(self, symbol: str, comment: str) -> int:
-        """Close all open positions for a symbol.
-        
-        Args:
-            symbol: Trading symbol
-            comment: Position comment to filter by
-            
-        Returns:
-            int: Number of positions successfully closed
-        """
+        """Close all open positions for a symbol."""
         if not self._ensure_connected():
             return 0
 
