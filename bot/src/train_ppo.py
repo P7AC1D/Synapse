@@ -139,25 +139,25 @@ def train_model(train_env, val_env, args):
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=1024,  # Shorter sequences for faster adaptation
-        batch_size=256,  # Smaller batches for more frequent updates
+        n_steps=1536,  # Balance between context length and update frequency
+        batch_size=384,  # Moderate batch size for stable learning
         gamma=0.99,  # Keep this for 15-min timeframe
         gae_lambda=0.95,  # Standard GAE parameter
-        clip_range=0.2,  # More aggressive updates
-        clip_range_vf=0.2,  # Match policy clip range
-        ent_coef=0.01,  # Increase exploration
-        vf_coef=1.0,  # Stronger value estimation
-        max_grad_norm=0.5,  # Increased for faster learning
+        clip_range=0.15,  # Moderate policy updates
+        clip_range_vf=0.15,  # Match policy clip range
+        ent_coef=0.007,  # Moderate exploration
+        vf_coef=0.9,  # Balance value and policy learning
+        max_grad_norm=0.4,  # Moderate gradient clipping
         use_sde=False,
         policy_kwargs={
             "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 64,  # Simpler memory
-            "n_lstm_layers": 1,  # Single layer sufficient
-            "shared_lstm": True,  # Share memory between policy/value
-            "enable_critic_lstm": False,  # Using shared LSTM
+            "lstm_hidden_size": 96,  # Moderate memory capacity
+            "n_lstm_layers": 2,  # Keep two layers for pattern recognition
+            "shared_lstm": False,  # Separate policy and value memory
+            "enable_critic_lstm": True,  # Dedicated value network memory
             "net_arch": {
-                "pi": [64, 32],  # Simpler policy network
-                "vf": [64, 32]  # Matching value network
+                "pi": [96, 48],  # Moderate policy network
+                "vf": [96, 48]  # Matching value network
             },
             "optimizer_kwargs": {
                 "eps": 1e-5
