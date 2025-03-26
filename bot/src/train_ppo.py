@@ -139,25 +139,25 @@ def train_model(train_env, val_env, args):
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=1536,  # Balance between context length and update frequency
-        batch_size=384,  # Moderate batch size for stable learning
+        n_steps=2048,  # Longer sequences for better temporal context
+        batch_size=512,  # Larger batches for more stable updates
         gamma=0.99,  # Keep this for 15-min timeframe
-        gae_lambda=0.95,  # Standard GAE parameter
-        clip_range=0.15,  # Moderate policy updates
-        clip_range_vf=0.15,  # Match policy clip range
-        ent_coef=0.007,  # Moderate exploration
-        vf_coef=0.9,  # Balance value and policy learning
-        max_grad_norm=0.4,  # Moderate gradient clipping
+        gae_lambda=0.98,  # Increase advantage estimation horizon
+        clip_range=0.1,  # More conservative policy updates
+        clip_range_vf=0.1,  # Match policy clip range
+        ent_coef=0.005,  # Lower entropy to exploit learned behaviors
+        vf_coef=1.0,  # Stronger value estimation
+        max_grad_norm=0.3,  # More conservative gradient updates
         use_sde=False,
         policy_kwargs={
             "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 96,  # Moderate memory capacity
-            "n_lstm_layers": 2,  # Keep two layers for pattern recognition
-            "shared_lstm": False,  # Separate policy and value memory
-            "enable_critic_lstm": True,  # Dedicated value network memory
+            "lstm_hidden_size": 128,  # Larger memory for pattern retention
+            "n_lstm_layers": 2,  # Two layers for hierarchical patterns
+            "shared_lstm": False,  # Separate memory streams
+            "enable_critic_lstm": True,  # Dedicated value memory
             "net_arch": {
-                "pi": [96, 48],  # Moderate policy network
-                "vf": [96, 48]  # Matching value network
+                "pi": [128, 64],  # Deeper policy network
+                "vf": [128, 64]  # Matching value network
             },
             "optimizer_kwargs": {
                 "eps": 1e-5

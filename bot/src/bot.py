@@ -5,7 +5,7 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
 
 # -*- coding: utf-8 -*-
 """
-Deep Reinforcement Learning Trading Bot using DQN model.
+Deep Reinforcement Learning Trading Bot using PPO-LSTM model.
 """
 
 import time
@@ -14,6 +14,7 @@ import signal
 import sys
 from datetime import datetime
 from typing import Optional
+import pandas as pd
 
 # Import specific config values instead of using wildcard imports
 from mt5_connector import MT5Connector
@@ -30,7 +31,7 @@ from config import (
 
 
 class TradingBot:
-    """Trading bot that uses a DQN model to make trading decisions."""
+    """Trading bot that uses a PPO-LSTM model to make trading decisions."""
     
     def __init__(self):
         """Initialize the trading bot components."""
@@ -41,10 +42,11 @@ class TradingBot:
         self.model = None
         self.trade_executor = None
         self.last_bar_index = None
+        self.lstm_states = None  # Store LSTM states between predictions
         
     def setup_logging(self) -> None:
         """Configure logging with both console and file output."""
-        log_file = datetime.now().strftime("DRL_DQN_Bot_%Y-%m-%d.log")
+        log_file = datetime.now().strftime("DRL_PPO_LSTM_Bot_%Y-%m-%d.log")
         logging.basicConfig(
             level=logging.DEBUG,
             format="%(asctime)s - %(levelname)s - %(message)s",
@@ -100,14 +102,22 @@ class TradingBot:
             self.logger.info(f"New bar detected at {current_bar.index[-1]}")
             self.last_bar_index = current_bar.index[-1]
             
-            # Get the data for prediction
+            # Get and preprocess the data for prediction
             data = self.data_fetcher.fetch_data()
             if data is None:
                 self.logger.warning("Failed to fetch market data")
                 return
-                
+
+            # Reset LSTM states on any data gap
+            if self.last_bar_index is not None:
+                expected_time = self.last_bar_index + pd.Timedelta(minutes=MT5_TIMEFRAME_MINUTES)
+                if current_bar.index[-1] != expected_time:
+                    self.logger.info("Data gap detected, resetting LSTM states")
+                    self.lstm_states = None
+
             # Make prediction and execute trade
             prediction = self.model.predict_single(data)
+            self.lstm_states = self.model.lstm_states  # Update LSTM states
             self.logger.debug(f"Model prediction: {prediction}")
             self.trade_executor.execute_trade(prediction)
             
@@ -129,6 +139,10 @@ class TradingBot:
         self.logger.info("Cleaning up resources...")
         if self.mt5:
             self.mt5.disconnect()
+        # Reset model states
+        if self.model:
+            self.model.reset_states()
+            self.lstm_states = None
         self.logger.info("Cleanup complete")
         
     def run(self) -> None:
