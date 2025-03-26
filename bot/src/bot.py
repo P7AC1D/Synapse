@@ -73,7 +73,13 @@ class TradingBot:
             self.data_fetcher = DataFetcher(
                 self.mt5, MT5_SYMBOL, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH + 1
             )
+            # Initialize trading model
+            self.logger.info(f"Loading trading model from: {MODEL_PATH}")
             self.model = TradeModel(MODEL_PATH)
+            if not self.model.model:  # Check if model loaded successfully
+                self.logger.error("Failed to load trading model")
+                return False
+
             self.trade_executor = TradeExecutor(self.mt5)
             
             # Get initial bar data
