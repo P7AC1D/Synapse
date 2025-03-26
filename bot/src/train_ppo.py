@@ -139,25 +139,25 @@ def train_model(train_env, val_env, args):
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=2048,  # Longer sequences for better context
-        batch_size=512,  # Larger batches for more stable updates
-        gamma=0.99,  # Standard discount for trading timescale
+        n_steps=1024,  # Shorter sequences for faster adaptation
+        batch_size=256,  # Smaller batches for more frequent updates
+        gamma=0.99,  # Keep this for 15-min timeframe
         gae_lambda=0.95,  # Standard GAE parameter
-        clip_range=0.1,  # Very conservative policy updates
-        clip_range_vf=0.1,  # Match policy clip range
-        ent_coef=0.005,  # Much lower entropy to discourage random trading
-        vf_coef=0.8,  # Balance between value and policy learning
-        max_grad_norm=0.3,  # Very conservative gradient clipping
+        clip_range=0.2,  # More aggressive updates
+        clip_range_vf=0.2,  # Match policy clip range
+        ent_coef=0.01,  # Increase exploration
+        vf_coef=1.0,  # Stronger value estimation
+        max_grad_norm=0.5,  # Increased for faster learning
         use_sde=False,
         policy_kwargs={
             "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 128,  # Larger LSTM for better pattern recognition
-            "n_lstm_layers": 2,  # Two layers for hierarchical feature learning
-            "shared_lstm": False,  # Separate LSTMs for policy and value
-            "enable_critic_lstm": True,  # Dedicated value network memory
+            "lstm_hidden_size": 64,  # Simpler memory
+            "n_lstm_layers": 1,  # Single layer sufficient
+            "shared_lstm": True,  # Share memory between policy/value
+            "enable_critic_lstm": False,  # Using shared LSTM
             "net_arch": {
-                "pi": [128, 64],  # Deeper policy network
-                "vf": [128, 64]  # Matching value network
+                "pi": [64, 32],  # Simpler policy network
+                "vf": [64, 32]  # Matching value network
             },
             "optimizer_kwargs": {
                 "eps": 1e-5
@@ -171,8 +171,8 @@ def train_model(train_env, val_env, args):
     callbacks = []
     
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.1,  # Much lower initial exploration
-        end_eps=0.01,  # Very low final exploration
+        start_eps=0.2,  # Higher initial exploration
+        end_eps=0.02,  # Keep some exploration
         decay_timesteps=int(args.total_timesteps * 0.8)
     )
     callbacks.append(epsilon_callback)
