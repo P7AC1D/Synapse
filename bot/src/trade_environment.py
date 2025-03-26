@@ -110,7 +110,7 @@ class TradingEnv(gym.Env):
         """Configure combined continuous action space."""
         self.action_space = spaces.Box(
             low=np.array([-1, 1000, 1000]),
-            high=np.array([1, 10000, 10000]),
+            high=np.array([1, 5000, 15000]),  # Lower SL range, higher TP range for better RR
             dtype=np.float32
         )
     
@@ -144,8 +144,9 @@ class TradingEnv(gym.Env):
             position = 0
             
         # Clip SL/TP within bounds but don't enforce RRR
-        sl_points = np.clip(action[1], 1000, 10000)
-        tp_points = np.clip(action[2], 1000, 10000)
+        # Scale SL and TP differently to encourage varied RR ratios
+        sl_points = np.clip(action[1], 1000, 5000)  # Tighter SL range
+        tp_points = np.clip(action[2], 1000, 15000)  # Wider TP range
         
         return position, sl_points, tp_points
     
@@ -368,7 +369,9 @@ class TradingEnv(gym.Env):
         total_return = ((self.balance - self.initial_balance) / self.initial_balance) * 100
         expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
         
+        # Calculate trade statistics
         avg_rrr = trades_df["rrr"].mean() if total_trades > 0 else 0.0
+        avg_holding_length = (trades_df["exit_step"] - trades_df["entry_step"]).mean() if total_trades > 0 else 0.0
         
         num_buy = trades_df[trades_df["position"] == 1].shape[0]
         num_sell = trades_df[trades_df["position"] == -1].shape[0]
@@ -404,6 +407,7 @@ class TradingEnv(gym.Env):
             f"Average Win: {avg_pnl_tp:.2f}\n"
             f"Average Loss: {avg_pnl_sl:.2f}\n"
             f"Average RRR: {avg_rrr:.2f}\n"
+            f"Average Length: {avg_holding_length:.1f} bars\n"
             f"Expected Value: {expected_value:.2f}\n"
             f"Kelly Criterion: {kelly_criteria:.2f}\n"
             f"Sharpe Ratio: {sharpe:.2f}\n"
