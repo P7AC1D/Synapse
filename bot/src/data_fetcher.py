@@ -42,7 +42,7 @@ class DataFetcher:
         rates = self.mt5_connector.fetch_data(
             self.symbol, 
             self.timeframe, 
-            self.num_bars * 2
+            self.num_bars + 50
         )
 
         if rates is None or len(rates) == 0:
