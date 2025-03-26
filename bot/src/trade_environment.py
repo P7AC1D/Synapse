@@ -209,10 +209,13 @@ class TradingEnv(gym.Env):
         # Unrealized positions get small RRR-scaled rewards for price movement
         for pos in self.open_positions:
             unrealized_pnl = 0
+            # Account for spread in unrealized PnL too
             if pos["position"] == 1:
-                unrealized_pnl = ((current_price - pos["entry_price"]) - spread) * pos["lot_size"]
+                entry_with_spread = pos["entry_price"] + pos["spread"]  # Buy pays spread
+                unrealized_pnl = (current_price - entry_with_spread) * pos["lot_size"]
             else:
-                unrealized_pnl = ((pos["entry_price"] - current_price) - spread) * pos["lot_size"]
+                entry_with_spread = pos["entry_price"] - pos["spread"]  # Sell receives spread
+                unrealized_pnl = (entry_with_spread - current_price) * pos["lot_size"]
             
             # Small RRR bonus for positive unrealized PnL
             if unrealized_pnl > 0:
@@ -231,9 +234,11 @@ class TradingEnv(gym.Env):
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
                 pnl = 0
                 if pos["position"] == 1:
-                    pnl = ((exit_price - pos["entry_price"]) - spread) * pos["lot_size"]
+                    entry_with_spread = pos["entry_price"] + pos["spread"]  # Buy pays spread
+                    pnl = (exit_price - entry_with_spread) * pos["lot_size"]
                 else:
-                    pnl = ((pos["entry_price"] - exit_price) - spread) * pos["lot_size"]
+                    entry_with_spread = pos["entry_price"] - pos["spread"]  # Sell receives spread
+                    pnl = (entry_with_spread - exit_price) * pos["lot_size"]
                 
                 # Base reward from PnL
                 reward += (pnl / prev_balance)
