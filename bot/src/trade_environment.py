@@ -109,8 +109,8 @@ class TradingEnv(gym.Env):
     def _setup_action_space(self) -> None:
         """Configure combined continuous action space."""
         self.action_space = spaces.Box(
-            low=np.array([-1, 1000, 1000]),
-            high=np.array([1, 5000, 15000]),  # Lower SL range, higher TP range for better RR
+            low=np.array([-1, 100, 100]),     # Minimum 100 point movement
+            high=np.array([1, 1000, 3000]),   # Max 1000 SL, 3000 TP for reasonable RR ranges
             dtype=np.float32
         )
     
@@ -144,9 +144,9 @@ class TradingEnv(gym.Env):
             position = 0
             
         # Clip SL/TP within bounds but don't enforce RRR
-        # Scale SL and TP differently to encourage varied RR ratios
-        sl_points = np.clip(action[1], 1000, 5000)  # Tighter SL range
-        tp_points = np.clip(action[2], 1000, 15000)  # Wider TP range
+        # Scale SL and TP for reasonable price movements
+        sl_points = np.clip(action[1], 100, 1000)    # Tighter SL range for better risk control
+        tp_points = np.clip(action[2], 100, 3000)    # TP up to 3x SL for good RR potential
         
         return position, sl_points, tp_points
     
