@@ -110,23 +110,40 @@ class DataFetcher:
 
         df['volume'] = df['tick_volume']
 
-        # Remove the last row as it might be incomplete
-        df = df.iloc[:-1]
+        try:
+            # Remove the last row as it might be incomplete
+            df = df.iloc[:-1]
 
-        # Add technical indicators
-        df = self._add_technical_indicators(df)
+            if len(df) == 0:
+                self.logger.error("No data available after removing incomplete bar")
+                return None
 
-        # Clean up columns
-        df.drop(columns=['real_volume', 'tick_volume'], inplace=True)
-        df.dropna(inplace=True)
+            # Add technical indicators
+            df = self._add_technical_indicators(df)
 
-        # Log data range
-        start_datetime = df.index[0]
-        end_datetime = df.index[-1]
-        self.logger.debug(f"Data collected from {start_datetime} to {end_datetime}")
+            # Clean up columns
+            df.drop(columns=['real_volume', 'tick_volume'], inplace=True)
+            df.dropna(inplace=True)
 
-        # Return only the required number of bars
-        return df.tail(self.num_bars)
+            if len(df) == 0:
+                self.logger.error("No data available after cleaning and calculating indicators")
+                return None
+
+            # Log data range
+            start_datetime = df.index[0]
+            end_datetime = df.index[-1]
+            self.logger.debug(f"Data collected from {start_datetime} to {end_datetime}")
+
+            if len(df) < self.num_bars:
+                self.logger.warning(f"Insufficient data: only {len(df)} bars available")
+                return None
+
+            # Return only the required number of bars
+            return df.tail(self.num_bars)
+
+        except Exception as e:
+            self.logger.error(f"Error formatting data: {e}")
+            return None
         
     def _add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
