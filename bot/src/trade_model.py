@@ -13,19 +13,17 @@ from trade_environment import TradingEnv
 class TradeModel:
     """Class for loading and making predictions with a trained PPO-LSTM model."""
     
-    def __init__(self, model_path: str, bar_count: int = 50, normalization_window: int = 100):
+    def __init__(self, model_path: str, bar_count: int = 10):
         """
         Initialize the trade model.
         
         Args:
             model_path: Path to the saved model file
             bar_count: Number of bars in each observation
-            normalization_window: Window size for normalization
         """
         self.logger = logging.getLogger(__name__)
         self.model_path = Path(model_path)
         self.bar_count = bar_count
-        self.normalization_window = normalization_window
         self.model = None
         self.required_columns = [
             'open', 'high', 'low', 'close', 'spread', 'volume', 
@@ -48,7 +46,6 @@ class TradeModel:
             env = TradingEnv(
                 data=pd.DataFrame(columns=self.required_columns),  # Empty DataFrame with correct columns
                 bar_count=self.bar_count,
-                normalization_window=self.normalization_window,
                 random_start=False
             )
             
@@ -107,7 +104,6 @@ class TradeModel:
         env = TradingEnv(
             data=data,
             bar_count=self.bar_count,
-            normalization_window=self.normalization_window,
             random_start=False
         )
         
@@ -168,7 +164,6 @@ class TradeModel:
         env = TradingEnv(
             data=data,
             bar_count=self.bar_count,
-            normalization_window=self.normalization_window,
             random_start=False,
             initial_balance=initial_balance,
             lot_percentage=risk_percentage
