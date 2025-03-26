@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional
 
 import numpy as np
 from mt5_connector import MT5Connector
-from config import MT5_BASE_SYMBOL, RISK_PERCENTAGE, MT5_COMMENT
+from config import MT5_SYMBOL, MT5_BASE_SYMBOL, RISK_PERCENTAGE, MT5_COMMENT
 
 class TradeExecutor:
     """Class for executing trades based on model predictions."""
@@ -34,10 +34,10 @@ class TradeExecutor:
         """
         try:
             # Get symbol trading information
-            contract_size, min_lot, max_lot = self.mt5.get_symbol_info(MT5_BASE_SYMBOL)
+            contract_size, min_lot, max_lot = self.mt5.get_symbol_info(MT5_SYMBOL)
             
             # Get USDZAR price for conversion
-            usd_zar_bid, _ = self.mt5.get_symbol_info_tick("USDZAR")
+            usd_zar_bid, _ = self.mt5.get_symbol_info_tick(MT5_BASE_SYMBOL)
             
             # Calculate risk amount based on percentage from config
             base_risk = account_balance * (RISK_PERCENTAGE / 100)
@@ -87,9 +87,9 @@ class TradeExecutor:
             
             # Get current price
             if position == 1:
-                current_price = self.mt5.get_symbol_info_tick(MT5_BASE_SYMBOL)[1]  # Ask for buy
+                current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[1]  # Ask for buy
             else:
-                current_price = self.mt5.get_symbol_info_tick(MT5_BASE_SYMBOL)[0]  # Bid for sell
+                current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[0]  # Bid for sell
                 
             if current_price is None:
                 self.logger.error("Failed to get current price")
@@ -104,7 +104,7 @@ class TradeExecutor:
                 tp_price = current_price - tp_points
             
             # Check existing positions
-            positions = self.mt5.get_open_positions(MT5_BASE_SYMBOL, MT5_COMMENT)
+            positions = self.mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
             if positions is None:
                 self.logger.error("Failed to get open positions")
                 return False
