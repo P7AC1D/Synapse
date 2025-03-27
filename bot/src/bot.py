@@ -114,11 +114,13 @@ class TradingBot:
                 self.logger.warning("Failed to fetch market data")
                 return
 
-            # Reset LSTM states on any data gap
+            # Reset LSTM states only on significant data gaps
             if self.last_bar_index is not None:
                 expected_time = self.last_bar_index + pd.Timedelta(minutes=MT5_TIMEFRAME_MINUTES)
-                if current_bar.index[-1] != expected_time:
-                    self.logger.info("Data gap detected, resetting LSTM states")
+                time_diff = abs((current_bar.index[-1] - expected_time).total_seconds())
+                # Only reset if gap is more than 2x the timeframe
+                if time_diff > (MT5_TIMEFRAME_MINUTES * 2 * 60):
+                    self.logger.info(f"Significant data gap detected ({time_diff/60:.1f} minutes), resetting LSTM states")
                     self.lstm_states = None
 
             # Make prediction and execute trade
