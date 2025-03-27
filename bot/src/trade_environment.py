@@ -41,6 +41,16 @@ class TradingEnv(gym.Env):
         self._setup_action_space()
         self._setup_observation_space(self.raw_data.shape[1])
     
+    def _get_bid_ask_prices(self, step: int) -> Tuple[float, float]:
+        """Calculate bid and ask prices from mid price and spread."""
+        mid_price = self.prices['close'][step]
+        raw_spread = self.prices['spread'][step] / 100.0  # Convert spread from points
+        
+        bid_price = mid_price - (raw_spread / 2)
+        ask_price = mid_price + (raw_spread / 2)
+        
+        return bid_price, ask_price
+
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """Preprocess data with advanced price action indicators and safe calculations."""
         df = pd.DataFrame(index=data.index)
@@ -86,7 +96,6 @@ class TradingEnv(gym.Env):
         rsi_signal = -1 * df['rsi']  # Invert RSI for better signal alignment
         volume_signal = df['volume']
         trend_signal = df['trend'] * df['trend_strength']
-        
         df['entry_signal'] = ((rsi_signal + volume_signal + trend_signal) / 3).clip(-1, 1)
         
         # Price deviation from trend
@@ -100,8 +109,6 @@ class TradingEnv(gym.Env):
         
         # Replace any remaining NaN values with 0
         df = df.fillna(0)
-        
-        # Ensure all values are finite
         df = df.replace([np.inf, -np.inf], 0)
         
         return df
@@ -121,6 +128,20 @@ class TradingEnv(gym.Env):
             low=-10, high=10, shape=(obs_dim,), dtype=np.float32
         )
         
+    def _process_action(self, action: np.ndarray) -> Tuple[int, float, float]:
+        """Process the continuous action into position and SL/TP points."""
+        if action[0] > 0.33:  # Upper third for buy
+            position = 1
+        elif action[0] < -0.33:  # Lower third for sell
+            position = -1
+        else:  # Middle third for hold
+            position = 0
+            
+        sl_points = np.clip(action[1], 100, 1000)
+        tp_points = np.clip(action[2], 100, 3000)
+        
+        return position, sl_points, tp_points
+        
     def get_history(self) -> np.ndarray:
         """Return feature window for observation."""
         start = max(0, self.current_step - self.bar_count + 1)
@@ -133,26 +154,9 @@ class TradingEnv(gym.Env):
             
         return window.flatten().astype(np.float32)
     
-    def _process_action(self, action: np.ndarray) -> Tuple[int, float, float]:
-        """Process the continuous action into position and SL/TP points."""
-        # Convert continuous position (-1 to 1) into discrete decision
-        if action[0] > 0.33:  # Upper third for buy
-            position = 1
-        elif action[0] < -0.33:  # Lower third for sell
-            position = -1
-        else:  # Middle third for hold
-            position = 0
-            
-        # Clip SL/TP within bounds but don't enforce RRR
-        # Scale SL and TP for reasonable price movements
-        sl_points = np.clip(action[1], 100, 1000)    # Tighter SL range for better risk control
-        tp_points = np.clip(action[2], 100, 3000)    # TP up to 3x SL for good RR potential
-        
-        return position, sl_points, tp_points
-    
     def _execute_trade(self, position: int, sl_points: float, tp_points: float,
-                      current_price: float, spread: float) -> None:
-        """Execute a trade with no minimum RRR requirement."""
+                      bid_price: float, ask_price: float) -> None:
+        """Execute a trade with bid/ask price model."""
         if position == 0:
             self.steps_since_trade += 1
             return
@@ -168,26 +172,20 @@ class TradingEnv(gym.Env):
         if position == -1 and short_positions >= 1:
             return
             
-        # Calculate true points considering spread
-        true_sl = sl_points + spread  # Additional buffer for spread
-        true_tp = tp_points + spread
-
         if position == 1:  # BUY
-            entry_price = current_price + spread  # Enter at ASK
-            sl_price = entry_price - true_sl     # Exit at BID - points
-            tp_price = entry_price + true_tp     # Exit at BID + points
+            entry_price = ask_price  # Buy at ask
+            sl_price = entry_price - sl_points  # SL will execute at bid
+            tp_price = entry_price + tp_points  # TP will execute at bid
         else:  # SELL
-            entry_price = current_price          # Enter at BID
-            sl_price = entry_price + true_sl     # Exit at ASK + points
-            tp_price = entry_price - true_tp     # Exit at ASK - points
+            entry_price = bid_price  # Sell at bid
+            sl_price = entry_price + sl_points  # SL will execute at ask
+            tp_price = entry_price - tp_points  # TP will execute at ask
         
-        # Calculate RRR considering true points
-        rrr = true_tp / true_sl if true_sl > 0 else 0
+        # Calculate RRR based on actual price points
+        rrr = tp_points / sl_points if sl_points > 0 else 0
         
-        # Full risk for first position
+        # Risk management
         risk_amount = self.lot_percentage * self.balance
-        
-        # Reduce risk by 60% for second position
         if len(self.open_positions) > 0:
             risk_amount *= 0.4
         
@@ -197,7 +195,6 @@ class TradingEnv(gym.Env):
         self.open_positions.append({
             "position": position,
             "entry_price": entry_price,
-            "spread": spread,
             "sl_price": sl_price,
             "tp_price": tp_price,
             "lot_size": lot_size,
@@ -209,30 +206,30 @@ class TradingEnv(gym.Env):
         self.steps_since_trade = 0
             
     def _evaluate_positions(self, high_price: float, low_price: float, 
-                          current_price: float, spread: float, 
+                          bid_price: float, ask_price: float, 
                           prev_balance: float) -> Tuple[float, List[int]]:
-        """Evaluate positions with RRR-based rewards."""
+        """Evaluate positions using bid/ask prices."""
         reward = 0
         closed_positions = []
         
-        # Unrealized positions get small RRR-scaled rewards for price movement
+        # Evaluate unrealized positions
         for pos in self.open_positions:
             unrealized_pnl = 0
-            # Calculate unrealized PnL with proper bid/ask prices
             if pos["position"] == 1:  # BUY
-                # Entered at ASK, exit at BID
-                unrealized_pnl = (current_price - pos["entry_price"]) * pos["lot_size"]
+                # Bought at ask, would sell at current bid
+                unrealized_pnl = (bid_price - pos["entry_price"]) * pos["lot_size"]
             else:  # SELL
-                # Entered at BID, exit at ASK
-                unrealized_pnl = (pos["entry_price"] - (current_price + spread)) * pos["lot_size"]
+                # Sold at bid, would buy back at current ask
+                unrealized_pnl = (pos["entry_price"] - ask_price) * pos["lot_size"]
             
             # Small RRR bonus for positive unrealized PnL
             if unrealized_pnl > 0:
-                rrr_scale = min(pos["rrr"] / 1.5, 2.0)  # Cap at 2x reward
+                rrr_scale = min(pos["rrr"] / 1.5, 2.0)
                 reward += (unrealized_pnl / prev_balance) * 0.1 * rrr_scale
             else:
                 reward += (unrealized_pnl / prev_balance) * 0.1
         
+        # Check for closed positions
         for i, pos in enumerate(self.open_positions):
             hit_tp = (high_price >= pos["tp_price"] if pos["position"] == 1 
                      else low_price <= pos["tp_price"])
@@ -241,29 +238,24 @@ class TradingEnv(gym.Env):
 
             if hit_tp or hit_sl:
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
-                pnl = 0
-                if pos["position"] == 1:  # BUY
-                    # BUY: Entry at ASK (entry_price), exit at BID (no spread)
-                    pnl = (exit_price - pos["entry_price"]) * pos["lot_size"]
-                else:  # SELL
-                    # SELL: Entry at BID (entry_price), exit at ASK (add spread)
-                    exit_with_spread = exit_price + spread if hit_sl else exit_price
-                    pnl = (pos["entry_price"] - exit_with_spread) * pos["lot_size"]
                 
-                # Base reward from PnL
+                if pos["position"] == 1:  # BUY
+                    # Bought at ask, selling at bid
+                    pnl = (bid_price - pos["entry_price"]) * pos["lot_size"]
+                else:  # SELL
+                    # Sold at bid, buying back at ask
+                    pnl = (pos["entry_price"] - ask_price) * pos["lot_size"]
+                
                 reward += (pnl / prev_balance)
                 self.balance += pnl
                 
-                # Additional RRR-based rewards/penalties
                 if pnl > 0:
-                    # Winning trade gets bonus based on RRR
-                    rrr_bonus = min(pos["rrr"] / 1.5, 2.0)  # Cap at 2x bonus
+                    rrr_bonus = min(pos["rrr"] / 1.5, 2.0)
                     reward += rrr_bonus
                     self.win_count += 1
                 else:
-                    # Losing trade gets penalty based on bad RRR
                     if pos["rrr"] < 1.0:
-                        reward -= (1.0 - pos["rrr"]) * 0.5  # Penalty for poor RRR
+                        reward -= (1.0 - pos["rrr"]) * 0.5
                     self.loss_count += 1
                     
                 closed_positions.append(i)
@@ -276,14 +268,13 @@ class TradingEnv(gym.Env):
         return reward, closed_positions
         
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
-        """Take one environment step focusing on balance growth."""
+        """Take one environment step with bid/ask price model."""
         position, sl_points, tp_points = self._process_action(action)
 
-        current_price = self.prices['close'][self.current_step]
+        # Get current prices
+        bid_price, ask_price = self._get_bid_ask_prices(self.current_step)
         high_price = self.prices['high'][self.current_step]
         low_price = self.prices['low'][self.current_step]
-        # Convert spread from points to price units and apply reasonable scaling
-        spread = (self.prices['spread'][self.current_step] / 100.0) * 0.5  # Scale down spread impact
 
         previous_balance = self.balance
         self.max_balance = max(self.balance, self.max_balance)
@@ -296,7 +287,7 @@ class TradingEnv(gym.Env):
         drawdown_penalty = 0
 
         position_reward, closed_positions = self._evaluate_positions(
-            high_price, low_price, current_price, spread, previous_balance
+            high_price, low_price, bid_price, ask_price, previous_balance
         )
         trade_reward += position_reward
         
@@ -304,7 +295,7 @@ class TradingEnv(gym.Env):
             self.open_positions.pop(i)
             
         if position != 0:
-            self._execute_trade(position, sl_points, tp_points, current_price, spread)
+            self._execute_trade(position, sl_points, tp_points, bid_price, ask_price)
 
         if previous_balance > 0:
             growth_ratio = self.balance / self.initial_balance
@@ -386,7 +377,6 @@ class TradingEnv(gym.Env):
         expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
         
         # Calculate trade statistics
-        # Calculate RRR using actual trade data including spread effects
         avg_rrr = trades_df["rrr"].mean() if total_trades > 0 else 0.0
         avg_holding_length = (trades_df["exit_step"] - trades_df["entry_step"]).mean() if total_trades > 0 else 0.0
         
