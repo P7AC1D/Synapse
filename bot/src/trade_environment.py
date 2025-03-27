@@ -168,11 +168,16 @@ class TradingEnv(gym.Env):
         if position == -1 and short_positions >= 1:
             return
             
-        # Adjust entry price based on half the spread
-        half_spread = spread / 2  # Split spread between bid/ask
-        entry_price = current_price + half_spread if position == 1 else current_price - half_spread
-        sl_price = entry_price - sl_points if position == 1 else entry_price + sl_points
-        tp_price = entry_price + tp_points if position == 1 else entry_price - tp_points
+        # For BUY: Enter at ASK (current + spread), exit at BID (current)
+        # For SELL: Enter at BID (current), exit at ASK (current + spread)
+        if position == 1:  # BUY
+            entry_price = current_price + spread  # Enter at ASK
+            sl_price = current_price - sl_points  # Exit at BID
+            tp_price = current_price + tp_points  # Exit at BID
+        else:  # SELL
+            entry_price = current_price  # Enter at BID
+            sl_price = current_price + sl_points  # Exit at ASK
+            tp_price = current_price - tp_points  # Exit at ASK
         
         # Calculate RRR
         rrr = tp_points / sl_points if sl_points > 0 else 0
@@ -211,11 +216,13 @@ class TradingEnv(gym.Env):
         # Unrealized positions get small RRR-scaled rewards for price movement
         for pos in self.open_positions:
             unrealized_pnl = 0
-            # Calculate unrealized PnL
-            if pos["position"] == 1:
+            # Calculate unrealized PnL considering spread
+            if pos["position"] == 1:  # BUY
+                # Entered at ASK (entry_price), would exit at BID (current_price)
                 unrealized_pnl = (current_price - pos["entry_price"]) * pos["lot_size"]
-            else:
-                unrealized_pnl = (pos["entry_price"] - current_price) * pos["lot_size"]
+            else:  # SELL
+                # Entered at BID (entry_price), would exit at ASK (current_price + spread)
+                unrealized_pnl = (pos["entry_price"] - (current_price + spread)) * pos["lot_size"]
             
             # Small RRR bonus for positive unrealized PnL
             if unrealized_pnl > 0:
@@ -233,10 +240,14 @@ class TradingEnv(gym.Env):
             if hit_tp or hit_sl:
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
                 pnl = 0
-                if pos["position"] == 1:
+                # Exit price already accounts for spread at entry (in entry_price)
+                # For TP/SL exits, need to consider spread at exit too
+                if pos["position"] == 1:  # BUY
+                    # Entered at ASK (entry_price), exit at BID (no spread adjustment needed for exit)
                     pnl = (exit_price - pos["entry_price"]) * pos["lot_size"]
-                else:
-                    pnl = (pos["entry_price"] - exit_price) * pos["lot_size"]
+                else:  # SELL
+                    # Entered at BID (entry_price), exit at ASK (need to add spread)
+                    pnl = (pos["entry_price"] - (exit_price + spread)) * pos["lot_size"]
                 
                 # Base reward from PnL
                 reward += (pnl / prev_balance)
@@ -373,7 +384,7 @@ class TradingEnv(gym.Env):
         expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
         
         # Calculate trade statistics
-        avg_rrr = trades_df["rrr"].mean() if total_trades > 0 else 0.0
+        avg_rrr = avg_pnl_tp / avg_pnl_sl
         avg_holding_length = (trades_df["exit_step"] - trades_df["entry_step"]).mean() if total_trades > 0 else 0.0
         
         num_buy = trades_df[trades_df["position"] == 1].shape[0]
