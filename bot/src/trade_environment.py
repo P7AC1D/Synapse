@@ -168,7 +168,8 @@ class TradingEnv(gym.Env):
         if position == -1 and short_positions >= 1:
             return
             
-        entry_price = current_price
+        # Adjust entry price based on spread
+        entry_price = current_price + spread if position == 1 else current_price - spread
         sl_price = entry_price - sl_points if position == 1 else entry_price + sl_points
         tp_price = entry_price + tp_points if position == 1 else entry_price - tp_points
         
@@ -209,13 +210,11 @@ class TradingEnv(gym.Env):
         # Unrealized positions get small RRR-scaled rewards for price movement
         for pos in self.open_positions:
             unrealized_pnl = 0
-            # Account for spread in unrealized PnL too
+            # Calculate unrealized PnL
             if pos["position"] == 1:
-                entry_with_spread = pos["entry_price"] + pos["spread"]  # Buy pays spread
-                unrealized_pnl = (current_price - entry_with_spread) * pos["lot_size"]
+                unrealized_pnl = (current_price - pos["entry_price"]) * pos["lot_size"]
             else:
-                entry_with_spread = pos["entry_price"] - pos["spread"]  # Sell receives spread
-                unrealized_pnl = (entry_with_spread - current_price) * pos["lot_size"]
+                unrealized_pnl = (pos["entry_price"] - current_price) * pos["lot_size"]
             
             # Small RRR bonus for positive unrealized PnL
             if unrealized_pnl > 0:
@@ -234,11 +233,9 @@ class TradingEnv(gym.Env):
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
                 pnl = 0
                 if pos["position"] == 1:
-                    entry_with_spread = pos["entry_price"] + pos["spread"]  # Buy pays spread
-                    pnl = (exit_price - entry_with_spread) * pos["lot_size"]
+                    pnl = (exit_price - pos["entry_price"]) * pos["lot_size"]
                 else:
-                    entry_with_spread = pos["entry_price"] - pos["spread"]  # Sell receives spread
-                    pnl = (entry_with_spread - exit_price) * pos["lot_size"]
+                    pnl = (pos["entry_price"] - exit_price) * pos["lot_size"]
                 
                 # Base reward from PnL
                 reward += (pnl / prev_balance)
