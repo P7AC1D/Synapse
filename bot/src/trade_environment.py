@@ -41,20 +41,6 @@ class TradingEnv(gym.Env):
         self._setup_action_space()
         self._setup_observation_space(self.raw_data.shape[1])
     
-    def _get_bid_ask_prices(self, step: int) -> Tuple[float, float]:
-        """Calculate bid and ask prices from mid price and spread."""
-        mid_price = self.prices['close'][step]
-        # Convert spread from points to dollars (1 point = $0.01)
-        raw_spread = self.prices['spread'][step] / 100.0
-        
-        # Split the spread evenly for bid/ask
-        half_spread = raw_spread / 2
-        
-        bid_price = mid_price - half_spread
-        ask_price = mid_price + half_spread
-        
-        return bid_price, ask_price
-
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """Preprocess data with advanced price action indicators and safe calculations."""
         df = pd.DataFrame(index=data.index)
@@ -159,9 +145,8 @@ class TradingEnv(gym.Env):
             
         return window.flatten().astype(np.float32)
     
-    def _execute_trade(self, position: int, sl_points: float, tp_points: float,
-                      bid_price: float, ask_price: float) -> None:
-        """Execute a trade with bid/ask price model."""
+    def _execute_trade(self, position: int, sl_points: float, tp_points: float) -> None:
+        """Execute a trade using raw spread for entry price."""
         if position == 0:
             self.steps_since_trade += 1
             return
@@ -177,15 +162,15 @@ class TradingEnv(gym.Env):
         if position == -1 and short_positions >= 1:
             return
             
-        raw_spread = self.prices['spread'][self.current_step] / 100.0  # Current spread in dollars
         current_price = self.prices['close'][self.current_step]
+        raw_spread = self.prices['spread'][self.current_step] / 100.0  # Convert points to dollars
 
         if position == 1:  # BUY
-            entry_price = current_price + raw_spread  # Entry includes spread cost
+            entry_price = current_price + raw_spread  # Buy at ask (price + spread)
             sl_price = entry_price - sl_points
             tp_price = entry_price + tp_points
         else:  # SELL
-            entry_price = current_price - raw_spread  # Entry includes spread cost
+            entry_price = current_price - raw_spread  # Sell at bid (price - spread)
             sl_price = entry_price + sl_points
             tp_price = entry_price - tp_points
         
@@ -220,24 +205,21 @@ class TradingEnv(gym.Env):
         self.steps_since_trade = 0
             
     def _evaluate_positions(self, high_price: float, low_price: float, 
-                          bid_price: float, ask_price: float, 
                           prev_balance: float) -> Tuple[float, List[int]]:
-        """Evaluate positions using bid/ask prices."""
+        """Evaluate positions using current price and spread."""
         reward = 0
         closed_positions = []
         
         # Evaluate unrealized positions
         for pos in self.open_positions:
             unrealized_pnl = 0
-            if pos["position"] == 1:  # BUY
-                # Bought at ask, would sell at current bid
-                # Convert price difference to points (* 100) for proper PnL calculation
-                price_diff_points = (bid_price - pos["entry_price"]) * 100
-                unrealized_pnl = price_diff_points * pos["lot_size"]
-            else:  # SELL
-                # Sold at bid, would buy back at ask
-                price_diff_points = (pos["entry_price"] - ask_price) * 100
-                unrealized_pnl = price_diff_points * pos["lot_size"]
+            current_price = self.prices['close'][self.current_step]
+            raw_spread = self.prices['spread'][self.current_step] / 100.0
+
+            # Simple price difference for PnL, spread only matters for TP/SL checks
+            price_diff_points = ((current_price - pos["entry_price"]) * 100 if pos["position"] == 1 
+                               else (pos["entry_price"] - current_price) * 100)
+            unrealized_pnl = price_diff_points * pos["lot_size"]
             
             # Small RRR bonus for positive unrealized PnL
             if unrealized_pnl > 0:
@@ -248,34 +230,26 @@ class TradingEnv(gym.Env):
         
         # Check for closed positions
         for i, pos in enumerate(self.open_positions):
-            hit_tp = (high_price >= pos["tp_price"] if pos["position"] == 1 
-                     else low_price <= pos["tp_price"])
-            hit_sl = (low_price <= pos["sl_price"] if pos["position"] == 1 
-                     else high_price >= pos["sl_price"])
+            raw_spread = self.prices['spread'][self.current_step] / 100.0
+            
+            if pos["position"] == 1:  # BUY
+                # Add spread to price when checking TP (need higher price to actually hit TP)
+                # Subtract spread from price when checking SL (will hit SL at higher price)
+                hit_tp = (high_price + raw_spread) >= pos["tp_price"]
+                hit_sl = (low_price - raw_spread) <= pos["sl_price"]
+            else:  # SELL
+                # Subtract spread from price when checking TP (need lower price to hit TP)
+                # Add spread to price when checking SL (will hit SL at lower price)
+                hit_tp = (low_price - raw_spread) <= pos["tp_price"]
+                hit_sl = (high_price + raw_spread) >= pos["sl_price"]
 
             if hit_tp or hit_sl:
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
+                price_diff_points = (exit_price - pos["entry_price"]) * 100
+                pnl = price_diff_points * pos["lot_size"]
                 
-                raw_spread = self.prices['spread'][self.current_step] / 100.0  # Get current spread
-                
-                if pos["position"] == 1:  # BUY
-                    # For longs: exit_price needs to account for spread cost
-                    exit_with_spread = exit_price - raw_spread
-                    price_diff_points = (exit_with_spread - pos["entry_price"]) * 100
-                    pnl = price_diff_points * pos["lot_size"]
-                    # Update RRR to include spread costs
-                    actual_profit = pos["tp_points"] - (raw_spread if hit_tp else 0)  # Deduct spread if hit TP
-                    actual_loss = pos["sl_points"] + (raw_spread if not hit_tp else 0)  # Add spread if hit SL
-                    pos["actual_rrr"] = actual_profit / actual_loss if actual_loss > 0 else 0
-                else:  # SELL
-                    # For shorts: exit_price needs to account for spread cost
-                    exit_with_spread = exit_price + raw_spread
-                    price_diff_points = (pos["entry_price"] - exit_with_spread) * 100
-                    pnl = price_diff_points * pos["lot_size"]
-                    # Update RRR to include spread costs
-                    actual_profit = pos["tp_points"] - (raw_spread if hit_tp else 0)  # Deduct spread if hit TP
-                    actual_loss = pos["sl_points"] + (raw_spread if not hit_tp else 0)  # Add spread if hit SL
-                    pos["actual_rrr"] = actual_profit / actual_loss if actual_loss > 0 else 0
+                # Calculate actual RRR based on points
+                pos["actual_rrr"] = pos["tp_points"] / pos["sl_points"] if pos["sl_points"] > 0 else 0
                 
                 reward += (pnl / prev_balance)
                 self.balance += pnl
@@ -299,11 +273,10 @@ class TradingEnv(gym.Env):
         return reward, closed_positions
         
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
-        """Take one environment step with bid/ask price model."""
+        """Take one environment step."""
         position, sl_points, tp_points = self._process_action(action)
 
-        # Get current prices
-        bid_price, ask_price = self._get_bid_ask_prices(self.current_step)
+        # Get prices
         high_price = self.prices['high'][self.current_step]
         low_price = self.prices['low'][self.current_step]
 
@@ -318,7 +291,7 @@ class TradingEnv(gym.Env):
         drawdown_penalty = 0
 
         position_reward, closed_positions = self._evaluate_positions(
-            high_price, low_price, bid_price, ask_price, previous_balance
+            high_price, low_price, previous_balance
         )
         trade_reward += position_reward
         
@@ -326,7 +299,7 @@ class TradingEnv(gym.Env):
             self.open_positions.pop(i)
             
         if position != 0:
-            self._execute_trade(position, sl_points, tp_points, bid_price, ask_price)
+            self._execute_trade(position, sl_points, tp_points)
 
         if previous_balance > 0:
             growth_ratio = self.balance / self.initial_balance
