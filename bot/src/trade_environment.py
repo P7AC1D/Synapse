@@ -168,8 +168,9 @@ class TradingEnv(gym.Env):
         if position == -1 and short_positions >= 1:
             return
             
-        # Adjust entry price based on spread
-        entry_price = current_price + spread if position == 1 else current_price - spread
+        # Adjust entry price based on half the spread
+        half_spread = spread / 2  # Split spread between bid/ask
+        entry_price = current_price + half_spread if position == 1 else current_price - half_spread
         sl_price = entry_price - sl_points if position == 1 else entry_price + sl_points
         tp_price = entry_price + tp_points if position == 1 else entry_price - tp_points
         
