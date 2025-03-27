@@ -177,14 +177,17 @@ class TradingEnv(gym.Env):
         if position == -1 and short_positions >= 1:
             return
             
+        raw_spread = self.prices['spread'][self.current_step] / 100.0  # Current spread in dollars
+        current_price = self.prices['close'][self.current_step]
+
         if position == 1:  # BUY
-            entry_price = ask_price  # Buy at ask
-            sl_price = entry_price - sl_points  # SL will execute at bid
-            tp_price = entry_price + tp_points  # TP will execute at bid
+            entry_price = current_price + raw_spread  # Entry includes spread cost
+            sl_price = entry_price - sl_points
+            tp_price = entry_price + tp_points
         else:  # SELL
-            entry_price = bid_price  # Sell at bid
-            sl_price = entry_price + sl_points  # SL will execute at ask
-            tp_price = entry_price - tp_points  # TP will execute at ask
+            entry_price = current_price - raw_spread  # Entry includes spread cost
+            sl_price = entry_price + sl_points
+            tp_price = entry_price - tp_points
         
         # Calculate RRR based on actual price points
         rrr = tp_points / sl_points if sl_points > 0 else 0
@@ -194,14 +197,13 @@ class TradingEnv(gym.Env):
         if len(self.open_positions) > 0:
             risk_amount *= 0.4
         
-        # Calculate lot size based on risk amount in USD
-        # For crypto futures: 
-        # - 1.0 lot (1 BTC) movement of 1 point = $1
-        # - So for $100 risk and 100 point SL, lot size should be 0.01
-        lot_size = risk_amount / abs(sl_points)
+        # Calculate lot size
+        CONTRACT_SIZE = 1.0  # 1 BTC per contract
+        stop_loss_distance = abs(entry_price - sl_price)  # Price distance to SL
+        lot_size = risk_amount / (stop_loss_distance * CONTRACT_SIZE)
         
-        # Round to 2 decimals and limit between 0.01 and 1.0 lots
-        lot_size = min(max(round(lot_size, 3), 0.01), 1.0)
+        # Round to 2 decimals and limit between 0.01 and 100.0 lots
+        lot_size = min(max(round(lot_size, 2), 0.01), 100.0)
         
         self.open_positions.append({
             "position": position,
@@ -212,7 +214,8 @@ class TradingEnv(gym.Env):
             "entry_step": self.current_step,
             "sl_points": sl_points,
             "tp_points": tp_points,
-            "rrr": rrr
+            "rrr": rrr,
+            "entry_spread": self.prices['spread'][self.current_step]
         })
         self.steps_since_trade = 0
             
@@ -228,10 +231,13 @@ class TradingEnv(gym.Env):
             unrealized_pnl = 0
             if pos["position"] == 1:  # BUY
                 # Bought at ask, would sell at current bid
-                unrealized_pnl = (bid_price - pos["entry_price"]) * pos["lot_size"]
+                # Convert price difference to points (* 100) for proper PnL calculation
+                price_diff_points = (bid_price - pos["entry_price"]) * 100
+                unrealized_pnl = price_diff_points * pos["lot_size"]
             else:  # SELL
-                # Sold at bid, would buy back at current ask
-                unrealized_pnl = (pos["entry_price"] - ask_price) * pos["lot_size"]
+                # Sold at bid, would buy back at ask
+                price_diff_points = (pos["entry_price"] - ask_price) * 100
+                unrealized_pnl = price_diff_points * pos["lot_size"]
             
             # Small RRR bonus for positive unrealized PnL
             if unrealized_pnl > 0:
@@ -253,15 +259,19 @@ class TradingEnv(gym.Env):
                 raw_spread = self.prices['spread'][self.current_step] / 100.0  # Get current spread
                 
                 if pos["position"] == 1:  # BUY
-                    # Bought at ask, selling at bid
-                    pnl = (bid_price - pos["entry_price"]) * pos["lot_size"]
+                    # For longs: exit_price needs to account for spread cost
+                    exit_with_spread = exit_price - raw_spread
+                    price_diff_points = (exit_with_spread - pos["entry_price"]) * 100
+                    pnl = price_diff_points * pos["lot_size"]
                     # Update RRR to include spread costs
                     actual_profit = pos["tp_points"] - (raw_spread if hit_tp else 0)  # Deduct spread if hit TP
                     actual_loss = pos["sl_points"] + (raw_spread if not hit_tp else 0)  # Add spread if hit SL
                     pos["actual_rrr"] = actual_profit / actual_loss if actual_loss > 0 else 0
                 else:  # SELL
-                    # Sold at bid, buying back at ask
-                    pnl = (pos["entry_price"] - ask_price) * pos["lot_size"]
+                    # For shorts: exit_price needs to account for spread cost
+                    exit_with_spread = exit_price + raw_spread
+                    price_diff_points = (pos["entry_price"] - exit_with_spread) * 100
+                    pnl = price_diff_points * pos["lot_size"]
                     # Update RRR to include spread costs
                     actual_profit = pos["tp_points"] - (raw_spread if hit_tp else 0)  # Deduct spread if hit TP
                     actual_loss = pos["sl_points"] + (raw_spread if not hit_tp else 0)  # Add spread if hit SL
@@ -445,9 +455,9 @@ class TradingEnv(gym.Env):
         # Display first and last 3 trades
         if len(trades_df) > 0:
             print("\n===== First 3 Trades =====")
-            print(trades_df.head(3)[["position", "entry_price", "exit_price", "pnl", "lot_size", "actual_rrr", "hit_tp"]].to_string())
+            print(trades_df.head(3)[["position", "entry_price", "exit_price", "pnl", "lot_size", "entry_spread", "actual_rrr", "hit_tp"]].to_string())
             print("\n===== Last 3 Trades =====")
-            print(trades_df.tail(3)[["position", "entry_price", "exit_price", "pnl", "lot_size", "actual_rrr", "hit_tp"]].to_string())
+            print(trades_df.tail(3)[["position", "entry_price", "exit_price", "pnl", "lot_size", "entry_spread", "actual_rrr", "hit_tp"]].to_string())
 
     def seed(self, seed: Optional[int] = None) -> None:
         """Set random seed."""
