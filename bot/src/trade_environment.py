@@ -168,19 +168,21 @@ class TradingEnv(gym.Env):
         if position == -1 and short_positions >= 1:
             return
             
-        # For BUY: Enter at ASK (current + spread), exit at BID (current)
-        # For SELL: Enter at BID (current), exit at ASK (current + spread)
+        # Calculate true points considering spread
+        true_sl = sl_points + spread  # Additional buffer for spread
+        true_tp = tp_points + spread
+
         if position == 1:  # BUY
             entry_price = current_price + spread  # Enter at ASK
-            sl_price = current_price - sl_points  # Exit at BID
-            tp_price = current_price + tp_points  # Exit at BID
+            sl_price = entry_price - true_sl     # Exit at BID - points
+            tp_price = entry_price + true_tp     # Exit at BID + points
         else:  # SELL
-            entry_price = current_price  # Enter at BID
-            sl_price = current_price + sl_points  # Exit at ASK
-            tp_price = current_price - tp_points  # Exit at ASK
+            entry_price = current_price          # Enter at BID
+            sl_price = entry_price + true_sl     # Exit at ASK + points
+            tp_price = entry_price - true_tp     # Exit at ASK - points
         
-        # Calculate RRR
-        rrr = tp_points / sl_points if sl_points > 0 else 0
+        # Calculate RRR considering true points
+        rrr = true_tp / true_sl if true_sl > 0 else 0
         
         # Full risk for first position
         risk_amount = self.lot_percentage * self.balance
@@ -216,12 +218,12 @@ class TradingEnv(gym.Env):
         # Unrealized positions get small RRR-scaled rewards for price movement
         for pos in self.open_positions:
             unrealized_pnl = 0
-            # Calculate unrealized PnL considering spread
+            # Calculate unrealized PnL with proper bid/ask prices
             if pos["position"] == 1:  # BUY
-                # Entered at ASK (entry_price), would exit at BID (current_price)
+                # Entered at ASK, exit at BID
                 unrealized_pnl = (current_price - pos["entry_price"]) * pos["lot_size"]
             else:  # SELL
-                # Entered at BID (entry_price), would exit at ASK (current_price + spread)
+                # Entered at BID, exit at ASK
                 unrealized_pnl = (pos["entry_price"] - (current_price + spread)) * pos["lot_size"]
             
             # Small RRR bonus for positive unrealized PnL
@@ -240,14 +242,13 @@ class TradingEnv(gym.Env):
             if hit_tp or hit_sl:
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
                 pnl = 0
-                # Exit price already accounts for spread at entry (in entry_price)
-                # For TP/SL exits, need to consider spread at exit too
                 if pos["position"] == 1:  # BUY
-                    # Entered at ASK (entry_price), exit at BID (no spread adjustment needed for exit)
+                    # BUY: Entry at ASK (entry_price), exit at BID (no spread)
                     pnl = (exit_price - pos["entry_price"]) * pos["lot_size"]
                 else:  # SELL
-                    # Entered at BID (entry_price), exit at ASK (need to add spread)
-                    pnl = (pos["entry_price"] - (exit_price + spread)) * pos["lot_size"]
+                    # SELL: Entry at BID (entry_price), exit at ASK (add spread)
+                    exit_with_spread = exit_price + spread if hit_sl else exit_price
+                    pnl = (pos["entry_price"] - exit_with_spread) * pos["lot_size"]
                 
                 # Base reward from PnL
                 reward += (pnl / prev_balance)
@@ -281,7 +282,8 @@ class TradingEnv(gym.Env):
         current_price = self.prices['close'][self.current_step]
         high_price = self.prices['high'][self.current_step]
         low_price = self.prices['low'][self.current_step]
-        spread = self.prices['spread'][self.current_step] / 100.0
+        # Convert spread from points to price units and apply reasonable scaling
+        spread = (self.prices['spread'][self.current_step] / 100.0) * 0.5  # Scale down spread impact
 
         previous_balance = self.balance
         self.max_balance = max(self.balance, self.max_balance)
@@ -384,7 +386,8 @@ class TradingEnv(gym.Env):
         expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
         
         # Calculate trade statistics
-        avg_rrr = avg_pnl_tp / avg_pnl_sl
+        # Calculate RRR using actual trade data including spread effects
+        avg_rrr = trades_df["rrr"].mean() if total_trades > 0 else 0.0
         avg_holding_length = (trades_df["exit_step"] - trades_df["entry_step"]).mean() if total_trades > 0 else 0.0
         
         num_buy = trades_df[trades_df["position"] == 1].shape[0]
