@@ -44,10 +44,14 @@ class TradingEnv(gym.Env):
     def _get_bid_ask_prices(self, step: int) -> Tuple[float, float]:
         """Calculate bid and ask prices from mid price and spread."""
         mid_price = self.prices['close'][step]
-        raw_spread = self.prices['spread'][step] / 100.0  # Convert spread from points
+        # Convert spread from points to dollars (1 point = $0.01)
+        raw_spread = self.prices['spread'][step] / 100.0
         
-        bid_price = mid_price - (raw_spread / 2)
-        ask_price = mid_price + (raw_spread / 2)
+        # Split the spread evenly for bid/ask
+        half_spread = raw_spread / 2
+        
+        bid_price = mid_price - half_spread
+        ask_price = mid_price + half_spread
         
         return bid_price, ask_price
 
@@ -85,7 +89,8 @@ class TradingEnv(gym.Env):
         df['volume'] = ((data['volume'] - volume_sma) / volume_std).clip(-3, 3)
         
         # Relative spread
-        df['spread'] = (data['spread'] / data['close']).clip(0, 0.01)
+        # Convert spread from points to percentage (1 point = $0.01)
+        df['spread'] = ((data['spread'] / 100.0) / data['close']).clip(0, 0.01)  # 1% max spread
         
         # ATR ratio with safe calculation
         atr_ma = data['ATR'].rolling(50, min_periods=1).mean()
@@ -189,8 +194,14 @@ class TradingEnv(gym.Env):
         if len(self.open_positions) > 0:
             risk_amount *= 0.4
         
-        lot_size = risk_amount / abs(entry_price - sl_price)
-        lot_size = min(max(round(lot_size, 2), 0.01), 100.0)
+        # Calculate lot size based on risk amount in USD
+        # For crypto futures: 
+        # - 1.0 lot (1 BTC) movement of 1 point = $1
+        # - So for $100 risk and 100 point SL, lot size should be 0.01
+        lot_size = risk_amount / abs(sl_points)
+        
+        # Round to 2 decimals and limit between 0.01 and 1.0 lots
+        lot_size = min(max(round(lot_size, 3), 0.01), 1.0)
         
         self.open_positions.append({
             "position": position,
@@ -239,12 +250,22 @@ class TradingEnv(gym.Env):
             if hit_tp or hit_sl:
                 exit_price = pos["tp_price"] if hit_tp else pos["sl_price"]
                 
+                raw_spread = self.prices['spread'][self.current_step] / 100.0  # Get current spread
+                
                 if pos["position"] == 1:  # BUY
                     # Bought at ask, selling at bid
                     pnl = (bid_price - pos["entry_price"]) * pos["lot_size"]
+                    # Update RRR to include spread costs
+                    actual_profit = pos["tp_points"] - (raw_spread if hit_tp else 0)  # Deduct spread if hit TP
+                    actual_loss = pos["sl_points"] + (raw_spread if not hit_tp else 0)  # Add spread if hit SL
+                    pos["actual_rrr"] = actual_profit / actual_loss if actual_loss > 0 else 0
                 else:  # SELL
                     # Sold at bid, buying back at ask
                     pnl = (pos["entry_price"] - ask_price) * pos["lot_size"]
+                    # Update RRR to include spread costs
+                    actual_profit = pos["tp_points"] - (raw_spread if hit_tp else 0)  # Deduct spread if hit TP
+                    actual_loss = pos["sl_points"] + (raw_spread if not hit_tp else 0)  # Add spread if hit SL
+                    pos["actual_rrr"] = actual_profit / actual_loss if actual_loss > 0 else 0
                 
                 reward += (pnl / prev_balance)
                 self.balance += pnl
@@ -377,7 +398,7 @@ class TradingEnv(gym.Env):
         expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
         
         # Calculate trade statistics
-        avg_rrr = trades_df["rrr"].mean() if total_trades > 0 else 0.0
+        avg_rrr = trades_df["actual_rrr"].mean() if total_trades > 0 else 0.0
         avg_holding_length = (trades_df["exit_step"] - trades_df["entry_step"]).mean() if total_trades > 0 else 0.0
         
         num_buy = trades_df[trades_df["position"] == 1].shape[0]
@@ -420,6 +441,13 @@ class TradingEnv(gym.Env):
             f"Sharpe Ratio: {sharpe:.2f}\n"
         )
         print(metrics_text)
+        
+        # Display first and last 3 trades
+        if len(trades_df) > 0:
+            print("\n===== First 3 Trades =====")
+            print(trades_df.head(3)[["position", "entry_price", "exit_price", "pnl", "lot_size", "actual_rrr", "hit_tp"]].to_string())
+            print("\n===== Last 3 Trades =====")
+            print(trades_df.tail(3)[["position", "entry_price", "exit_price", "pnl", "lot_size", "actual_rrr", "hit_tp"]].to_string())
 
     def seed(self, seed: Optional[int] = None) -> None:
         """Set random seed."""
