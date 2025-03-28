@@ -1,16 +1,17 @@
-import gymnasium as gym
+import gymnasium
 import numpy as np
 import pandas as pd
 from enum import IntEnum
 from typing import Dict, List, Tuple, Any, Optional, Union
 from gymnasium import spaces
 
-class TradingEnv(gym.Env):
+class TradingEnv(gymnasium.Env):
+    metadata = {"render_modes": None, "render_fps": None}
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
                  lot_percentage: float = 0.01, bar_count: int = 50, 
                  random_start: bool = False):
         """Trading environment focused on balance growth."""
-        super(TradingEnv, self).__init__()
+        super().__init__()
         
         # Trading constants
         self.POINT_VALUE = 0.01  # Each point = $0.01 for crypto
@@ -257,7 +258,7 @@ class TradingEnv(gym.Env):
             "sl_points": sl_points,
             "tp_points": tp_points,
             "rrr": rrr,
-            "entry_spread": self.prices['spread'][self.current_step],
+            "entry_spread": self.prices['spread'][self.current_step] * self.POINT_VALUE,
             "entry_atr": self.prices['atr'][self.current_step]
         })
         self.steps_since_trade = 0
@@ -335,14 +336,14 @@ class TradingEnv(gym.Env):
 
         return reward, closed_positions
         
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Take one environment step."""
         position, sl_points, tp_points = self._process_action(action)
 
         # Get prices and convert spread to dollars once
         high_price = self.prices['high'][self.current_step]
         low_price = self.prices['low'][self.current_step]
-        current_spread = self.prices['spread'][self.current_step] / 100.0
+        current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
 
         previous_balance = self.balance
         self.max_balance = max(self.balance, self.max_balance)
@@ -402,7 +403,7 @@ class TradingEnv(gym.Env):
 
         return obs, reward, done, False, {}
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         """Reset the environment."""
         if seed is not None:
             np.random.seed(seed)
