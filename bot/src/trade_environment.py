@@ -110,9 +110,6 @@ class TradingEnv(gymnasium.Env):
         # Replace any remaining NaN values with 0
         df = df.fillna(0)
         df = df.replace([np.inf, -np.inf], 0)
-
-        print("Preprocessed data:")
-        print(df.head(3))
         
         return df
     
@@ -495,9 +492,9 @@ class TradingEnv(gymnasium.Env):
         # Display first and last 3 trades
         if len(trades_df) > 0:
             print("\n===== First 3 Trades =====")
-            print(trades_df.head(3)[["position", "entry_price", "exit_price", "pnl", "lot_size", "entry_spread", "entry_atr", "actual_rrr", "hit_tp"]].to_string())
+            print(trades_df.head(5)[["position", "entry_price", "exit_price", "pnl", "lot_size", "entry_spread", "entry_atr", "actual_rrr", "hit_tp"]].to_string())
             print("\n===== Last 3 Trades =====")
-            print(trades_df.tail(3)[["position", "entry_price", "exit_price", "pnl", "lot_size", "entry_spread", "entry_atr", "actual_rrr", "hit_tp"]].to_string())
+            print(trades_df.tail(5)[["position", "entry_price", "exit_price", "pnl", "lot_size", "entry_spread", "entry_atr", "actual_rrr", "hit_tp"]].to_string())
 
     def seed(self, seed: Optional[int] = None) -> None:
         """Set random seed."""
