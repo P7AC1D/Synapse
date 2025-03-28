@@ -115,17 +115,18 @@ class TradingEnv(gymnasium.Env):
     
     def _setup_action_space(self) -> None:
         """Configure combined continuous action space."""
-        self.action_space = spaces.Box(
-            low=np.array([-1, 0.5, 1.0]),     # Position [-1=Sell, 0=Hold, 1=Buy]
-            high=np.array([1, 2.0, 4.0]),     # SL [0.5-2.0 ATR], TP [1.0-4.0 ATR]
-            dtype=np.float32
-        )
-        
+
         # ATR multiplier ranges for intraday trading
-        self.SL_MIN_ATR = 0.5  # Minimum stop loss distance in ATR
+        self.SL_MIN_ATR = 1.0  # Minimum stop loss distance in ATR
         self.SL_MAX_ATR = 2.0  # Maximum stop loss distance in ATR
         self.TP_MIN_ATR = 1.0  # Minimum take profit distance in ATR
-        self.TP_MAX_ATR = 4.0  # Maximum take profit distance in ATR        
+        self.TP_MAX_ATR = 4.0  # Maximum take profit distance in ATR      
+
+        self.action_space = spaces.Box(
+            low=np.array([-1, self.SL_MIN_ATR, self.TP_MIN_ATR]),     # Position [-1=Sell, 0=Hold, 1=Buy]
+            high=np.array([1, self.SL_MAX_ATR, self.TP_MIN_ATR]),     # SL [1.0-2.0 ATR], TP [1.0-4.0 ATR]
+            dtype=np.float32
+        )
     
     def _setup_observation_space(self, feature_count: int) -> None:
         """Configure the observation space dimensions including trade state."""
