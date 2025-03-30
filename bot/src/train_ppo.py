@@ -139,25 +139,25 @@ def train_model(train_env, val_env, args):
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=2048,  # Longer sequences for better temporal context
-        batch_size=512,  # Larger batches for more stable updates
-        gamma=0.99,  # Keep this for 15-min timeframe
-        gae_lambda=0.98,  # Increase advantage estimation horizon
-        clip_range=0.1,  # More conservative policy updates
-        clip_range_vf=0.1,  # Match policy clip range
-        ent_coef=0.005,  # Lower entropy to exploit learned behaviors
-        vf_coef=1.0,  # Stronger value estimation
-        max_grad_norm=0.3,  # More conservative gradient updates
+        n_steps=4096,  # Increased sequence length
+        batch_size=1024,  # Larger batches
+        gamma=0.99,
+        gae_lambda=0.98,
+        clip_range=0.1,
+        clip_range_vf=0.1,
+        ent_coef=0.01,  # Increased exploration
+        vf_coef=1.0,
+        max_grad_norm=0.3,
         use_sde=False,
         policy_kwargs={
             "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 128,  # Larger memory for pattern retention
-            "n_lstm_layers": 2,  # Two layers for hierarchical patterns
-            "shared_lstm": False,  # Separate memory streams
-            "enable_critic_lstm": True,  # Dedicated value memory
+            "lstm_hidden_size": 256,  # Larger LSTM capacity
+            "n_lstm_layers": 3,  # Deeper LSTM
+            "shared_lstm": False,
+            "enable_critic_lstm": True,
             "net_arch": {
-                "pi": [128, 64],  # Deeper policy network
-                "vf": [128, 64]  # Matching value network
+                "pi": [256, 128, 64],  # Deeper networks
+                "vf": [256, 128, 64]
             },
             "optimizer_kwargs": {
                 "eps": 1e-5
@@ -230,13 +230,13 @@ def main():
     parser.add_argument('--bar_count', type=int, default=10,  # Reduced to focus on recent data
                       help='Number of bars to use for each observation')
     
-    parser.add_argument('--total_timesteps', type=int, default=1000000,
+    parser.add_argument('--total_timesteps', type=int, default=2000000,
                       help='Total timesteps for training')
-    parser.add_argument('--learning_rate', type=float, default=3e-4,
+    parser.add_argument('--learning_rate', type=float, default=5e-4,
                       help='Initial learning rate')
-    parser.add_argument('--final_learning_rate', type=float, default=1e-4,
+    parser.add_argument('--final_learning_rate', type=float, default=5e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=50000,
+    parser.add_argument('--eval_freq', type=int, default=25000,
                       help='Evaluation frequency in timesteps')
     
     args = parser.parse_args()
@@ -263,7 +263,8 @@ def main():
     
     env_params = {
         'initial_balance': args.initial_balance,
-        'bar_count': args.bar_count
+        'bar_count': 20,  # Increased observation window
+        'lot_percentage': 0.02  # Increased risk per trade
     }
     
     train_env = Monitor(TradingEnv(train_data, **{**env_params, 'random_start': True}))
