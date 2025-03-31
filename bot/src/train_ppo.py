@@ -254,10 +254,10 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         val_end = min(train_end + step_size, total_periods)
         
         train_data = data.iloc[training_start:train_end]
-        val_data = data.iloc[training_start:val_end]  # Validation includes all data up to now
+        val_data = data.iloc[train_end:val_end]  # Only evaluate on new, unseen data
         
         print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
-        print(f"Validation Period: {val_data.index[0]} to {val_data.index[-1]}")
+        print(f"Validation Period: {train_data.index[-1]} to {val_data.index[-1]}")
         
         env_params = {
             'initial_balance': args.initial_balance,

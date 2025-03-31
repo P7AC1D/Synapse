@@ -1,6 +1,8 @@
 """Backtesting script for trained trading models."""
 
 import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 import argparse
 import json
 import numpy as np
@@ -105,11 +107,11 @@ def main():
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the test data CSV file')
     parser.add_argument('--bar_count', type=int, default=10,
-                      help='Number of bars to include in state (default: 10)')
+                      help='Number of bars in observation window (must match training)')
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial account balance')
-    parser.add_argument('--risk_percentage', type=float, default=0.01,
-                      help='Risk percentage per trade (default: 0.01)')
+    parser.add_argument('--risk_percentage', type=float, default=0.02,
+                      help='Risk percentage per trade (default: 0.02)')
     parser.add_argument('--results_dir', type=str, default='../results/backtest',
                       help='Directory to save backtest results')
     

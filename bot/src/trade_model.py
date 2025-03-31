@@ -26,8 +26,8 @@ class TradeModel:
         self.bar_count = bar_count
         self.model = None
         self.required_columns = [
-            'open', 'high', 'low', 'close', 'spread', 'volume', 
-            'EMA_fast', 'EMA_slow', 'RSI', 'ATR', 'OBV', 'VWAP'
+            'close', 'high', 'low', 'spread',  # Price data
+            'EMA_fast', 'EMA_slow', 'RSI', 'ATR'  # Indicators for our simplified features
         ]
         
         self.lstm_states = None  # Store LSTM states for continuous prediction
@@ -42,11 +42,16 @@ class TradeModel:
             bool: True if model loaded successfully, False otherwise
         """
         try:
-            # Create a temporary environment for model loading
+            # Create a temporary environment for model loading with dummy data
+            dummy_data = pd.DataFrame(
+                np.zeros((self.bar_count + 1, len(self.required_columns))),
+                columns=self.required_columns
+            )
             env = TradingEnv(
-                data=pd.DataFrame(columns=self.required_columns),  # Empty DataFrame with correct columns
+                data=dummy_data,
                 bar_count=self.bar_count,
-                random_start=False
+                random_start=False,
+                lot_percentage=0.02  # Match training environment
             )
             
             # Load the PPO model
@@ -100,11 +105,12 @@ class TradeModel:
         # Prepare data
         data = self.prepare_data(data_frame)
         
-        # Create a temporary environment to get the observation
+        # Create a temporary environment with simplified features
         env = TradingEnv(
             data=data,
             bar_count=self.bar_count,
-            random_start=False
+            random_start=False,
+            lot_percentage=0.02  # Match training environment
         )
         
         # Get the observation
@@ -160,14 +166,15 @@ class TradeModel:
         # Prepare data
         data = self.prepare_data(data)
         
+        env_params = {
+            'initial_balance': initial_balance,
+            'bar_count': self.bar_count,
+            'lot_percentage': risk_percentage,
+            'random_start': False
+        }
+
         # Create environment for backtesting
-        env = TradingEnv(
-            data=data,
-            bar_count=self.bar_count,
-            random_start=False,
-            initial_balance=initial_balance,
-            lot_percentage=risk_percentage
-        )
+        env = TradingEnv(data=data, **env_params)
         
         # Reset LSTM states for backtest
         lstm_states = None
