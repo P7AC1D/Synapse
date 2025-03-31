@@ -7,6 +7,7 @@ import re
 import numpy as np
 import pandas as pd
 from datetime import datetime
+from typing import Tuple
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.utils import get_linear_fn
@@ -212,12 +213,40 @@ def train_model(train_env, val_env, args):
     
     return model
 
+def save_training_state(path: str, training_start: int, model_path: str) -> None:
+    """Save current training state to file."""
+    state = {
+        'training_start': training_start,
+        'model_path': model_path,
+        'timestamp': datetime.now().isoformat()
+    }
+    with open(path, 'w') as f:
+        json.dump(state, f)
+
+def load_training_state(path: str) -> Tuple[int, str]:
+    """Load training state from file."""
+    if not os.path.exists(path):
+        return 0, None
+    with open(path, 'r') as f:
+        state = json.load(f)
+    return state['training_start'], state['model_path']
+
 def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> None:
-    """Implement walk-forward optimization for training."""
+    """Implement walk-forward optimization for training with resume capability."""
     total_periods = len(data)
-    training_start = 0
     base_timesteps = args.total_timesteps
-    model = None
+    
+    # Setup state tracking
+    state_path = f"../results/{args.seed}/training_state.json"
+    training_start, model_path = load_training_state(state_path)
+    
+    if model_path and os.path.exists(model_path):
+        print(f"Resuming training from step {training_start}")
+        model = RecurrentPPO.load(model_path)
+    else:
+        print("Starting new training")
+        training_start = 0
+        model = None
     
     while training_start + initial_window + step_size <= total_periods:
         # Define data windows
@@ -277,18 +306,25 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 reset_num_timesteps=False
             )
         
-        # Save period-specific model
-        period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}"
+        # Save period-specific model and training state
+        period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
         model.save(period_model_path)
-        print(f"Saved period model: {period_model_path}")
+        save_training_state(state_path, training_start + step_size, period_model_path)
+        print(f"Saved model and state for period {training_start} to {train_end}")
         
-        # Move window forward
-        training_start += step_size
+        try:
+            # Move window forward
+            training_start += step_size
+        except KeyboardInterrupt:
+            print("\nTraining interrupted. Progress saved - use same command to resume.")
+            return model
         
     return model
 
 def main():
     parser = argparse.ArgumentParser(description='Train a PPO-LSTM model for trading')
+    parser.add_argument('--resume', action='store_true',
+                      help='Resume training from last saved state')
     
     parser.add_argument('--model_name', type=str, required=True,
                       help='Name for saving the trained model')
@@ -339,8 +375,20 @@ def main():
     initial_window_bars = args.initial_window * bars_per_day
     step_size_bars = args.step_size * bars_per_day
     
-    print("\nStarting walk-forward optimization...")
-    model = train_walk_forward(data, initial_window_bars, step_size_bars, args)
+    if args.resume:
+        state_path = f"../results/{args.seed}/training_state.json"
+        if os.path.exists(state_path):
+            print("\nResuming walk-forward optimization...")
+        else:
+            print("\nNo previous state found. Starting new training...")
+    else:
+        print("\nStarting new walk-forward optimization...")
+    
+    try:
+        model = train_walk_forward(data, initial_window_bars, step_size_bars, args)
+    except KeyboardInterrupt:
+        print("\nTraining interrupted. Progress has been saved.")
+        return
     
     print("\nWalk-forward optimization completed.")
     print(f"Final model saved at: ../results/{args.seed}/model_final.zip")
