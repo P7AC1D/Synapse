@@ -139,25 +139,25 @@ def train_model(train_env, val_env, args):
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=4096,  # Increased sequence length
-        batch_size=1024,  # Larger batches
+        n_steps=2048,  # Reduced sequence length
+        batch_size=512,  # Smaller batches for faster updates
         gamma=0.99,
         gae_lambda=0.98,
-        clip_range=0.1,
-        clip_range_vf=0.1,
-        ent_coef=0.01,  # Increased exploration
-        vf_coef=1.0,
-        max_grad_norm=0.3,
+        clip_range=0.2,  # Increased for better exploration
+        clip_range_vf=0.2,
+        ent_coef=0.01,
+        vf_coef=0.5,  # Reduced value function impact
+        max_grad_norm=0.5,
         use_sde=False,
         policy_kwargs={
             "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 256,  # Larger LSTM capacity
-            "n_lstm_layers": 3,  # Deeper LSTM
-            "shared_lstm": False,
-            "enable_critic_lstm": True,
+            "lstm_hidden_size": 64,  # Smaller LSTM
+            "n_lstm_layers": 1,  # Single LSTM layer
+            "shared_lstm": True,  # Share LSTM between policy and value
+            "enable_critic_lstm": False,  # Simpler architecture
             "net_arch": {
-                "pi": [256, 128, 64],  # Deeper networks
-                "vf": [256, 128, 64]
+                "pi": [32],  # Simple policy network
+                "vf": [32]   # Simple value network
             },
             "optimizer_kwargs": {
                 "eps": 1e-5
@@ -171,9 +171,9 @@ def train_model(train_env, val_env, args):
     callbacks = []
     
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.2,  # Higher initial exploration
-        end_eps=0.02,  # Keep some exploration
-        decay_timesteps=int(args.total_timesteps * 0.8)
+        start_eps=0.1,  # Reduced initial exploration
+        end_eps=0.01,  # Lower final exploration
+        decay_timesteps=int(args.total_timesteps * 0.6)  # Faster decay
     )
     callbacks.append(epsilon_callback)
     
@@ -212,6 +212,81 @@ def train_model(train_env, val_env, args):
     
     return model
 
+def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> None:
+    """Implement walk-forward optimization for training."""
+    total_periods = len(data)
+    training_start = 0
+    base_timesteps = args.total_timesteps
+    model = None
+    
+    while training_start + initial_window + step_size <= total_periods:
+        # Define data windows
+        train_end = training_start + initial_window
+        val_end = min(train_end + step_size, total_periods)
+        
+        train_data = data.iloc[training_start:train_end]
+        val_data = data.iloc[training_start:val_end]  # Validation includes all data up to now
+        
+        print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
+        print(f"Validation Period: {val_data.index[0]} to {val_data.index[-1]}")
+        
+        env_params = {
+            'initial_balance': args.initial_balance,
+            'bar_count': 20,
+            'lot_percentage': 0.02
+        }
+        
+        train_env = Monitor(TradingEnv(train_data, **{**env_params, 'random_start': True}))
+        val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
+        
+        # Adjust timesteps based on data size (reduced for 15-min data)
+        period_timesteps = min(base_timesteps, len(train_data) * 20)  # Reduced multiplier due to more frequent bars
+        
+        if model is None:
+            # Initial training
+            model = train_model(train_env, val_env, args)
+        else:
+            # Continue training with existing model
+            print("Continuing training with existing model...")
+            args.learning_rate = args.learning_rate * 0.7  # Reduce learning rate for fine-tuning
+            model.set_env(train_env)
+            
+            callbacks = []
+            
+            epsilon_callback = CustomEpsilonCallback(
+                start_eps=0.1,  # Lower exploration for fine-tuning
+                end_eps=0.01,
+                decay_timesteps=int(period_timesteps * 0.8)
+            )
+            callbacks.append(epsilon_callback)
+            
+            unified_callback = UnifiedEvalCallback(
+                val_env,
+                best_model_save_path=f"../results/{args.seed}",
+                log_path=f"../results/{args.seed}",
+                eval_freq=args.eval_freq,
+                deterministic=True,
+                verbose=1
+            )
+            callbacks.append(unified_callback)
+            
+            model.learn(
+                total_timesteps=period_timesteps,
+                callback=callbacks,
+                progress_bar=True,
+                reset_num_timesteps=False
+            )
+        
+        # Save period-specific model
+        period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}"
+        model.save(period_model_path)
+        print(f"Saved period model: {period_model_path}")
+        
+        # Move window forward
+        training_start += step_size
+        
+    return model
+
 def main():
     parser = argparse.ArgumentParser(description='Train a PPO-LSTM model for trading')
     
@@ -227,12 +302,14 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--bar_count', type=int, default=10,  # Reduced to focus on recent data
-                      help='Number of bars to use for each observation')
+    parser.add_argument('--initial_window', type=int, default=30,
+                      help='Initial training window in days')
+    parser.add_argument('--step_size', type=int, default=14,
+                      help='Walk-forward step size in days')
     
-    parser.add_argument('--total_timesteps', type=int, default=2000000,
+    parser.add_argument('--total_timesteps', type=int, default=1000000,
                       help='Total timesteps for training')
-    parser.add_argument('--learning_rate', type=float, default=5e-4,
+    parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=5e-5,
                       help='Final learning rate')
@@ -253,40 +330,21 @@ def main():
     data.set_index('time', inplace=True)
     print(f"Dataset shape: {data.shape}, from {data.index[0]} to {data.index[-1]}")
     
-    print("\nCreating environments for training and validation")
-    split_idx = int(len(data) * 0.8)
-    train_data = data.iloc[:split_idx]
+    # Convert dates to datetime if they're not already
+    if not isinstance(data.index, pd.DatetimeIndex):
+        data.index = pd.to_datetime(data.index)
     
-    print(f"\nEnvironment Configuration:")
-    print(f"Training Data: {len(train_data)} bars ({train_data.index[0]} to {train_data.index[-1]})")
-    print(f"Validation Data: {len(data)} bars (full dataset for comprehensive evaluation)")
+    # Calculate periods in terms of rows based on 15-minute bars
+    bars_per_day = 24 * 4  # 96 bars per day (24 hours * 4 fifteen-minute periods per hour)
+    initial_window_bars = args.initial_window * bars_per_day
+    step_size_bars = args.step_size * bars_per_day
     
-    env_params = {
-        'initial_balance': args.initial_balance,
-        'bar_count': 20,  # Increased observation window
-        'lot_percentage': 0.02  # Increased risk per trade
-    }
+    print("\nStarting walk-forward optimization...")
+    model = train_walk_forward(data, initial_window_bars, step_size_bars, args)
     
-    train_env = Monitor(TradingEnv(train_data, **{**env_params, 'random_start': True}))
-    val_env = Monitor(TradingEnv(data, **{**env_params, 'random_start': False}))
-    
-    model = train_model(train_env, val_env, args)
-    
-    print("\nRunning final evaluation...")
-    obs, _ = val_env.reset()
-    done = False
-    total_reward = 0
-    lstm_states = None
-    
-    while not done:
-        action, lstm_states = model.predict(obs, state=lstm_states, deterministic=True)
-        obs, reward, terminated, truncated, _ = val_env.step(action)
-        done = terminated or truncated
-        total_reward += reward
-    
-    print(f"\nFinal Evaluation Results:")
-    print(f"Total reward: {total_reward:.2f}")
-    val_env.render()
+    print("\nWalk-forward optimization completed.")
+    print(f"Final model saved at: ../results/{args.seed}/model_final.zip")
+    model.save(f"../results/{args.seed}/model_final.zip")
 
 if __name__ == "__main__":
     main()

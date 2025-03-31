@@ -9,7 +9,7 @@ class TradingEnv(gymnasium.Env):
     metadata = {"render_modes": None, "render_fps": None}
     
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
-                 lot_percentage: float = 0.01, bar_count: int = 15, 
+                 lot_percentage: float = 0.02, bar_count: int = 10, 
                  random_start: bool = False):
         super().__init__()
         
@@ -50,7 +50,7 @@ class TradingEnv(gymnasium.Env):
         self.episode_steps = 0
         
         self._setup_action_space()
-        self._setup_observation_space(self.raw_data.shape[1])
+        self._setup_observation_space(5)  # 5 features
 
     def _setup_action_space(self) -> None:
         """Configure action space with ATR-based SL/TP."""
@@ -66,15 +66,11 @@ class TradingEnv(gymnasium.Env):
         )
 
     def _setup_observation_space(self, feature_count: int) -> None:
-        """Setup observation space for features and positions."""
-        position_features = 5
-        max_positions = 6
-        
-        obs_dim = (self.bar_count * feature_count) + (position_features * max_positions)
+        """Setup observation space for features only."""
+        obs_dim = self.bar_count * feature_count
         self.observation_space = spaces.Box(
             low=-10, high=10, shape=(obs_dim,), dtype=np.float32
         )
-        self.max_positions = max_positions
 
     def _process_action(self, action: np.ndarray) -> Tuple[int, float, float]:
         """Process action with minimum stop loss requirement."""
@@ -105,17 +101,6 @@ class TradingEnv(gymnasium.Env):
         """Execute a trade with enforced minimum stop loss."""
         if position == 0:
             self.steps_since_trade += 1
-            return
-            
-        if len(self.open_positions) >= self.max_positions:
-            return
-            
-        long_positions = sum(1 for p in self.open_positions if p["position"] == 1)
-        short_positions = sum(1 for p in self.open_positions if p["position"] == -1)
-        
-        if position == 1 and long_positions >= 2:
-            return
-        if position == -1 and short_positions >= 2:
             return
             
         current_price = self.prices['close'][self.current_step]
@@ -224,41 +209,31 @@ class TradingEnv(gymnasium.Env):
         return reward, closed_positions
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Preprocess market data for the model."""
+        """Preprocess market data for the model with simplified features."""
         close = data['close'].values
-        high = data['high'].values
-        low = data['low'].values
         
+        # Core price features
         returns = np.diff(close) / close[:-1]
         returns = np.insert(returns, 0, 0)
         returns = np.clip(returns, -0.1, 0.1)
         
-        vol = pd.Series(returns).rolling(20, min_periods=1).std().fillna(0).values
+        # Simple volatility (10-period)
+        vol = pd.Series(returns).rolling(10, min_periods=1).std().fillna(0).values
         vol = np.clip(vol, 1e-8, 0.1)
         
-        price_range = (high - low) / close
-        avg_range = pd.Series(price_range).rolling(10, min_periods=1).mean().fillna(0).values
-        avg_range = np.clip(avg_range, 0, 0.1)
-        
-        rsi_norm = ((data['RSI'].values - 50) / 25).clip(-2, 2)
+        # Basic trend
         trend = np.where(data['EMA_fast'] > data['EMA_slow'], 1, -1)
         
-        trend_str = np.abs(data['EMA_fast'] - data['EMA_slow']) / close
-        trend_str = np.clip(trend_str, 0, 0.1)
-        
-        mom = pd.Series(returns).rolling(10, min_periods=1).mean().fillna(0).values
-        mom = np.clip(mom / (vol + 1e-8), -3, 3)
-        
-        volume = data['volume'].values
-        vol_sma = pd.Series(volume).rolling(20, min_periods=1).mean().fillna(0).values
-        vol_std = pd.Series(volume).rolling(20, min_periods=1).std().fillna(1).values
-        vol_norm = np.clip((volume - vol_sma) / (vol_std + 1e-8), -3, 3)
+        # Normalized features
+        rsi_norm = data['RSI'].values / 100  # Scale to 0-1
+        atr_norm = data['ATR'].values / close  # Normalize by price
         
         features = np.column_stack([
-            returns, vol, avg_range, rsi_norm, trend, trend_str, mom, vol_norm,
-            data['spread'].values / close,
-            data['ATR'].values / pd.Series(data['ATR'].values).rolling(50, min_periods=1).mean().fillna(1).values,
-            close / data['EMA_slow'].values - 1
+            returns,    # Price movement
+            vol,       # Market volatility
+            trend,     # Trend direction
+            rsi_norm,  # Momentum
+            atr_norm   # Volatility for position sizing
         ])
         
         features = np.nan_to_num(features, 0)
@@ -380,7 +355,7 @@ class TradingEnv(gymnasium.Env):
         return self.get_history(), {}
         
     def get_history(self) -> np.ndarray:
-        """Get the observation window and position state."""
+        """Get the observation window."""
         start = max(0, self.current_step - self.bar_count + 1)
         end = self.current_step + 1
         window = self.raw_data.values[start:end]
@@ -390,29 +365,7 @@ class TradingEnv(gymnasium.Env):
             full_window[-window.shape[0]:] = window
             window = full_window
         
-        current_price = self.prices['close'][self.current_step]
-        pos_features = np.zeros(self.max_positions * 5, dtype=np.float32)
-        
-        if self.open_positions:
-            for i, pos in enumerate(self.open_positions):
-                if i >= self.max_positions:
-                    break
-                    
-                sl_dist = abs(current_price - pos["sl_price"]) / current_price
-                tp_dist = abs(current_price - pos["tp_price"]) / current_price
-                points = (current_price - pos["entry_price"]) if pos["position"] == 1 else (pos["entry_price"] - current_price)
-                pnl = ((points * pos["lot_size"] * self.POINT_VALUE) / self.balance) * 100
-                
-                idx = i * 5
-                pos_features[idx:idx+5] = [
-                    pos["position"],
-                    pos["lot_size"],
-                    pnl / self.POINT_VALUE,
-                    sl_dist,
-                    tp_dist
-                ]
-        
-        return np.concatenate([window.ravel(), pos_features])
+        return window.ravel()
 
     def render(self) -> None:
         """Print environment state and trade statistics."""
