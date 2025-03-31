@@ -140,25 +140,25 @@ def train_model(train_env, val_env, args):
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=2048,  # Reduced sequence length
-        batch_size=512,  # Smaller batches for faster updates
+        n_steps=512,  # Much shorter sequences
+        batch_size=128,  # Smaller batches
         gamma=0.99,
         gae_lambda=0.98,
-        clip_range=0.2,  # Increased for better exploration
-        clip_range_vf=0.2,
-        ent_coef=0.01,
-        vf_coef=0.5,  # Reduced value function impact
+        clip_range=0.1,
+        clip_range_vf=0.1,
+        ent_coef=0.005,  # Less exploration
+        vf_coef=0.5,
         max_grad_norm=0.5,
         use_sde=False,
         policy_kwargs={
             "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 64,  # Smaller LSTM
-            "n_lstm_layers": 1,  # Single LSTM layer
-            "shared_lstm": True,  # Share LSTM between policy and value
-            "enable_critic_lstm": False,  # Simpler architecture
+            "lstm_hidden_size": 32,  # Much smaller LSTM
+            "n_lstm_layers": 1,
+            "shared_lstm": True,
+            "enable_critic_lstm": False,
             "net_arch": {
-                "pi": [32],  # Simple policy network
-                "vf": [32]   # Simple value network
+                "pi": [16],  # Minimal network
+                "vf": [16]   # Minimal network
             },
             "optimizer_kwargs": {
                 "eps": 1e-5
@@ -172,9 +172,9 @@ def train_model(train_env, val_env, args):
     callbacks = []
     
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.1,  # Reduced initial exploration
-        end_eps=0.01,  # Lower final exploration
-        decay_timesteps=int(args.total_timesteps * 0.6)  # Faster decay
+        start_eps=0.1,
+        end_eps=0.01,
+        decay_timesteps=int(args.total_timesteps * 0.6)
     )
     callbacks.append(epsilon_callback)
     
@@ -261,7 +261,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         
         env_params = {
             'initial_balance': args.initial_balance,
-            'bar_count': 20,
+            'bar_count': args.bar_count,
             'lot_percentage': 0.02
         }
         
@@ -269,7 +269,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
         
         # Adjust timesteps based on data size (reduced for 15-min data)
-        period_timesteps = min(base_timesteps, len(train_data) * 20)  # Reduced multiplier due to more frequent bars
+        period_timesteps = min(base_timesteps, len(train_data) * 10)  # Reduced to 10 timesteps per bar
         
         if model is None:
             # Initial training
@@ -342,8 +342,10 @@ def main():
                       help='Initial training window in days')
     parser.add_argument('--step_size', type=int, default=14,
                       help='Walk-forward step size in days')
+    parser.add_argument('--bar_count', type=int, default=10,
+                      help='')
     
-    parser.add_argument('--total_timesteps', type=int, default=1000000,
+    parser.add_argument('--total_timesteps', type=int, default=500000,  # Reduced total steps
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')

@@ -123,18 +123,19 @@ class TradeModel:
             deterministic=True
         )
         
-        # Process the continuous action
-        position, sl_points, tp_points = env._process_action(action)
+        # Process single action value for position
+        position = np.sign(action[0]) if abs(action[0]) > 0.1 else 0
         
-        # Calculate rrr
-        rrr = tp_points / sl_points if sl_points > 0 else 0
+        # Stop loss is fixed at 1.0 * ATR
+        sl_points = float(data.iloc[-1]['ATR'])
+        tp_points = sl_points  # Fixed 1:1 RRR
         
         # Create prediction result
         result = {
             'position': int(position),  # -1 for sell, 0 for hold, 1 for buy
-            'sl_points': float(sl_points),
-            'tp_points': float(tp_points),
-            'risk_reward_ratio': float(rrr),
+            'sl_points': sl_points,
+            'tp_points': sl_points,  # Equal to SL for 1:1 ratio
+            'risk_reward_ratio': 1.0,  # Fixed RRR
             'atr': float(data.iloc[-1]['ATR'])
         }
 

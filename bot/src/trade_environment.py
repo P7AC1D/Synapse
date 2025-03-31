@@ -53,15 +53,10 @@ class TradingEnv(gymnasium.Env):
         self._setup_observation_space(5)  # 5 features
 
     def _setup_action_space(self) -> None:
-        """Configure action space with ATR-based SL/TP."""
-        self.SL_MIN_ATR = 1.0  # Minimum SL multiplier
-        self.SL_MAX_ATR = 2.5  # Maximum SL multiplier
-        self.TP_MIN_ATR = 1.0  # Minimum TP multiplier
-        self.TP_MAX_ATR = 4.0  # Maximum TP multiplier
-
+        """Configure simple action space for position direction only."""
         self.action_space = spaces.Box(
-            low=np.array([-1, self.SL_MIN_ATR, self.TP_MIN_ATR]),
-            high=np.array([1, self.SL_MAX_ATR, self.TP_MAX_ATR]),
+            low=np.array([-1]),  # Sell
+            high=np.array([1]),  # Buy
             dtype=np.float32
         )
 
@@ -73,27 +68,15 @@ class TradingEnv(gymnasium.Env):
         )
 
     def _process_action(self, action: np.ndarray) -> Tuple[int, float, float]:
-        """Process action with minimum stop loss requirement."""
+        """Process action with fixed RRR and ATR-based stop loss."""
         position = np.sign(action[0]) if abs(action[0]) > 0.1 else 0
         
+        # Calculate SL based on ATR
         current_atr = self.prices['atr'][self.current_step]
+        sl_points = max(current_atr, self.MIN_SL_POINTS)  # At least 100 points or 1 ATR
         
-        # Calculate base SL/TP distances from ATR
-        multipliers = np.clip(
-            action[1:], 
-            [self.SL_MIN_ATR, self.TP_MIN_ATR],
-            [self.SL_MAX_ATR, self.TP_MAX_ATR]
-        )
-        
-        # Calculate distances
-        sl_points = multipliers[0] * current_atr
-        tp_points = multipliers[1] * current_atr
-        
-        # Enforce minimum SL of 100 points
-        sl_points = max(sl_points, self.MIN_SL_POINTS)
-        
-        # Adjust TP to maintain minimum RR ratio
-        tp_points = max(tp_points, sl_points * self.MIN_RR_RATIO)
+        # Fixed RRR of 1.0
+        tp_points = sl_points
         
         return position, sl_points, tp_points
 
