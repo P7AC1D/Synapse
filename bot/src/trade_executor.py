@@ -19,19 +19,19 @@ class TradeExecutor:
         self.logger = logging.getLogger(__name__)
         self.mt5 = mt5
         
-    def calculate_position_size(self, entry_price: float, stop_loss_price: float, 
-                              account_balance: float, risk_multiplier: float = 1.0) -> float:
+    def calculate_grid_position_size(self, entry_price: float, grid_size_pips: float,
+                                   account_balance: float, risk_multiplier: float = 1.0) -> float:
         """
-        Calculate position size based on risk management parameters.
+        Calculate position size based on grid parameters.
         
         Args:
-            entry_price: Entry price
-            stop_loss_price: Stop loss price
+            entry_price: Entry price for the position
+            grid_size_pips: Grid size in pips (from model prediction)
             account_balance: Current account balance
-            risk_multiplier: Multiplier for risk amount (e.g., 0.4 for second position)
+            risk_multiplier: Risk multiplier for position pyramiding
             
         Returns:
-            float: Calculated position size in lots
+            float: Position size in lots
         """
         try:
             # Get symbol trading information
@@ -45,11 +45,11 @@ class TradeExecutor:
             risk_amount = base_risk * risk_multiplier
             risk_in_usd = risk_amount / usd_zar_bid
             
-            # Calculate stop-loss distance in price points
-            stop_loss_distance = abs(entry_price - stop_loss_price)
+            # Convert grid size from pips to price points
+            stop_distance = grid_size_pips * self.mt5.get_point()
             
-            # Calculate position size
-            lot_size = risk_in_usd / (stop_loss_distance * contract_size)
+            # Calculate base position size using grid size
+            lot_size = risk_in_usd / (stop_distance * contract_size)
             
             # Cap the lot size to the minimum and maximum values
             lot_size = round(max(min_lot, min(lot_size, max_lot)), 2)
@@ -58,7 +58,7 @@ class TradeExecutor:
                 f"Lot size calculation: Contract size: {contract_size} | "
                 f"USDZAR: {usd_zar_bid:.2f} | Risk %: {RISK_PERCENTAGE}% | "
                 f"Risk: R{risk_amount:.2f} | Risk USD: ${risk_in_usd:.2f} | "
-                f"SL Distance: {stop_loss_distance:.5f} | Lot Size: {lot_size:.2f}"
+                f"Grid Size: {grid_size_pips:.5f} | Lot Size: {lot_size:.2f}"
             )
             return lot_size
             
@@ -68,83 +68,70 @@ class TradeExecutor:
         
     def execute_trade(self, prediction: Dict[str, Any]) -> bool:
         """
-        Execute a trade based on model prediction.
+        Execute a grid-based trade based on model prediction.
         
         Args:
-            prediction: Dictionary containing model prediction details
+            prediction: Dictionary containing model prediction details including grid parameters
         
         Returns:
             bool: True if trade executed successfully, False otherwise
         """
         try:
             position = prediction['position']  # -1 for sell, 0 for hold, 1 for buy
-            sl_points = prediction['sl_points']
-            tp_points = prediction['tp_points']
-            atr = prediction['atr']
+            grid_size_pips = prediction['grid_size_pips']
+            grid_multiplier = prediction.get('grid_multiplier', 1.0)
             
             if position == 0:
                 self.logger.debug("Hold signal - no trade execution")
                 return True
             
-            # Get symbol info for stop levels
+            # Get symbol info
             symbol_info = mt5.symbol_info(MT5_SYMBOL)
             if symbol_info is None:
                 self.logger.error("Failed to get symbol info")
                 return False
 
-            # Convert stop level from points to price units
-            min_stop_level = symbol_info.point * symbol_info.trade_stops_level
-
             # Get current price
-            if position == 1:
-                current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[1]  # Ask for buy
-            else:
-                current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[0]  # Bid for sell
+            if position == 1:  # Buy
+                current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[1]  # Ask
+            else:  # Sell
+                current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[0]  # Bid
                 
             if current_price is None:
                 self.logger.error("Failed to get current price")
                 return False
 
-            # Ensure stops are at least minimum distance away
-            if position == 1:  # Buy
-                sl_price = min(current_price - sl_points, current_price - min_stop_level)  # Keep SL closer (smaller distance down)
-                tp_price = max(current_price + tp_points, current_price + min_stop_level)  # Allow TP further (larger distance up)
-            else:  # Sell
-                sl_price = max(current_price + sl_points, current_price + min_stop_level)  # Keep SL closer (smaller distance up)
-                tp_price = min(current_price - tp_points, current_price - min_stop_level)  # Allow TP further (larger distance down)
-
-            self.logger.debug(f"Stop levels - Min: {min_stop_level}, SL Distance: {abs(current_price - sl_price)}, TP Distance: {abs(current_price - tp_price)}")
-            
             # Check existing positions
             positions = self.mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
             if positions is None:
                 self.logger.error("Failed to get open positions")
                 return False
                 
-            # Count positions by direction
-            long_positions = sum(1 for p in positions if p.type == 0)  # 0 = buy
-            short_positions = sum(1 for p in positions if p.type == 1)  # 1 = sell
+            # Split positions by direction
+            long_positions = [p for p in positions if p.type == 0]  # 0 = buy
+            short_positions = [p for p in positions if p.type == 1]  # 1 = sell
+            current_positions = long_positions if position == 1 else short_positions
             
-            # Apply position management rules
-            if position == 1 and long_positions >= 1:
-                self.logger.debug("Max long positions reached")
-                return True
-            if position == -1 and short_positions >= 1:
-                self.logger.debug("Max short positions reached")
-                return True
+            # Grid position management
+            if current_positions:
+                # Calculate average position price
+                avg_price = sum(p.price_open * p.volume for p in current_positions) / sum(p.volume for p in current_positions)
+                price_diff = abs(current_price - avg_price)
                 
-            # Calculate lot size with risk management
-            total_positions = len(positions)
-            if total_positions >= 2:
-                self.logger.debug("Max total positions reached")
-                return True
+                # Only add position if price moved beyond grid size
+                if price_diff < grid_size_pips * symbol_info.point:
+                    self.logger.debug(f"Price {price_diff:.5f} within grid size {grid_size_pips * symbol_info.point:.5f} - no new position")
+                    return True
                 
-            # Use 40% risk for second position
-            risk_multiplier = 0.4 if total_positions == 1 else 1.0
+                # Adjust risk for pyramiding
+                risk_multiplier = max(0.2, 1.0 / (len(current_positions) + 1))
+            else:
+                risk_multiplier = 1.0
             
-            lot_size = self.calculate_position_size(
+            # Calculate lot size based on grid parameters
+            lot_size = self.calculate_grid_position_size(
                 entry_price=current_price,
-                stop_loss_price=sl_price,
+                grid_size_pips=grid_size_pips,
                 account_balance=self.mt5.get_account_balance(),
                 risk_multiplier=risk_multiplier
             )
@@ -154,6 +141,15 @@ class TradeExecutor:
                 MT5_SYMBOL, 
                 'buy' if position == 1 else 'sell'
             )
+            
+            # Set grid boundaries for trade management
+            grid_points = grid_size_pips * symbol_info.point
+            if position == 1:  # Buy
+                sl_price = current_price - grid_points
+                tp_price = current_price + grid_points
+            else:  # Sell
+                sl_price = current_price + grid_points
+                tp_price = current_price - grid_points
             
             # Execute the trade
             success = self.mt5.open_trade(
@@ -168,10 +164,10 @@ class TradeExecutor:
             
             if success:
                 self.logger.info(
-                    f"Trade executed: {'BUY' if position == 1 else 'SELL'} "
-                    f"{lot_size:.2f} lots @ {current_price:.2f} | "
-                    f"SL: {sl_price:.2f} TP: {tp_price:.2f} | "
-                    f"RRR: {tp_points/sl_points:.2f} | "
+                    f"Grid trade executed: {'BUY' if position == 1 else 'SELL'} "
+                    f"{lot_size:.2f} lots @ {current_price:.5f} | "
+                    f"Grid Size: {grid_size_pips:.1f} pips | "
+                    f"Grid Multiplier: {grid_multiplier:.2f} | "
                     f"Risk: {RISK_PERCENTAGE*risk_multiplier:.1f}%"
                 )
             else:

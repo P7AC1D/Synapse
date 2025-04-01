@@ -126,17 +126,19 @@ class TradeModel:
         # Process single action value for position
         position = np.sign(action[0]) if abs(action[0]) > 0.1 else 0
         
-        # Stop loss is fixed at 1.0 * ATR
-        sl_points = float(data.iloc[-1]['ATR'])
-        tp_points = sl_points  # Fixed 1:1 RRR
+        # Get ATR and current market conditions
+        current_atr = float(data.iloc[-1]['ATR'])
         
-        # Create prediction result
+        # Extract grid size from action
+        grid_multiplier = float(np.clip(action[1], 0.1, 3.0))  # Match TradingEnv limits
+        grid_size_pips = current_atr * grid_multiplier
+        
+        # Create prediction result with grid parameters
         result = {
             'position': int(position),  # -1 for sell, 0 for hold, 1 for buy
-            'sl_points': sl_points,
-            'tp_points': sl_points,  # Equal to SL for 1:1 ratio
-            'risk_reward_ratio': 1.0,  # Fixed RRR
-            'atr': float(data.iloc[-1]['ATR'])
+            'grid_size_pips': grid_size_pips,
+            'grid_multiplier': grid_multiplier,
+            'atr': current_atr
         }
 
         self.logger.debug(f"Prediction: {result}")
@@ -220,7 +222,7 @@ class TradeModel:
                 'max_drawdown_pct': 0.0,
                 'total_steps': total_steps,
                 'total_reward': total_reward,
-                'open_positions': len(getattr(env, 'open_positions', [])),
+            'grid_positions': len(env.long_positions) + len(env.short_positions),
                 'trades': []
             }
             
@@ -306,6 +308,7 @@ class TradeModel:
             'sharpe_ratio': float(sharpe),
             'total_steps': total_steps,
             'total_reward': total_reward,
-            'open_positions': len(getattr(env, 'open_positions', [])),
+            'grid_positions': len(env.long_positions) + len(env.short_positions),
+            'grid_metrics': env.grid_metrics,
             'trades': env.trades
         }
