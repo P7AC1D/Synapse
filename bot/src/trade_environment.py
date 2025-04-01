@@ -2,7 +2,16 @@
 Trading environment for grid-based trading with PPO-LSTM.
 
 This module implements a custom OpenAI Gym environment for training
-a PPO-LSTM model to trade using a dynamic grid strategy.
+a PPO-LSTM model to trade using a dynamic grid strategy. The environment uses:
+- Discrete action space (Hold/Buy/Sell)
+- Single timestep observations with 5 features:
+  * Returns
+  * Volatility
+  * Trend
+  * RSI
+  * ATR
+- Temporal dependencies handled by LSTM in model
+- Dynamic grid sizing based on ATR
 """
 
 import gymnasium
@@ -81,8 +90,7 @@ class TradingEnv(gym.Env, EzPickle):
     metadata = {"render_modes": ["human"], "render_fps": 30}
     
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
-                 balance_per_lot: float = 1000.0, bar_count: int = 10, 
-                 random_start: bool = False):
+                 balance_per_lot: float = 1000.0, random_start: bool = False):
         super().__init__()
         EzPickle.__init__(self)
         
@@ -108,52 +116,85 @@ class TradingEnv(gym.Env, EzPickle):
         
         self.raw_data = self._preprocess_data(data)
         self.current_step = 0
-        self.bar_count = bar_count
         self.random_start = random_start
         
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.max_balance = initial_balance
         
+        # Trading state
         self.trades: List[Dict[str, Any]] = []
-        self.long_positions: List[Dict[str, Any]] = []  # Long positions
-        self.short_positions: List[Dict[str, Any]] = [] # Short positions
+        self.positions = []      # List of positions in current grid
         self.steps_since_trade = 0
         self.win_count = 0
         self.loss_count = 0
         self.reward = 0
-        
-        # Trading metrics
         self.completed_episodes = 0
         self.episode_steps = 0
         self.trade_cooldown = 5  # Minimum bars between trades
-        self.long_count = 0      # Track long trades
-        self.short_count = 0     # Track short trades
         
-        # Single grid tracking
-        self.grids = {
-            'long': None,  # Single long grid
-            'short': None  # Single short grid
-        }
+        # Grid tracking
+        self.active_grid = None  # Single grid that can be long or short
         self.grid_metrics = {
-            'long_positions': 0,
-            'short_positions': 0,
+            'position_count': 0,
             'avg_profit_per_close': 0.0,
-            'grid_efficiency': 0.0
+            'grid_efficiency': 0.0,
+            'current_direction': 0  # 0: None, 1: Long, -1: Short
         }
+        
+        # Episode settings
+        self.max_steps = 500  # Default episode length
         
         self._setup_action_space()
-        self._setup_observation_space(5)  # 5 features
+        self._setup_observation_space(5)  # 5 features for state space
+
+        # Verify required columns are present
+        required_columns = ['close', 'high', 'low', 'spread', 'ATR', 'RSI', 'EMA_fast', 'EMA_slow']
+        missing_columns = [col for col in required_columns if col not in data.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+
+    def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """Preprocess market data for the model with simplified features."""
+        features_df = pd.DataFrame(index=self.original_index)
+        
+        with np.errstate(divide='ignore', invalid='ignore'):
+            close = data['close'].values
+            
+            # Calculate returns and clip to remove outliers
+            returns = np.diff(close) / close[:-1]
+            returns = np.insert(returns, 0, 0)
+            returns = np.clip(returns, -0.1, 0.1)
+            
+            # Calculate volatility (10-period rolling standard deviation)
+            vol = pd.Series(returns).rolling(10, min_periods=1).std().fillna(0).values
+            vol = np.clip(vol, 1e-8, 0.1)
+            
+            # Calculate trend based on EMAs
+            trend = np.where(data['EMA_fast'].values > data['EMA_slow'].values, 1, -1)
+            
+            # Normalize RSI and ATR
+            rsi_norm = data['RSI'].values / 100
+            atr_norm = data['ATR'].values / close
+            atr_norm = np.clip(atr_norm, 0, 0.1)
+            
+            # Combine features
+            features_df['returns'] = returns
+            features_df['volatility'] = vol
+            features_df['trend'] = trend
+            features_df['rsi'] = rsi_norm
+            features_df['atr'] = atr_norm
+            
+        return features_df.fillna(0)
 
     def _setup_action_space(self) -> None:
         """Configure discrete action space for direction only."""
         self.action_space = spaces.Discrete(3)  # 0: Hold, 1: Buy, 2: Sell
 
     def _setup_observation_space(self, feature_count: int) -> None:
-        """Setup observation space for features only."""
-        obs_dim = self.bar_count * feature_count
+        """Setup observation space for single bar features."""
         self.observation_space = spaces.Box(
-            low=-10, high=10, shape=(obs_dim,), dtype=np.float32
+            low=-10, high=10, shape=(feature_count,), dtype=np.float32
         )
 
     def _process_action(self, action: Union[int, np.ndarray]) -> int:
@@ -177,26 +218,29 @@ class TradingEnv(gym.Env, EzPickle):
             
         current_price = self.prices['close'][self.current_step]
         current_atr = self.prices['atr'][self.current_step]
-        grid_direction = 'long' if direction == 1 else 'short'
         
-        # Get or create grid
-        grid = self.grids[grid_direction]
-        if grid is None:
-            # Initialize new grid
-            grid = Grid(direction, current_price, current_atr)
-            self.grids[grid_direction] = grid
+        # Check if we need to close existing grid in opposite direction
+        if self.active_grid and direction != self.active_grid.direction:
+            # Close existing grid and get reward
+            self._close_grid()
+            return -0.2  # Penalty for changing direction
+        
+        # Create new grid if needed
+        if not self.active_grid:
+            self.active_grid = Grid(direction, current_price, current_atr)
+            self.grid_metrics['current_direction'] = direction
         
         # Update grid metrics
-        grid.update_metrics(current_price, current_atr)
+        self.active_grid.update_metrics(current_price, current_atr)
             
         # Check if we should add position
-        if not grid.should_add_position(current_price):
+        if not self.active_grid.should_add_position(current_price):
             return -0.1  # Penalty for trying to add position too soon
             
         # Calculate position size based on volatility and grid utilization
         base_lot = max(self.MIN_LOTS, round(self.balance / self.BALANCE_PER_LOT / 100, 2))
-        volatility_scale = min(current_atr / grid.initial_atr, 2.0)
-        position_scale = 1.0 + (len(grid.positions) * 0.2)  # Scale up with grid size
+        volatility_scale = min(current_atr / self.active_grid.initial_atr, 2.0)
+        position_scale = 1.0 + (len(self.positions) * 0.2)  # Scale up with grid size
         lot_size = min(self.MAX_LOTS, base_lot * volatility_scale * position_scale)
         
         # Create new position
@@ -206,68 +250,79 @@ class TradingEnv(gym.Env, EzPickle):
             "lot_size": lot_size,
             "entry_step": self.current_step,
             "entry_atr": current_atr,
-            "grid_size": grid.grid_size,
+            "grid_size": self.active_grid.grid_size,
             "current_profit_pips": 0.0
         }
         
-        # Add position to grid and appropriate list
-        grid.positions.append(position)
-        if direction == 1:
-            self.long_positions.append(position)
-            self.long_count += 1
-        else:
-            self.short_positions.append(position)
-            self.short_count += 1
-            
-        grid.update_metrics(current_price, current_atr)
+        # Add position to tracking
+        self.positions.append(position)
+        self.active_grid.positions.append(position)
+        self.grid_metrics['position_count'] = len(self.positions)
+        
+        self.active_grid.update_metrics(current_price, current_atr)
         self.steps_since_trade = 0
         
         # Calculate reward based on grid utilization and volatility
-        position_bonus = min(1.0, len(grid.positions) / 5.0) * 0.3
-        volatility_bonus = min(1.0, current_atr / grid.initial_atr) * 0.2
-        direction_bonus = 0.2 if len(grid.positions) == 1 else 0.1
+        position_bonus = min(1.0, len(self.positions) / 5.0) * 0.3
+        volatility_bonus = min(1.0, current_atr / self.active_grid.initial_atr) * 0.2
+        direction_bonus = 0.2 if len(self.positions) == 1 else 0.1
         
         return position_bonus + volatility_bonus + direction_bonus
+    
+    def _close_grid(self) -> float:
+        """Close all positions in current grid."""
+        if not self.active_grid:
+            return 0.0
+        
+        current_price = self.prices['close'][self.current_step]
+        total_pnl = 0.0
+        
+        for pos in self.positions:
+            if self.active_grid.direction == 1:  # Long positions
+                profit_points = current_price - pos["entry_price"]
+            else:  # Short positions
+                profit_points = pos["entry_price"] - current_price
+            
+            pos["exit_price"] = current_price
+            pos["exit_step"] = self.current_step
+            pos["exit_time"] = str(self.original_index[self.current_step])
+            pos["profit_pips"] = profit_points / 0.0001
+            pos["pnl"] = profit_points * pos["lot_size"]
+            total_pnl += pos["pnl"]
+            
+            # Update trading stats
+            if pos["pnl"] > 0:
+                self.win_count += 1
+            else:
+                self.loss_count += 1
+                
+            self.trades.append(pos)
+            
+        self.balance += total_pnl
+        self.positions.clear()
+        
+        # Calculate final grid reward
+        reward = self._calculate_grid_reward(self.active_grid.positions, total_pnl)
+        
+        # Reset grid
+        self.active_grid = None
+        self.grid_metrics['position_count'] = 0
+        self.grid_metrics['current_direction'] = 0
+        
+        return reward
 
     def _manage_grid_positions(self) -> Tuple[float, List[Dict[str, Any]]]:
         """Manage grid positions including entry, exit, and pyramiding decisions."""
-        total_reward = 0.0
-        closed_positions = []
-        
-        # Process long positions
-        long_reward, long_closed = self._manage_direction_grid(self.long_positions, 1)
-        total_reward += long_reward
-        closed_positions.extend(("long", idx) for idx in long_closed)
-        
-        # Process short positions
-        short_reward, short_closed = self._manage_direction_grid(self.short_positions, -1)
-        total_reward += short_reward
-        closed_positions.extend(("short", idx) for idx in short_closed)
-        
-        # Close positions and update metrics
-        self._process_closed_positions(closed_positions)
-        
-        return total_reward, closed_positions
-
-    def _manage_direction_grid(self, positions: List[Dict[str, Any]], direction: int) -> Tuple[float, List[int]]:
-        """Manage grid positions for a specific direction."""
-        if not positions:
+        if not self.active_grid:
             return 0.0, []
             
         current_price = self.prices['close'][self.current_step]
         current_atr = self.prices['atr'][self.current_step]
-        grid = self.grids['long' if direction == 1 else 'short']
-        
-        if grid is None:
-            return 0.0, []
-            
-        positions_to_close = []
         total_pnl = 0.0
         
-        # Update all positions and calculate PnL
-        for idx, pos in enumerate(positions):
-            # Calculate profit
-            if direction == 1:  # Long positions
+        # Update positions and calculate PnL
+        for pos in self.positions:
+            if self.active_grid.direction == 1:  # Long positions
                 profit_points = current_price - pos["entry_price"]
             else:  # Short positions
                 profit_points = pos["entry_price"] - current_price
@@ -276,32 +331,31 @@ class TradingEnv(gym.Env, EzPickle):
             pos_pnl = profit_points * pos["lot_size"]
             total_pnl += pos_pnl
             
-        grid.total_pnl = total_pnl
-        grid.update_metrics(current_price, current_atr)
+        self.active_grid.total_pnl = total_pnl
+        self.active_grid.update_metrics(current_price, current_atr)
         
         # Dynamic closure conditions based on current grid size
-        grid_value = grid.grid_size * grid.total_lots
-        take_profit = grid_value * (1.0 + 0.1 * len(grid.positions))
-        stop_loss = -grid_value * (1.5 - 0.1 * len(grid.positions))
+        grid_value = self.active_grid.grid_size * self.active_grid.total_lots
+        take_profit = grid_value * (1.0 + 0.1 * len(self.positions))
+        stop_loss = -grid_value * (1.5 - 0.1 * len(self.positions))
         
         should_close = (
             total_pnl > take_profit or       # Take profit
             (total_pnl < stop_loss and       # Stop loss
-             len(grid.positions) >= 3)       # After pyramiding
+             len(self.positions) >= 3)       # After pyramiding
         )
         
         if should_close:
-            positions_to_close.extend(range(len(positions)))
-            self.grids['long' if direction == 1 else 'short'] = None
-            return self._calculate_grid_reward(positions, total_pnl), positions_to_close
+            reward = self._close_grid()
+            return reward, []
             
         # Check for grid expansion
-        if len(grid.positions) < 5:  # Max 5 positions per grid
+        if len(self.positions) < 5:  # Max 5 positions per grid
             current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
-            if grid.should_add_position(current_price):
-                self._execute_grid_trade(direction, current_spread)
+            if self.active_grid.should_add_position(current_price):
+                self._execute_grid_trade(self.active_grid.direction, current_spread)
                 
-        return self._calculate_grid_reward(positions, total_pnl), positions_to_close
+        return self._calculate_grid_reward(self.positions, total_pnl), []
 
     def _calculate_grid_reward(self, positions: List[Dict[str, Any]], total_pnl: float) -> float:
         """Calculate reward for grid trading performance."""
@@ -324,85 +378,6 @@ class TradingEnv(gym.Env, EzPickle):
         utilization_bonus = utilization * 0.2
         
         return pnl_reward + efficiency_reward + utilization_bonus
-
-    def _process_closed_positions(self, closed_positions: List[Tuple[str, int]]) -> None:
-        """Process and record closed positions."""
-        closed_positions.sort(key=lambda x: x[1], reverse=True)
-        
-        for direction, idx in closed_positions:
-            positions = self.long_positions if direction == "long" else self.short_positions
-            if 0 <= idx < len(positions):
-                position = positions[idx]
-                
-                # Calculate final PnL
-                exit_price = self.prices['close'][self.current_step]
-                if direction == "long":
-                    profit_points = exit_price - position["entry_price"]
-                else:
-                    profit_points = position["entry_price"] - exit_price
-                
-                profit_pips = profit_points / 0.0001
-                pnl = profit_points * position["lot_size"]
-                self.balance += pnl
-                
-                # Record completed trade
-                position.update({
-                    "pnl": pnl,
-                    "exit_price": exit_price,
-                    "exit_step": self.current_step,
-                    "exit_time": str(self.original_index[self.current_step]),
-                    "profit_pips": profit_pips
-                })
-                self.trades.append(position)
-                
-                # Update win/loss counts
-                if pnl > 0:
-                    self.win_count += 1
-                else:
-                    self.loss_count += 1
-                
-                # Remove closed position
-                positions.pop(idx)
-                
-        # Update grid metrics
-        self.grid_metrics.update({
-            'long_positions': len(self.long_positions),
-            'short_positions': len(self.short_positions),
-            'avg_profit_per_close': (sum(t["pnl"] for t in self.trades) / len(self.trades)) if self.trades else 0.0,
-            'grid_efficiency': (self.balance - self.initial_balance) / self.initial_balance * 100
-        })
-
-    def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Preprocess market data for the model with simplified features."""
-        features_df = pd.DataFrame(index=self.original_index)
-        
-        with np.errstate(divide='ignore', invalid='ignore'):
-            close = data['close'].values
-            
-            # Core price features
-            returns = np.diff(close) / close[:-1]
-            returns = np.insert(returns, 0, 0)
-            returns = np.clip(returns, -0.1, 0.1)
-            
-            # Simple volatility (10-period)
-            vol = pd.Series(returns).rolling(10, min_periods=1).std().fillna(0).values
-            vol = np.clip(vol, 1e-8, 0.1)
-            
-            # Basic trend
-            trend = np.where(data['EMA_fast'] > data['EMA_slow'], 1, -1)
-            
-            # Normalized features
-            rsi_norm = data['RSI'].values / 100
-            atr_norm = np.divide(data['ATR'].values, close, out=np.zeros_like(close), where=close!=0)
-            
-            # Add features with names
-            features_df['returns'] = returns
-            features_df['volatility'] = vol
-            features_df['trend'] = trend
-            features_df['rsi'] = rsi_norm
-            features_df['atr'] = atr_norm
-        
-        return features_df.fillna(0)
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Take an environment step."""
@@ -441,8 +416,7 @@ class TradingEnv(gym.Env, EzPickle):
         # Check for bankruptcy or excessive drawdown
         max_drawdown = (self.max_balance - self.balance) / self.max_balance
         if self.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN:
-            self.long_positions.clear()
-            self.short_positions.clear()
+            self._close_grid()  # Close any active positions
             reward = -100 if self.balance <= 0 else -50
             done = True
             
@@ -451,17 +425,23 @@ class TradingEnv(gym.Env, EzPickle):
             final_return = (self.balance / self.initial_balance) - 1
             win_rate = (self.win_count / (self.win_count + self.loss_count)) if (self.win_count + self.loss_count) > 0 else 0
             reward += final_return * 10.0 + win_rate * 10.0
-                
+        
+        # Update grid metrics
+        self.grid_metrics.update({
+            'position_count': len(self.positions),
+            'avg_profit_per_close': (sum(t["pnl"] for t in self.trades) / len(self.trades)) if self.trades else 0.0,
+            'grid_efficiency': (self.balance - self.initial_balance) / self.initial_balance * 100
+        })
+        
         obs = self.get_history()
         self.reward = reward
         
-        return obs, reward, done, False, {
+        truncated = self.current_step >= len(self.raw_data) - 1
+        return obs, reward, done, truncated, {
+            "balance": self.balance,
             "total_pnl": self.balance - self.initial_balance,
             "drawdown": max_drawdown * 100,
-            "grid_positions": len(self.long_positions) + len(self.short_positions),
-            "grid_metrics": self.grid_metrics,
-            "long_positions": len(self.long_positions),
-            "short_positions": len(self.short_positions)
+            "grid_metrics": self.grid_metrics
         }
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
@@ -470,13 +450,13 @@ class TradingEnv(gym.Env, EzPickle):
             np.random.seed(seed)
 
         min_episode_length = 500
-        max_episode_length = min(5000, len(self.raw_data) - self.bar_count)
+        max_episode_length = min(5000, len(self.raw_data))
         
         scale_factor = min(self.completed_episodes / 25, 1.0)
         self.max_steps = int(min_episode_length + (max_episode_length - min_episode_length) * scale_factor)
         
         if self.random_start:
-            latest_start = len(self.raw_data) - self.max_steps - self.bar_count
+            latest_start = len(self.raw_data) - self.max_steps - 1
             self.current_step = np.random.randint(0, max(1, latest_start))
         else:
             self.current_step = 0
@@ -486,9 +466,8 @@ class TradingEnv(gym.Env, EzPickle):
         self.max_balance = self.initial_balance
         
         # Reset all trading state
-        self.long_positions.clear()
-        self.short_positions.clear()
         self.trades.clear()
+        self.positions.clear()
         
         # Reset trading counters
         self.steps_since_trade = 0
@@ -497,68 +476,78 @@ class TradingEnv(gym.Env, EzPickle):
         self.episode_steps = 0
         
         # Reset grid tracking
-        self.grids = {
-            'long': None,
-            'short': None
-        }
-        self.grid_metrics = {
-            'long_positions': 0,
-            'short_positions': 0,
+        self.active_grid = None
+        self.grid_metrics.update({
+            'position_count': 0,
             'avg_profit_per_close': 0.0,
-            'grid_efficiency': 0.0
-        }
+            'grid_efficiency': 0.0,
+            'current_direction': 0
+        })
         
         self.completed_episodes += 1
         
         return self.get_history(), {
             "balance": self.balance,
-            "total_grids": 0,
-            "positions": 0
+            "positions": len(self.positions)
         }
         
     def get_history(self) -> np.ndarray:
-        """Get the observation window."""
-        start = max(0, self.current_step - self.bar_count + 1)
-        end = self.current_step + 1
-        window = self.raw_data.values[start:end]
-        
-        if window.shape[0] < self.bar_count:
-            full_window = np.zeros((self.bar_count, window.shape[1]), dtype=np.float32)
-            full_window[-window.shape[0]:] = window
-            window = full_window
-        
-        return window.ravel()
+        """Get current bar features."""
+        return self.raw_data.values[self.current_step]
 
     def render(self) -> None:
         """Print environment state and trade statistics."""
         print(f"\n===== Episode {self.completed_episodes}, Step {self.episode_steps}/{self.max_steps} =====")
         print(f"Current Balance: {self.balance:.2f}")
-        print(f"Long Positions: {len(self.long_positions)}")
-        print(f"Short Positions: {len(self.short_positions)}")
+        print(f"Grid Positions: {len(self.positions)}")
         
         if len(self.trades) == 0:
             print("\nNo completed trades yet.")
             return
             
         trades_df = pd.DataFrame(self.trades)
+        
+        # Calculate basic metrics
         winning_trades = trades_df[trades_df["pnl"] > 0]
         losing_trades = trades_df[trades_df["pnl"] < 0]
+        
+        # Calculate directional metrics
+        long_trades = trades_df[trades_df["direction"] == 1]
+        short_trades = trades_df[trades_df["direction"] == -1]
+        long_wins = long_trades[long_trades["pnl"] > 0]
+        short_wins = short_trades[short_trades["pnl"] > 0]
+        
+        # Calculate hold times
+        trades_df["hold_time"] = trades_df["exit_step"] - trades_df["entry_step"]
+        avg_hold_time = trades_df["hold_time"].mean()
+        avg_win_hold = winning_trades["hold_time"].mean()
+        avg_loss_hold = losing_trades["hold_time"].mean()
         
         print("\n===== Performance Metrics =====")
         print(f"Total Return: {((self.balance - self.initial_balance) / self.initial_balance * 100):.2f}%")
         print(f"Total Trades: {len(self.trades)}")
-        print(f"Win Rate: {(len(winning_trades) / len(self.trades) * 100):.2f}%")
+        print(f"Overall Win Rate: {(len(winning_trades) / len(self.trades) * 100):.2f}%")
         print(f"Average Win: {winning_trades['pnl'].mean():.2f}")
         print(f"Average Loss: {losing_trades['pnl'].mean():.2f}")
         print(f"Sharpe Ratio: {(winning_trades['pnl'].mean() / winning_trades['pnl'].std() * np.sqrt(252)):.2f}")
         print(f"Current Drawdown: {((self.max_balance - self.balance) / self.max_balance * 100):.2f}%")
         
+        print("\n===== Hold Time Analysis =====")
+        print(f"Average Hold Time: {avg_hold_time:.1f} bars")
+        print(f"Winners Hold Time: {avg_win_hold:.1f} bars")
+        print(f"Losers Hold Time: {avg_loss_hold:.1f} bars")
+        
+        print("\n===== Directional Performance =====")
+        print(f"Long Trades: {len(long_trades)} ({(len(long_trades) / len(trades_df) * 100):.1f}%)")
+        print(f"Long Win Rate: {(len(long_wins) / len(long_trades) * 100):.1f}% (Avg PnL: {long_trades['pnl'].mean():.2f})")
+        print(f"Short Trades: {len(short_trades)} ({(len(short_trades) / len(trades_df) * 100):.1f}%)")
+        print(f"Short Win Rate: {(len(short_wins) / len(short_trades) * 100):.1f}% (Avg PnL: {short_trades['pnl'].mean():.2f})")
+        
         print("\n===== Grid Stats =====")
-        for direction in ['long', 'short']:
-            grid = self.grids[direction]
-            if grid:
-                print(f"{direction.capitalize()} Grid:")
-                print(f"  Positions: {len(grid.positions)}")
-                print(f"  Average Entry: {grid.avg_entry:.2f}")
-                print(f"  Grid Size: {grid.grid_size:.2f}")
-                print(f"  Total PnL: {grid.total_pnl:.2f}")
+        if self.active_grid:
+            direction = "Long" if self.active_grid.direction == 1 else "Short"
+            print(f"Active {direction} Grid:")
+            print(f"  Positions: {len(self.active_grid.positions)}")
+            print(f"  Average Entry: {self.active_grid.avg_entry:.2f}")
+            print(f"  Grid Size: {self.active_grid.grid_size:.2f}")
+            print(f"  Total PnL: {self.active_grid.total_pnl:.2f}")
