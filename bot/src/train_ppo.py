@@ -277,12 +277,19 @@ def train_model(train_env, val_env, args, iteration=0):
     )
     callbacks.append(checkpoint_callback)
     
+    # Calculate start timesteps for consistent progression
+    start_timesteps = iteration * args.total_timesteps
+    
     model.learn(
         total_timesteps=args.total_timesteps,
         callback=callbacks,
         progress_bar=True,
-        reset_num_timesteps=False if hasattr(model, '_last_obs') else True
+        reset_num_timesteps=True  # Reset timesteps for each iteration
     )
+    
+    # Update timesteps in evaluation results to maintain sequence
+    for result in unified_callback.eval_results:
+        result['timesteps'] = (result['timesteps'] - args.total_timesteps) + start_timesteps
     
     final_model_path = f"../results/{args.seed}/{args.model_name}"
     model.save(final_model_path)
@@ -383,12 +390,19 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             )
             callbacks.append(unified_callback)
             
+            # Calculate base timesteps for this iteration
+            start_timesteps = iteration * period_timesteps
+            
             model.learn(
                 total_timesteps=period_timesteps,
                 callback=callbacks,
                 progress_bar=True,
-                reset_num_timesteps=False
+                reset_num_timesteps=True  # Reset timesteps for each iteration
             )
+            
+            # Update timesteps in evaluation results to maintain sequence
+            for result in unified_callback.eval_results:
+                result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
         
         period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
         model.save(period_model_path)

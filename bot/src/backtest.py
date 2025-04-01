@@ -173,8 +173,6 @@ def main():
                       help='Path to the trained model')
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the test data CSV file')
-    parser.add_argument('--bar_count', type=int, default=20,
-                      help='Number of bars in observation window (must match training)')
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial account balance')
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
@@ -197,8 +195,7 @@ def main():
         # Initialize model
         print("\nInitializing trading model...")
         model = TradeModel(
-            model_path=args.model_path,
-            bar_count=args.bar_count
+            model_path=args.model_path
         )
         
         # Run backtest

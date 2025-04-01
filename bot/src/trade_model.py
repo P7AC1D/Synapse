@@ -317,9 +317,6 @@ class TradeModel:
                 'long_trades': len(long_trades),
                 'short_trades': len(short_trades),
                 'long_win_rate': long_win_rate,
-                'short_win_rate': short_win_rate,
-                'expected_value': (total_profit - total_loss) / total_trades,
-                'sharpe_ratio': float(sharpe),
                 'grid_metrics': env.grid_metrics,
                 'trades': env.trades
             })
