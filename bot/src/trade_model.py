@@ -190,7 +190,7 @@ class TradeModel:
         env_params = {
             'initial_balance': initial_balance,
             'bar_count': self.bar_count,
-            'balance_per_lot': 1000.0,  # Standard balance per lot ratio
+            'balance_per_lot': balance_per_lot,  # Standard balance per lot ratio
             'random_start': False
         }
 
