@@ -48,6 +48,8 @@ class UnifiedEvalCallback(BaseCallback):
         self.eval_results = []
         self.last_time_trigger = 0
         self.iteration = iteration
+        self.max_drawdown = 0.0
+        self.current_period_max_balance = 0.0
         
         if hasattr(self.eval_env, 'env'):
             self.eval_env.env.raw_data_backup = self.eval_env.env.raw_data.copy()
@@ -115,7 +117,24 @@ class UnifiedEvalCallback(BaseCallback):
                     if isinstance(eval_env, TradingEnv):
                         break
 
-                active_positions = len(eval_env.long_positions) + len(eval_env.short_positions)
+                # Calculate drawdown metrics
+                running_balance = eval_env.initial_balance
+                max_balance = eval_env.initial_balance
+                period_max_drawdown = 0.0
+                
+                # Calculate running drawdown using trade history
+                for trade in eval_env.trades:
+                    running_balance += trade['pnl']
+                    max_balance = max(max_balance, running_balance)
+                    if max_balance > 0:
+                        current_drawdown = (max_balance - running_balance) / max_balance
+                        period_max_drawdown = max(period_max_drawdown, current_drawdown)
+
+                # Update historical max drawdown
+                self.max_drawdown = max(self.max_drawdown, period_max_drawdown)
+
+                # Calculate basic metrics
+                active_positions = len(eval_env.positions)
                 num_winning_trades = sum(1 for t in eval_env.trades if t['pnl'] > 0)
                 num_losing_trades = sum(1 for t in eval_env.trades if t['pnl'] < 0)
                 
@@ -125,6 +144,11 @@ class UnifiedEvalCallback(BaseCallback):
                 except (AttributeError, IndexError) as e:
                     period_start = period_end = "NA"
                     print(f"Warning: Could not get period timestamps: {str(e)}")
+
+                # Print drawdown information
+                print("\n===== Drawdown Analysis =====")
+                print(f"Period Max Drawdown: {period_max_drawdown*100:.2f}%")
+                print(f"Historical Max Drawdown: {self.max_drawdown*100:.2f}%")
 
                 period_info = {
                     'results': self.eval_results,
@@ -137,7 +161,9 @@ class UnifiedEvalCallback(BaseCallback):
                     'win_rate': (num_winning_trades / len(eval_env.trades) * 100) if eval_env.trades else 0.0,
                     'period_start': period_start,
                     'period_end': period_end,
-                    'grid_metrics': eval_env.grid_metrics
+                    'grid_metrics': eval_env.grid_metrics,
+                    'max_drawdown': period_max_drawdown * 100,
+                    'historical_max_drawdown': self.max_drawdown * 100
                 }
 
                 all_results[f"iteration_{self.iteration}"] = period_info
@@ -162,6 +188,10 @@ class UnifiedEvalCallback(BaseCallback):
             print(f"Final balance: {final_balance:.2f}")
             print(f"Total return: {total_return*100:.2f}%")
             print(f"Total reward: {episode_reward:.2f}")
+            print("\n===== Drawdown Analysis =====")
+            print(f"Period Max Drawdown: {period_max_drawdown*100:.2f}%")
+            print(f"Historical Max Drawdown: {self.max_drawdown*100:.2f}%")
+            print(f"Current Drawdown: {((max_balance - running_balance) / max_balance * 100):.2f}%")
             
             if hasattr(self.eval_env, 'env'):
                 self.eval_env.env.render()
