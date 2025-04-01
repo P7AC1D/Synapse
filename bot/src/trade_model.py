@@ -239,9 +239,13 @@ class TradeModel:
             'max_drawdown_pct': 0.0,
             'total_steps': total_steps,
             'total_reward': total_reward,
-            'grid_positions': len(env.long_positions) + len(env.short_positions),
-                'trades': []
-            }
+            'active_positions': len(env.positions),
+            'trades': [],
+            'grid_metrics': env.grid_metrics,
+            'avg_hold_time': 0.0,
+            'win_hold_time': 0.0,
+            'loss_hold_time': 0.0
+        }
             
         if env.trades:
             # Create DataFrame from trades for easier analysis

@@ -347,7 +347,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         
         env_params = {
             'initial_balance': args.initial_balance,
-            'bar_count': args.bar_count,
             'balance_per_lot': args.balance_per_lot
         }
         
@@ -425,8 +424,6 @@ def main():
                       help='Initial training window in days')
     parser.add_argument('--step_size', type=int, default=14,
                       help='Walk-forward step size in days')
-    parser.add_argument('--bar_count', type=int, default=20,
-                      help='Number of bars in observation window')
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     

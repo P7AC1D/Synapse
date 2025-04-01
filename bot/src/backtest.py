@@ -36,21 +36,33 @@ def plot_results(results: dict, save_path: str = None):
     plt.legend()
     plt.grid(True)
     
-    # Plot grid positions
+    # Plot grid metrics
     plt.subplot(512)
     if not trades_df.empty and 'grid_id' in trades_df.columns:
-        grid_counts = trades_df.groupby('grid_id').size()
-        grid_profits = trades_df.groupby('grid_id')['pnl'].sum()
+        grid_metrics = []
+        for grid_id in trades_df['grid_id'].unique():
+            grid_trades = trades_df[trades_df['grid_id'] == grid_id]
+            grid_metrics.append({
+                'grid_id': grid_id,
+                'positions': len(grid_trades),
+                'pnl': grid_trades['pnl'].sum(),
+                'efficiency': grid_trades['pnl'].sum() / abs(grid_trades['pnl']).sum() if len(grid_trades) > 0 else 0,
+                'avg_hold_time': (grid_trades['exit_step'] - grid_trades['entry_step']).mean()
+            })
+        
+        grid_df = pd.DataFrame(grid_metrics)
         
         ax1 = plt.gca()
         ax2 = ax1.twinx()
         
-        ax1.bar(grid_counts.index, grid_counts.values, alpha=0.3, color='blue', label='Positions per Grid')
-        ax2.plot(grid_profits.index, grid_profits.cumsum(), color='green', label='Cumulative Grid Profit')
+        # Plot position counts and efficiency
+        width = 0.35
+        ax1.bar(grid_df.index, grid_df['positions'], width, alpha=0.3, color='blue', label='Positions')
+        ax2.plot(grid_df.index, grid_df['efficiency'] * 100, color='green', label='Efficiency %')
         
         ax1.set_xlabel('Grid ID')
         ax1.set_ylabel('Number of Positions', color='blue')
-        ax2.set_ylabel('Cumulative Profit', color='green')
+        ax2.set_ylabel('Grid Efficiency %', color='green')
         
         ax1.tick_params(axis='y', labelcolor='blue')
         ax2.tick_params(axis='y', labelcolor='green')
@@ -96,43 +108,63 @@ def plot_results(results: dict, save_path: str = None):
 
 def print_metrics(results: dict):
     """Print formatted backtest metrics with grid trading statistics."""
-    # Standard metrics
-    standard_metrics = [
+    print("\n=== Performance Metrics ===")
+    performance_metrics = [
         ('Initial Balance', results['initial_balance'], '.2f'),
         ('Final Balance', results['final_balance'], '.2f'),
-        ('Return', results['return_pct'], '.2f%'),
+        ('Total Return', results['return_pct'], '.2f%'),
         ('Total Trades', results['total_trades'], 'd'),
         ('Win Rate', results['win_rate'], '.2f%'),
         ('Profit Factor', results['profit_factor'], '.2f'),
-        ('Max Drawdown', results['max_drawdown_pct'], '.2f%'),
-        ('Long Trades', results['long_trades'], 'd'),
-        ('Long Win Rate', results['long_win_rate'], '.2f%'),
-        ('Short Trades', results['short_trades'], 'd'),
-        ('Short Win Rate', results['short_win_rate'], '.2f%'),
         ('Expected Value', results['expected_value'], '.2f'),
         ('Sharpe Ratio', results['sharpe_ratio'], '.2f')
     ]
-
-    # Grid-specific metrics
+    
+    print("\n=== Risk Metrics ===")
+    risk_metrics = [
+        ('Max Drawdown', results['max_drawdown_pct'], '.2f%'),
+        ('Current Drawdown', results.get('current_drawdown_pct', 0.0), '.2f%'),
+        ('Historical Max DD', results.get('historical_max_drawdown_pct', 0.0), '.2f%')
+    ]
+    
+    print("\n=== Directional Analysis ===")
+    directional_metrics = [
+        ('Long Trades', results['long_trades'], 'd'),
+        ('Long Win Rate', results['long_win_rate'], '.2f%'),
+        ('Short Trades', results['short_trades'], 'd'),
+        ('Short Win Rate', results['short_win_rate'], '.2f%')
+    ]
+    
+    print("\n=== Hold Time Analysis ===")
+    hold_time_metrics = [
+        ('Avg Hold Time', results.get('avg_hold_time', 0.0), '.1f'),
+        ('Winners Hold Time', results.get('win_hold_time', 0.0), '.1f'),
+        ('Losers Hold Time', results.get('loss_hold_time', 0.0), '.1f')
+    ]
+    
+    print("\n=== Grid Metrics ===")
     if 'grid_metrics' in results:
         grid_metrics = [
             ('Total Grids', results['grid_metrics']['total_grids'], 'd'),
             ('Avg Positions/Grid', results['grid_metrics']['avg_positions_per_grid'], '.2f'),
-            ('Grid Efficiency', results['grid_metrics']['grid_efficiency'], '.2f%')
+            ('Grid Efficiency', results['grid_metrics']['grid_efficiency'], '.2f%'),
+            ('Position Count', results['grid_metrics'].get('position_count', 0), 'd')
         ]
     else:
         grid_metrics = []
 
-    metrics = standard_metrics + grid_metrics
-    
-    print("\n=== Backtest Results ===")
-    for name, value, format_spec in metrics:
-        if 'd' in format_spec:
-            print(f"{name}: {value:d}")
-        elif '%' in format_spec:
-            print(f"{name}: {value:{format_spec[:-1]}}%")
-        else:
-            print(f"{name}: {value:{format_spec}}")
+    # Print all metrics sections
+    for metrics_list in [performance_metrics, risk_metrics, directional_metrics, 
+                        hold_time_metrics, grid_metrics]:
+        if metrics_list:  # Only print sections with metrics
+            for name, value, format_spec in metrics_list:
+                if 'd' in format_spec:
+                    print(f"{name}: {value:d}")
+                elif '%' in format_spec:
+                    print(f"{name}: {value:{format_spec[:-1]}}%")
+                else:
+                    print(f"{name}: {value:{format_spec}}")
+            print("")  # Add blank line between sections
 
 def main():
     parser = argparse.ArgumentParser(description='Backtest a trained trading model')
