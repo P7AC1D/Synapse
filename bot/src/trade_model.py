@@ -227,106 +227,97 @@ class TradeModel:
             Dictionary with calculated metrics
         """
         # Handle case with no trades
-        if not env.trades:
-            return {
-                'final_balance': float(env.balance),
-                'initial_balance': float(env.initial_balance),
-                'return_pct': 0.0,
-                'total_trades': 0,
-                'win_count': 0,
-                'loss_count': 0,
-                'win_rate': 0.0,
-                'profit_factor': 0.0,
-                'max_drawdown_pct': 0.0,
-                'total_steps': total_steps,
-                'total_reward': total_reward,
+        metrics = {
+            'final_balance': float(env.balance),
+            'initial_balance': float(env.initial_balance),
+            'return_pct': 0.0,
+            'total_trades': 0,
+            'win_count': 0,
+            'loss_count': 0,
+            'win_rate': 0.0,
+            'profit_factor': 0.0,
+            'max_drawdown_pct': 0.0,
+            'total_steps': total_steps,
+            'total_reward': total_reward,
             'grid_positions': len(env.long_positions) + len(env.short_positions),
                 'trades': []
             }
             
-        # Create DataFrame from trades for easier analysis
-        trades_df = pd.DataFrame(env.trades)
-        
-        # Basic profit metrics
-        winning_trades = [t['pnl'] for t in env.trades if t['pnl'] > 0]
-        losing_trades = [t['pnl'] for t in env.trades if t['pnl'] < 0]
-        
-        # Winning/losing trades statistics
-        total_trades = len(env.trades)
-        win_count = len(winning_trades)
-        loss_count = len(losing_trades)
-        win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0.0
-        
-        # Profit/loss statistics
-        avg_profit = np.mean(winning_trades) if winning_trades else 0.0
-        avg_loss = abs(np.mean(losing_trades)) if losing_trades else 0.0
-        total_profit = sum(winning_trades)
-        total_loss = abs(sum(losing_trades))
-        profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
-        
-        # Position-specific statistics
-        if 'position' in trades_df.columns:
-            num_buy = trades_df[trades_df["position"] == 1].shape[0]
-            num_sell = trades_df[trades_df["position"] == -1].shape[0]
-            buy_win_count = trades_df[(trades_df["position"] == 1) & (trades_df["pnl"] > 0.0)].shape[0]
-            sell_win_count = trades_df[(trades_df["position"] == -1) & (trades_df["pnl"] > 0.0)].shape[0]
-            buy_win_rate = (buy_win_count / num_buy * 100) if num_buy > 0 else 0.0
-            sell_win_rate = (sell_win_count / num_sell * 100) if num_sell > 0 else 0.0
-        else:
-            num_buy = num_sell = 0
-            buy_win_rate = sell_win_rate = 0.0
-        
-        # Risk metrics
-        avg_rrr = trades_df["rrr"].mean() if 'rrr' in trades_df.columns else 0.0
-        expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
-        
-        # Kelly criterion
-        kelly = (win_rate/100.0) - ((1 - (win_rate/100.0)) / avg_rrr) if avg_rrr > 0 else 0.0
-        
-        # Calculate drawdowns
-        balance_history = []
-        current_balance = env.initial_balance
-        peak_balance = current_balance
-        max_drawdown = 0.0
-        
-        for trade in env.trades:
-            current_balance += trade['pnl']
-            balance_history.append(current_balance)
-            peak_balance = max(peak_balance, current_balance)
-            drawdown = (peak_balance - current_balance) / peak_balance if peak_balance > 0 else 0
-            max_drawdown = max(max_drawdown, drawdown)
-        
-        # Sharpe ratio calculation
-        if total_trades > 1:
+        if env.trades:
+            # Create DataFrame from trades for easier analysis
+            trades_df = pd.DataFrame(env.trades)
+            
+            # Split trades by direction
+            long_trades = trades_df[trades_df['direction'] == 1]
+            short_trades = trades_df[trades_df['direction'] == -1]
+            
+            # Profit calculations
+            winning_trades = trades_df[trades_df['pnl'] > 0]['pnl']
+            losing_trades = trades_df[trades_df['pnl'] < 0]['pnl']
+            
+            # Basic metrics
+            total_trades = len(env.trades)
+            win_count = len(winning_trades)
+            loss_count = len(losing_trades)
+            
+            # Calculate all PnL metrics
+            total_profit = winning_trades.sum() if not winning_trades.empty else 0.0
+            total_loss = abs(losing_trades.sum()) if not losing_trades.empty else 0.0
+            avg_profit = winning_trades.mean() if not winning_trades.empty else 0.0
+            avg_loss = abs(losing_trades.mean()) if not losing_trades.empty else 0.0
+            profit_factor = total_profit / total_loss if total_loss > 0 else float('inf') if total_profit > 0 else 0.0
+            net_profit = total_profit - total_loss
+            
+            # Calculate win rates by direction
+            long_wins = len(long_trades[long_trades['pnl'] > 0])
+            long_losses = len(long_trades[long_trades['pnl'] < 0])
+            short_wins = len(short_trades[short_trades['pnl'] > 0])
+            short_losses = len(short_trades[short_trades['pnl'] < 0])
+            
+            # Overall win rates
+            win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0.0
+            long_win_rate = (long_wins / (long_wins + long_losses)) * 100 if (long_wins + long_losses) > 0 else 0.0
+            short_win_rate = (short_wins / (short_wins + short_losses)) * 100 if (short_wins + short_losses) > 0 else 0.0
+            
+            # Calculate drawdowns
+            balance_history = []
+            current_balance = env.initial_balance
+            peak_balance = current_balance
+            max_drawdown = 0.0
+            
+            for trade in env.trades:
+                current_balance += trade['pnl']
+                balance_history.append(current_balance)
+                peak_balance = max(peak_balance, current_balance)
+                drawdown = (peak_balance - current_balance) / peak_balance if peak_balance > 0 else 0
+                max_drawdown = max(max_drawdown, drawdown)
+            
+            # Sharpe ratio calculation
             daily_returns = trades_df["pnl"] / env.initial_balance
             excess_returns = np.array(daily_returns)
-            sharpe = np.mean(excess_returns) / np.std(excess_returns, ddof=1) * np.sqrt(252) if np.std(excess_returns, ddof=1) > 0 else 0.0
-        else:
-            sharpe = 0.0
+            sharpe = np.mean(excess_returns) / np.std(excess_returns, ddof=1) * np.sqrt(252) if len(excess_returns) > 1 and np.std(excess_returns, ddof=1) > 0 else 0.0
+            
+            metrics.update({
+                'return_pct': ((env.balance / env.initial_balance) - 1) * 100,
+                'total_trades': total_trades,
+                'win_count': win_count,
+                'loss_count': loss_count,
+                'win_rate': float(win_rate),
+                'avg_profit': float(avg_profit),
+                'avg_loss': float(avg_loss),
+                'profit_factor': float(profit_factor),
+                'max_drawdown_pct': float(max_drawdown * 100),
+                'total_profit': float(total_profit),
+                'total_loss': float(total_loss),
+                'net_profit': float(net_profit),
+                'long_trades': len(long_trades),
+                'short_trades': len(short_trades),
+                'long_win_rate': long_win_rate,
+                'short_win_rate': short_win_rate,
+                'expected_value': (total_profit - total_loss) / total_trades,
+                'sharpe_ratio': float(sharpe),
+                'grid_metrics': env.grid_metrics,
+                'trades': env.trades
+            })
         
-        return {
-            'final_balance': float(env.balance),
-            'initial_balance': float(env.initial_balance),
-            'return_pct': float(((env.balance / env.initial_balance) - 1) * 100),
-            'total_trades': total_trades,
-            'win_count': win_count,
-            'loss_count': loss_count,
-            'win_rate': float(win_rate),
-            'avg_profit': float(avg_profit),
-            'avg_loss': float(avg_loss),
-            'profit_factor': float(profit_factor),
-            'max_drawdown_pct': float(max_drawdown * 100),
-            'long_trades': int(num_buy),
-            'short_trades': int(num_sell),
-            'long_win_rate': float(buy_win_rate),
-            'short_win_rate': float(sell_win_rate),
-            'avg_rrr': float(avg_rrr),
-            'expected_value': float(expected_value),
-            'kelly_criterion': float(kelly),
-            'sharpe_ratio': float(sharpe),
-            'total_steps': total_steps,
-            'total_reward': total_reward,
-            'grid_positions': len(env.long_positions) + len(env.short_positions),
-            'grid_metrics': env.grid_metrics,
-            'trades': env.trades
-        }
+        return metrics

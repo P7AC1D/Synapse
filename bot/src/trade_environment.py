@@ -16,9 +16,12 @@ class TradingEnv(gym.Env, EzPickle):
     
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
                  balance_per_lot: float = 1000.0, bar_count: int = 10, 
-                 random_start: bool = False):
+                 random_start: bool = False, max_concurrent_grids: int = 5):
         super().__init__()
         EzPickle.__init__(self)
+        
+        # Save original datetime index
+        self.original_index = data.index.copy() if isinstance(data.index, pd.DatetimeIndex) else pd.to_datetime(data.index)
         
         # Trading constants
         self.POINT_VALUE = 0.01
@@ -26,6 +29,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.MIN_LOTS = 0.01
         self.MAX_LOTS = 100.0
         self.CONTRACT_SIZE = 1.0
+        self.MAX_CONCURRENT_GRIDS = max_concurrent_grids
         self.BALANCE_PER_LOT = balance_per_lot  # Amount in balance required for 0.01 lot
         self.MAX_DRAWDOWN = 0.5     # Maximum allowed drawdown (50%)
         self.MIN_GRID_MULTIPLIER = 0.1  # Minimum grid size as ATR multiplier
@@ -89,14 +93,14 @@ class TradingEnv(gym.Env, EzPickle):
         self.action_space = spaces.Box(
             low=np.array([-1, self.MIN_GRID_MULTIPLIER]),  # Direction and min grid size
             high=np.array([1, self.MAX_GRID_MULTIPLIER]),  # Direction and max grid size
-            dtype=np.float64
+            dtype=np.float32
         )
 
     def _setup_observation_space(self, feature_count: int) -> None:
         """Setup observation space for features only."""
         obs_dim = self.bar_count * feature_count
         self.observation_space = spaces.Box(
-            low=-10, high=10, shape=(obs_dim,), dtype=np.float64
+            low=-10, high=10, shape=(obs_dim,), dtype=np.float32
         )
 
     def _process_action(self, action: np.ndarray) -> Tuple[int, float]:
@@ -115,6 +119,12 @@ class TradingEnv(gym.Env, EzPickle):
             self.steps_since_trade += 1
             return -0.1 if direction != 0 else 0.0
         
+        # Check if we can open new grid
+        grid_direction = 'long' if direction == 1 else 'short'
+        active_grid_count = len(self.active_grids[grid_direction])
+        if active_grid_count >= self.MAX_CONCURRENT_GRIDS:
+            return -0.2  # Penalty for trying to exceed max grids
+            
         current_price = self.prices['close'][self.current_step]
         current_atr = self.prices['atr'][self.current_step]
         grid_size_pips = current_atr * grid_multiplier
@@ -123,17 +133,17 @@ class TradingEnv(gym.Env, EzPickle):
         lot_size = max(self.MIN_LOTS, round(self.balance / self.BALANCE_PER_LOT / 100, 2))
         lot_size = min(lot_size, self.MAX_LOTS)
         
-        # Reduce lot size for subsequent positions in the same direction
-        positions = self.long_positions if direction == 1 else self.short_positions
-        if positions:
-            lot_size = max(self.MIN_LOTS, lot_size * 0.7)  # Reduce by 30%
+        # Scale lot size based on active grids, but maintain minimum effective size
+        base_scaling = 1.0 / (active_grid_count + 1)
+        min_effective_size = max(self.MIN_LOTS * 5, lot_size * 0.2)  # At least 20% of original size
+        lot_size = max(min_effective_size, round(lot_size * base_scaling, 2))
         
-        # Initialize grid
+        # Initialize new grid
         self.grid_id_counter += 1
         grid_id = self.grid_id_counter
         grid_direction = 'long' if direction == 1 else 'short'
         
-        # Create new position
+        # Create new position with unique grid ID
         position = {
             "grid_id": grid_id,
             "direction": direction,
@@ -203,39 +213,74 @@ class TradingEnv(gym.Env, EzPickle):
         current_price = self.prices['close'][self.current_step]
         current_atr = self.prices['atr'][self.current_step]
         positions_to_close = []
-        total_pnl = 0.0
+        total_reward = 0.0
         
-        # Update profit/loss for all positions
+        # Group positions by grid_id
+        grid_positions: Dict[int, List[Dict[str, Any]]] = {}
         for pos in positions:
-            # Calculate price difference in points
-            if direction == 1:  # Long positions
-                profit_points = current_price - pos["entry_price"]
-            else:  # Short positions
-                profit_points = pos["entry_price"] - current_price
-                
-            # Convert to pips (10000 pips = 1 unit of price)
-            profit_pips = (profit_points / self.PIP_VALUE)
-            pos["current_profit_pips"] = profit_pips
-            
-            # Calculate monetary PnL
-            pos_pnl = (profit_points * pos["lot_size"])
-            total_pnl += pos_pnl
-            
-        # Get grid parameters from most recent position
-        current_grid = positions[-1]
-        grid_size_points = current_grid["grid_size_pips"] * self.POINT_VALUE
+            grid_id = pos["grid_id"]
+            if grid_id not in grid_positions:
+                grid_positions[grid_id] = []
+            grid_positions[grid_id].append(pos)
         
-        # Close all positions if total profit exceeds grid size
-        if total_pnl > grid_size_points:
-            positions_to_close = list(range(len(positions)))
-            return self._calculate_grid_reward(positions, total_pnl), positions_to_close
+        # Process each grid independently
+        for grid_id, grid_pos in grid_positions.items():
+            grid_pnl = 0.0
+            grid_indices = []
             
-        # Check worst position for grid expansion
-        worst_position = min(positions, key=lambda x: x["current_profit_pips"])
-        if worst_position["current_profit_pips"] * self.POINT_VALUE < -grid_size_points:
-            # Add new position with current grid parameters
-            self._execute_grid_trade(direction, current_grid["grid_multiplier"], 
-                                   self.prices['spread'][self.current_step] * self.POINT_VALUE)
+            # Calculate overall grid PnL and update position stats
+            for pos in grid_pos:
+                # Calculate price difference in points
+                if direction == 1:  # Long positions
+                    profit_points = current_price - pos["entry_price"]
+                else:  # Short positions
+                    profit_points = pos["entry_price"] - current_price
+                    
+                # Convert profit points to pips (1 pip = 0.0001 price points)
+                profit_pips = profit_points / 0.0001
+                pos["current_profit_pips"] = profit_pips
+                
+                # Calculate monetary PnL
+                pos_pnl = (profit_points * pos["lot_size"])
+                grid_pnl += pos_pnl
+                
+                # Find position index in original list
+                grid_indices.append(positions.index(pos))
+            
+            # Get grid parameters
+            grid_size_points = grid_pos[0]["grid_size_pips"] * self.POINT_VALUE
+            
+            # Calculate grid metrics
+            avg_entry = sum(p["entry_price"] for p in grid_pos) / len(grid_pos)
+            total_lots = sum(p["lot_size"] for p in grid_pos)
+            
+            # Close grid conditions
+            should_close = (
+                grid_pnl > grid_size_points or  # Profit target
+                (grid_pnl < -grid_size_points * 2 and len(grid_pos) >= 3)  # Stop loss after pyramiding
+            )
+            
+            if should_close:
+                positions_to_close.extend(grid_indices)
+                total_reward += self._calculate_grid_reward(grid_pos, grid_pnl)
+            else:
+                # Grid expansion logic
+                price_range = grid_size_points / total_lots  # Required price movement per lot
+                worst_position = min(grid_pos, key=lambda x: x["current_profit_pips"])
+                
+                # Add position if:
+                # 1. Price moved against us by enough
+                # 2. Haven't exceeded max positions
+                # 3. Current price is better than average entry
+                if (worst_position["current_profit_pips"] * self.POINT_VALUE < -price_range and
+                    len(grid_pos) < 5 and  # Max 5 positions per grid
+                    ((direction == 1 and current_price < avg_entry) or  
+                     (direction == -1 and current_price > avg_entry))):
+                    
+                    self._execute_grid_trade(direction, grid_pos[0]["grid_multiplier"],
+                                          self.prices['spread'][self.current_step] * self.POINT_VALUE)
+        
+        total_pnl = sum(pos["current_profit_pips"] * self.POINT_VALUE * pos["lot_size"] for pos in positions)
         
         return self._calculate_grid_reward(positions, total_pnl), positions_to_close
 
@@ -244,18 +289,25 @@ class TradingEnv(gym.Env, EzPickle):
         if not positions:
             return 0.0
             
-        # Base reward on PnL relative to account size
-        reward = total_pnl / self.initial_balance
+        # Base reward components
+        pnl_reward = total_pnl / self.initial_balance
         
-        # Reward for proper grid utilization
-        grid_utilization = len(positions) / max(1, abs(total_pnl / (positions[0]["grid_size_pips"] * self.POINT_VALUE)))
-        grid_reward = min(3.0, grid_utilization) * 0.5
+        # Grid utilization reward
+        positions_bonus = (len(positions) / 5.0) * 0.5  # Reward for using grid capacity
         
-        # Penalize excessive drawdown
+        # Risk management reward
+        avg_position_size = sum(p["lot_size"] for p in positions) / len(positions)
+        risk_bonus = min(1.0, avg_position_size / self.MAX_LOTS) * 0.3
+        
+        # Drawdown penalty
         drawdown = (self.max_balance - self.balance) / self.max_balance
-        drawdown_penalty = max(0, (drawdown - 0.1) * 10.0)  # Start penalizing after 10% drawdown
+        drawdown_penalty = max(0, (drawdown - 0.1) * 10.0)
         
-        return reward + grid_reward - drawdown_penalty
+        # Grid efficiency reward
+        grid_size = positions[0]["grid_size_pips"] * self.POINT_VALUE
+        efficiency = min(2.0, abs(total_pnl / grid_size)) * 0.4
+        
+        return pnl_reward + positions_bonus + risk_bonus + efficiency - drawdown_penalty
 
     def _update_grid_metrics(self, closed_direction: str = None, closed_grid_id: int = None) -> None:
         """Update grid trading performance metrics."""
@@ -276,11 +328,15 @@ class TradingEnv(gym.Env, EzPickle):
         # Include closed trades in metrics
         if self.trades:
             trades_df = pd.DataFrame(self.trades)
-            total_grids = max(total_grids, trades_df['grid_id'].nunique())
-            total_positions += len(trades_df)
+            completed_grids = trades_df['grid_id'].nunique()
+            total_grids += completed_grids
+            
+            # Count positions per grid for completed trades
+            grid_positions = trades_df.groupby('grid_id').size()
+            total_positions += grid_positions.sum()
             total_pnl += trades_df['pnl'].sum()
 
-        # Calculate metrics
+        # Calculate metrics with active and completed grids
         if total_grids > 0:
             self.grid_metrics.update({
                 'total_grids': total_grids,
@@ -299,10 +355,14 @@ class TradingEnv(gym.Env, EzPickle):
         # Sort in reverse order to safely remove positions
         closed_positions.sort(key=lambda x: x[1], reverse=True)
         
+        # Keep track of grids that need cleaning
+        grids_to_clean = {'long': set(), 'short': set()}
+        
         for direction, idx in closed_positions:
             positions = self.long_positions if direction == "long" else self.short_positions
             if 0 <= idx < len(positions):
                 position = positions[idx]
+                grid_id = position.get('grid_id', None)
                 
                 # Calculate final PnL in points
                 exit_price = self.prices['close'][self.current_step]
@@ -311,22 +371,28 @@ class TradingEnv(gym.Env, EzPickle):
                 else:
                     profit_points = position["entry_price"] - exit_price
                 
-                # Convert price points to pips (10000 pips = 1 unit of price)
-                profit_pips = (profit_points / self.PIP_VALUE)
+                # Convert price points to pips (1 pip = 0.0001 price points)
+                profit_pips = profit_points / 0.0001
                 
                 # Calculate monetary PnL
                 pnl = profit_points * position["lot_size"]
                 self.balance += pnl
                 
-                # Update grid tracking
-                grid_id = position.get('grid_id', None)
+                # Update grid tracking and mark grid for cleaning if needed
                 if grid_id is not None:
-                    if direction == "long":
-                        if grid_id in self.active_grids['long']:
-                            self.active_grids['long'][grid_id]['total_profit'] += pnl
-                    else:
-                        if grid_id in self.active_grids['short']:
-                            self.active_grids['short'][grid_id]['total_profit'] += pnl
+                    grid_direction = direction == "long"
+                    direction_key = "long" if grid_direction else "short"
+                    
+                    if grid_id in self.active_grids[direction_key]:
+                        grid = self.active_grids[direction_key][grid_id]
+                        grid['total_profit'] += pnl
+                        
+                        # Remove position from grid's position list
+                        grid['positions'] = [p for p in grid['positions'] if p is not position]
+                        
+                        # Mark grid for cleanup if no positions remain
+                        if not grid['positions']:
+                            grids_to_clean[direction_key].add(grid_id)
 
                 # Record completed trade
                 position.update({
@@ -338,9 +404,6 @@ class TradingEnv(gym.Env, EzPickle):
                 })
                 self.trades.append(position)
                 
-                # Update grid metrics
-                self._update_grid_metrics()
-                
                 # Update win/loss counts
                 if pnl > 0:
                     self.win_count += 1
@@ -349,9 +412,23 @@ class TradingEnv(gym.Env, EzPickle):
                 
                 # Remove closed position
                 positions.pop(idx)
+                
+        # Clean up completed grids
+        for direction in ['long', 'short']:
+            for grid_id in grids_to_clean[direction]:
+                if grid_id in self.active_grids[direction]:
+                    del self.active_grids[direction][grid_id]
+                if grid_id in self.current_grid_profits[direction]:
+                    del self.current_grid_profits[direction][grid_id]
+        
+        # Update metrics after all changes
+        self._update_grid_metrics()
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """Preprocess market data for the model with simplified features."""
+        # Create DataFrame with original index
+        features_df = pd.DataFrame(index=self.original_index)
+        
         # Suppress numpy divide and invalid warnings for preprocessing
         with np.errstate(divide='ignore', invalid='ignore'):
             close = data['close'].values
@@ -370,18 +447,16 @@ class TradingEnv(gym.Env, EzPickle):
             
             # Normalized features
             rsi_norm = data['RSI'].values / 100  # Scale to 0-1
-            atr_norm = np.divide(data['ATR'].values, close, out=np.zeros_like(close), where=close!=0)  # Normalize by price
+            atr_norm = np.divide(data['ATR'].values, close, out=np.zeros_like(close), where=close!=0)
             
-        features = np.column_stack([
-            returns,    # Price movement
-            vol,       # Market volatility
-            trend,     # Trend direction
-            rsi_norm,  # Momentum
-            atr_norm   # Volatility for position sizing
-        ])
+            # Add features with names
+            features_df['returns'] = returns
+            features_df['volatility'] = vol
+            features_df['trend'] = trend
+            features_df['rsi'] = rsi_norm
+            features_df['atr'] = atr_norm
         
-        features = np.nan_to_num(features, 0)
-        return pd.DataFrame(features)
+        return features_df.fillna(0)
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Take an environment step."""
@@ -399,12 +474,10 @@ class TradingEnv(gym.Env, EzPickle):
         # Process existing positions and get grid trading reward
         grid_reward, _ = self._manage_grid_positions()
         
-        # Execute new trade if requested and no positions exist in that direction
+        # Execute new trade if requested (allow multiple grids per direction)
         execution_reward = 0.0
         if direction != 0:
-            positions = self.long_positions if direction == 1 else self.short_positions
-            if not positions:  # Only open new position if none exist in this direction
-                execution_reward = self._execute_grid_trade(direction, grid_multiplier, current_spread)
+            execution_reward = self._execute_grid_trade(direction, grid_multiplier, current_spread)
         
         # Calculate growth and drawdown components
         growth_reward = 0.0
@@ -427,18 +500,31 @@ class TradingEnv(gym.Env, EzPickle):
             drawdown = (self.max_balance - self.balance) / self.max_balance
             drawdown_penalty = drawdown * 5.0
 
-        # Combine rewards
-        reward = (grid_reward * 0.7) + (execution_reward * 0.2) + (growth_reward * 0.1) - (drawdown_penalty * 0.1)
-        
-        # Additional reward components
-        if self.steps_since_trade > 5:
-            reward -= (self.steps_since_trade - 5) * 0.05  # Penalize waiting too long
-        
-        # Add trading frequency bonus
+        # Calculate grid-based rewards
         total_positions = len(self.long_positions) + len(self.short_positions)
+        total_grids = len(self.active_grids['long']) + len(self.active_grids['short'])
+        grid_positions_bonus = min(2.0, total_positions / max(1, total_grids * 3)) * 0.5
+
+        # Calculate risk-adjusted rewards
+        current_drawdown = (self.max_balance - self.balance) / self.max_balance
+        risk_reward = 0.0
         if total_positions > 0:
-            position_frequency = total_positions / self.episode_steps
-            reward += position_frequency * 2.0
+            avg_position_size = sum(p["lot_size"] for p in self.long_positions + self.short_positions) / total_positions
+            risk_reward = min(1.0, avg_position_size / (self.MAX_LOTS * 0.1)) * 0.3
+        
+        # Timing rewards
+        timing_penalty = (self.steps_since_trade - 5) * 0.05 if self.steps_since_trade > 5 else 0.0
+        
+        # Combine all reward components
+        reward = (
+            (grid_reward * 0.6) +           # Grid management
+            (execution_reward * 0.2) +      # Trade execution
+            (growth_reward * 0.2) +         # Account growth
+            (grid_positions_bonus * 0.3) +  # Grid utilization
+            (risk_reward * 0.2) -           # Risk management
+            (drawdown_penalty * 0.2) -      # Drawdown penalty
+            (timing_penalty)                # Timing penalty
+        )
             
         # Check for bankruptcy or excessive drawdown
         max_drawdown = (self.max_balance - self.balance) / self.max_balance
@@ -534,7 +620,7 @@ class TradingEnv(gym.Env, EzPickle):
         window = self.raw_data.values[start:end]
         
         if window.shape[0] < self.bar_count:
-            full_window = np.zeros((self.bar_count, window.shape[1]), dtype=np.float64)
+            full_window = np.zeros((self.bar_count, window.shape[1]), dtype=np.float32)
             full_window[-window.shape[0]:] = window
             window = full_window
         

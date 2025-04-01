@@ -111,31 +111,39 @@ class UnifiedEvalCallback(BaseCallback):
                     all_results = {}
                     
                 # Get the TradingEnv instance (unwrap Monitor if needed)
-                env = self.eval_env
-                while hasattr(env, 'env'):
-                    env = env.env
-                    if isinstance(env, TradingEnv):
+                eval_env = self.eval_env
+                while hasattr(eval_env, 'env'):
+                    eval_env = eval_env.env
+                    if isinstance(eval_env, TradingEnv):
                         break
 
-                # Always include base metrics
+                # Calculate trade statistics
+                active_positions = len(eval_env.long_positions) + len(eval_env.short_positions)
+                num_winning_trades = sum(1 for t in eval_env.trades if t['pnl'] > 0)
+                num_losing_trades = sum(1 for t in eval_env.trades if t['pnl'] < 0)
+                
+                # Get timestamps from original index
+                try:
+                    period_start = str(eval_env.original_index[0])
+                    period_end = str(eval_env.original_index[-1])
+                except (AttributeError, IndexError) as e:
+                    period_start = period_end = "NA"
+                    print(f"Warning: Could not get period timestamps: {str(e)}")
+
+                # Compile comprehensive metrics
                 period_info = {
                     'results': self.eval_results,
                     'iteration': self.iteration,
-                    'balance': float(env.balance),
-                    'total_trades': len(env.trades),
-                    'win_count': env.win_count,
-                    'loss_count': env.loss_count
+                    'balance': float(eval_env.balance),
+                    'total_trades': len(eval_env.trades),
+                    'active_positions': active_positions,
+                    'win_count': num_winning_trades,
+                    'loss_count': num_losing_trades,
+                    'win_rate': (num_winning_trades / len(eval_env.trades) * 100) if eval_env.trades else 0.0,
+                    'period_start': period_start,
+                    'period_end': period_end,
+                    'grid_metrics': eval_env.grid_metrics
                 }
-
-                # Add time period info if available
-                try:
-                    data_index = env.raw_data.index if isinstance(env.raw_data.index, pd.DatetimeIndex) else pd.to_datetime(env.raw_data.index)
-                    period_info.update({
-                        'period_start': str(data_index[0]),
-                        'period_end': str(data_index[-1])
-                    })
-                except Exception as e:
-                    print(f"Warning: Could not add period timestamps: {str(e)}")
 
                 all_results[f"iteration_{self.iteration}"] = period_info
                 
@@ -299,11 +307,16 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         train_end = training_start + initial_window
         val_end = min(train_end + step_size, total_periods)
         
-        train_data = data.iloc[training_start:train_end]
-        val_data = data.iloc[train_end:val_end]  # Only evaluate on new, unseen data
+        # Create proper slices while preserving index
+        train_data = data.iloc[training_start:train_end].copy()
+        val_data = data.iloc[train_end:val_end].copy()  # Only evaluate on new, unseen data
+        
+        # Ensure index is preserved for both windows
+        train_data.index = data.index[training_start:train_end]
+        val_data.index = data.index[train_end:val_end]
         
         print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
-        print(f"Validation Period: {val_data.index[0]} to {val_data.index[-1]}")
+        print(f"Validation Period: {val_data.index[0]} to {val_data.index[-1]} ===")
         print(f"Walk-forward Iteration: {iteration}")
         
         env_params = {
