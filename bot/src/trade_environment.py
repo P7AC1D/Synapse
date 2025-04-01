@@ -73,7 +73,8 @@ class TradingEnv(gym.Env, EzPickle):
     metadata = {"render_modes": ["human"], "render_fps": 30}
     
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
-                 balance_per_lot: float = 1000.0, random_start: bool = False):
+                 balance_per_lot: float = 1000.0, random_start: bool = False,
+                 bar_count: int = 10):
         super().__init__()
         EzPickle.__init__(self)
         
