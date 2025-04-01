@@ -48,6 +48,9 @@ class TradingEnv(gymnasium.Env):
         self.reward = 0
         self.completed_episodes = 0
         self.episode_steps = 0
+        self.trade_cooldown = 5  # Minimum bars between trades
+        self.long_count = 0      # Track long trades
+        self.short_count = 0     # Track short trades
         
         self._setup_action_space()
         self._setup_observation_space(5)  # 5 features
@@ -80,11 +83,11 @@ class TradingEnv(gymnasium.Env):
         
         return position, sl_points, tp_points
 
-    def _execute_trade(self, position: int, sl_points: float, tp_points: float, raw_spread: float) -> None:
-        """Execute a trade with enforced minimum stop loss."""
-        if position == 0:
+    def _execute_trade(self, position: int, sl_points: float, tp_points: float, raw_spread: float) -> float:
+        """Execute a trade with enforced minimum stop loss and trade frequency control."""
+        if position == 0 or self.steps_since_trade < self.trade_cooldown:
             self.steps_since_trade += 1
-            return
+            return -0.1 if position != 0 else 0.0  # Penalize trying to trade during cooldown
             
         current_price = self.prices['close'][self.current_step]
 
@@ -124,7 +127,19 @@ class TradingEnv(gymnasium.Env):
             "entry_spread": raw_spread,
             "entry_atr": self.prices['atr'][self.current_step]
         })
+        # Track trade direction
+        if position == 1:
+            self.long_count += 1
+        else:
+            self.short_count += 1
+            
+        # Balance reward for less-taken direction
+        total_trades = max(1, self.long_count + self.short_count)
+        long_ratio = self.long_count / total_trades
+        direction_bonus = 0.2 * (1 - long_ratio) if position == 1 else 0.2 * long_ratio
+        
         self.steps_since_trade = 0
+        return direction_bonus  # Reward for balanced trading
 
     def _evaluate_positions(self, high_price: float, low_price: float, raw_spread: float,
                           prev_balance: float) -> Tuple[float, List[int]]:
@@ -252,7 +267,8 @@ class TradingEnv(gymnasium.Env):
             
         if position != 0:
             self._execute_trade(position, sl_points, tp_points, current_spread)
-            trade_reward += 0.1  # Small reward for taking trades
+        trade_execution_reward = self._execute_trade(position, sl_points, tp_points, current_spread)
+        trade_reward += trade_execution_reward
         
         if previous_balance > 0:
             growth_ratio = self.balance / self.initial_balance

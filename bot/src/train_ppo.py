@@ -35,7 +35,7 @@ class CustomEpsilonCallback(BaseCallback):
 class UnifiedEvalCallback(BaseCallback):
     """Optimized evaluation callback with enhanced progress tracking."""
     def __init__(self, eval_env, eval_freq=50000, best_model_save_path=None, 
-                 log_path=None, deterministic=True, verbose=1):
+                 log_path=None, deterministic=True, verbose=1, iteration=0):
         super(UnifiedEvalCallback, self).__init__(verbose=verbose)
         self.eval_env = eval_env
         self.eval_freq = eval_freq
@@ -46,8 +46,8 @@ class UnifiedEvalCallback(BaseCallback):
         self.best_return = -float("inf")
         self.eval_results = []
         self.last_time_trigger = 0
+        self.iteration = iteration  # Track walk-forward iteration
         
-        # Backup original dataset
         if hasattr(self.eval_env, 'env'):
             self.eval_env.env.raw_data_backup = self.eval_env.env.raw_data.copy()
         else:
@@ -97,8 +97,50 @@ class UnifiedEvalCallback(BaseCallback):
                     'reward': float(episode_reward)
                 })
                 
-                with open(os.path.join(self.log_path, "eval_results.json"), "w") as f:
-                    json.dump(self.eval_results, f)
+                # Save iteration-specific results
+                iteration_file = os.path.join(self.log_path, f"eval_results_iter_{self.iteration}.json")
+                with open(iteration_file, "w") as f:
+                    json.dump(self.eval_results, f, indent=2)
+                    
+                # Also update combined results file
+                combined_file = os.path.join(self.log_path, "eval_results_all.json")
+                try:
+                    with open(combined_file, "r") as f:
+                        all_results = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    all_results = {}
+                    
+                # Get the TradingEnv instance (unwrap Monitor if needed)
+                env = self.eval_env
+                while hasattr(env, 'env'):
+                    env = env.env
+                    if isinstance(env, TradingEnv):
+                        break
+
+                # Always include base metrics
+                period_info = {
+                    'results': self.eval_results,
+                    'iteration': self.iteration,
+                    'balance': float(env.balance),
+                    'total_trades': len(env.trades),
+                    'win_count': env.win_count,
+                    'loss_count': env.loss_count
+                }
+
+                # Add time period info if available
+                try:
+                    data_index = env.raw_data.index if isinstance(env.raw_data.index, pd.DatetimeIndex) else pd.to_datetime(env.raw_data.index)
+                    period_info.update({
+                        'period_start': str(data_index[0]),
+                        'period_end': str(data_index[-1])
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not add period timestamps: {str(e)}")
+
+                all_results[f"iteration_{self.iteration}"] = period_info
+                
+                with open(combined_file, "w") as f:
+                    json.dump(all_results, f, indent=2)
             
             # Save best model based on final balance AND positive return
             if final_balance > self.best_final_balance:
@@ -128,40 +170,41 @@ class UnifiedEvalCallback(BaseCallback):
         
         return True
 
-def train_model(train_env, val_env, args):
+def train_model(train_env, val_env, args, iteration=0):
     """Train the PPO model with optimized hyperparameters for BTC trading."""
     lr_schedule = get_linear_fn(
         start=args.learning_rate,
         end=args.final_learning_rate,
-        end_fraction=0.9
+        end_fraction=0.95  # Longer learning rate schedule
     )
     
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=512,  # Much shorter sequences
-        batch_size=128,  # Smaller batches
+        n_steps=1024,  # Longer sequences to capture patterns
+        batch_size=256,  # Larger batches for stability
         gamma=0.99,
-        gae_lambda=0.98,
-        clip_range=0.1,
+        gae_lambda=0.98,  # More emphasis on long-term rewards
+        clip_range=0.1,   # More conservative updates
         clip_range_vf=0.1,
-        ent_coef=0.005,  # Less exploration
-        vf_coef=0.5,
-        max_grad_norm=0.5,
+        ent_coef=0.005,   # Less random exploration
+        vf_coef=0.8,      # Stronger value function
+        max_grad_norm=0.3, # More conservative gradient updates
         use_sde=False,
         policy_kwargs={
-            "optimizer_class": th.optim.Adam,
-            "lstm_hidden_size": 32,  # Much smaller LSTM
-            "n_lstm_layers": 1,
-            "shared_lstm": True,
-            "enable_critic_lstm": False,
+            "optimizer_class": th.optim.AdamW,  # Using AdamW for better generalization
+            "lstm_hidden_size": 128,  # Larger LSTM for pattern recognition
+            "n_lstm_layers": 2,       # Two LSTM layers
+            "shared_lstm": False,  # Use separate LSTMs
+            "enable_critic_lstm": True,  # Enable LSTM for critic
             "net_arch": {
-                "pi": [16],  # Minimal network
-                "vf": [16]   # Minimal network
+                "pi": [128, 64],  # Larger networks
+                "vf": [128, 64]
             },
             "optimizer_kwargs": {
-                "eps": 1e-5
+                "eps": 1e-5,
+                "weight_decay": 1e-4  # L2 regularization
             }
         },
         verbose=0,
@@ -172,9 +215,9 @@ def train_model(train_env, val_env, args):
     callbacks = []
     
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.1,
-        end_eps=0.01,
-        decay_timesteps=int(args.total_timesteps * 0.6)
+        start_eps=0.05,  # Much less initial exploration
+        end_eps=0.005,   # Very conservative final exploration
+        decay_timesteps=int(args.total_timesteps * 0.8)  # Longer decay
     )
     callbacks.append(epsilon_callback)
     
@@ -184,7 +227,8 @@ def train_model(train_env, val_env, args):
         log_path=f"../results/{args.seed}",
         eval_freq=args.eval_freq,
         deterministic=True,
-        verbose=1
+        verbose=1,
+        iteration=iteration
     )
     callbacks.append(unified_callback)
     
@@ -249,6 +293,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         model = None
     
     while training_start + initial_window + step_size <= total_periods:
+        iteration = training_start // step_size
+        
         # Define data windows
         train_end = training_start + initial_window
         val_end = min(train_end + step_size, total_periods)
@@ -257,35 +303,37 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         val_data = data.iloc[train_end:val_end]  # Only evaluate on new, unseen data
         
         print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
-        print(f"Validation Period: {train_data.index[-1]} to {val_data.index[-1]}")
+        print(f"Validation Period: {val_data.index[0]} to {val_data.index[-1]}")
+        print(f"Walk-forward Iteration: {iteration}")
         
         env_params = {
             'initial_balance': args.initial_balance,
             'bar_count': args.bar_count,
-            'lot_percentage': 0.02
+            'lot_percentage': 0.01  # Reduced risk per trade
         }
         
         train_env = Monitor(TradingEnv(train_data, **{**env_params, 'random_start': True}))
         val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
         
-        # Adjust timesteps based on data size (reduced for 15-min data)
-        period_timesteps = min(base_timesteps, len(train_data) * 10)  # Reduced to 10 timesteps per bar
+        # Keep timesteps consistent across iterations
+        period_timesteps = base_timesteps
         
         if model is None:
             # Initial training
-            model = train_model(train_env, val_env, args)
+            model = train_model(train_env, val_env, args, iteration=iteration)
         else:
             # Continue training with existing model
-            print("Continuing training with existing model...")
-            args.learning_rate = args.learning_rate * 0.7  # Reduce learning rate for fine-tuning
+            print(f"\nContinuing training with existing model...")
+            print(f"Training timesteps: {period_timesteps}")
+            args.learning_rate = args.learning_rate * 0.95  # More gradual learning rate decay
             model.set_env(train_env)
             
             callbacks = []
             
             epsilon_callback = CustomEpsilonCallback(
-                start_eps=0.1,  # Lower exploration for fine-tuning
-                end_eps=0.01,
-                decay_timesteps=int(period_timesteps * 0.8)
+                start_eps=0.03,  # Lower exploration for fine-tuning
+                end_eps=0.005,
+                decay_timesteps=int(period_timesteps * 0.9)  # Longer decay
             )
             callbacks.append(epsilon_callback)
             
@@ -295,7 +343,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 log_path=f"../results/{args.seed}",
                 eval_freq=args.eval_freq,
                 deterministic=True,
-                verbose=1
+                verbose=1,
+                iteration=iteration
             )
             callbacks.append(unified_callback)
             
@@ -342,16 +391,16 @@ def main():
                       help='Initial training window in days')
     parser.add_argument('--step_size', type=int, default=14,
                       help='Walk-forward step size in days')
-    parser.add_argument('--bar_count', type=int, default=10,
-                      help='')
+    parser.add_argument('--bar_count', type=int, default=20,  # Increased history
+                      help='Number of bars in observation window')
     
-    parser.add_argument('--total_timesteps', type=int, default=500000,  # Reduced total steps
+    parser.add_argument('--total_timesteps', type=int, default=500000,  # Increased timesteps
                       help='Total timesteps for training')
-    parser.add_argument('--learning_rate', type=float, default=1e-3,
+    parser.add_argument('--learning_rate', type=float, default=5e-4,  # Reduced learning rate
                       help='Initial learning rate')
-    parser.add_argument('--final_learning_rate', type=float, default=5e-5,
+    parser.add_argument('--final_learning_rate', type=float, default=1e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=25000,
+    parser.add_argument('--eval_freq', type=int, default=50000,  # Less frequent evaluation
                       help='Evaluation frequency in timesteps')
     
     args = parser.parse_args()
