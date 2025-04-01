@@ -145,8 +145,8 @@ def main():
                       help='Number of bars in observation window (must match training)')
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial account balance')
-    parser.add_argument('--risk_percentage', type=float, default=0.02,
-                      help='Risk percentage per trade (default: 0.02)')
+    parser.add_argument('--balance_per_lot', type=float, default=1000.0,
+                      help='Account balance required per 0.01 lot (default: 1000)')
     parser.add_argument('--results_dir', type=str, default='../results/backtest',
                       help='Directory to save backtest results')
     
@@ -174,7 +174,7 @@ def main():
         results = model.backtest(
             data=df,
             initial_balance=args.initial_balance,
-            risk_percentage=args.risk_percentage/100  # Convert to decimal
+            balance_per_lot=args.balance_per_lot
         )
         
         # Save results

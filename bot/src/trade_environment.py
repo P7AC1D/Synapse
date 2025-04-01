@@ -5,18 +5,27 @@ from enum import IntEnum
 from typing import Dict, List, Tuple, Any, Optional, Union
 from gymnasium import spaces
 
-# Suppress gymnasium warnings about step API
 import warnings
+import numpy as np
 import gymnasium as gym
-warnings.filterwarnings('ignore', category=DeprecationWarning)
+from gymnasium.utils import EzPickle
 
-class TradingEnv(gym.Env):
-    metadata = {"render_modes": None}
+# Suppress specific warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+warnings.filterwarnings('ignore', message='.*experimental API.*')
+warnings.filterwarnings('ignore', category=RuntimeWarning)  # For numpy divide warnings
+np.seterr(divide='ignore', invalid='ignore')  # Suppress numpy warnings globally
+
+class TradingEnv(gym.Env, EzPickle):
+    """Trading environment for grid-based trading with PPO-LSTM."""
+    
+    metadata = {"render_modes": ["human"], "render_fps": 30}
     
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
-                 lot_percentage: float = 0.02, bar_count: int = 10, 
+                 balance_per_lot: float = 1000.0, bar_count: int = 10, 
                  random_start: bool = False):
         super().__init__()
+        EzPickle.__init__(self)
         
         # Trading constants
         self.POINT_VALUE = 0.01
@@ -24,7 +33,7 @@ class TradingEnv(gym.Env):
         self.MIN_LOTS = 0.01
         self.MAX_LOTS = 100.0
         self.CONTRACT_SIZE = 1.0
-        self.BALANCE_PER_LOT = 1000.0  # Amount in balance required for 0.01 lot
+        self.BALANCE_PER_LOT = balance_per_lot  # Amount in balance required for 0.01 lot
         self.MAX_DRAWDOWN = 0.5     # Maximum allowed drawdown (50%)
         self.MIN_GRID_MULTIPLIER = 0.1  # Minimum grid size as ATR multiplier
         self.MAX_GRID_MULTIPLIER = 3.0  # Maximum grid size as ATR multiplier
@@ -45,8 +54,6 @@ class TradingEnv(gym.Env):
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.max_balance = initial_balance
-        self.lot_percentage = lot_percentage
-        
         self.trades: List[Dict[str, Any]] = []
         self.long_positions: List[Dict[str, Any]] = []  # Long (buy) positions
         self.short_positions: List[Dict[str, Any]] = [] # Short (sell) positions
@@ -334,23 +341,25 @@ class TradingEnv(gym.Env):
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """Preprocess market data for the model with simplified features."""
-        close = data['close'].values
-        
-        # Core price features
-        returns = np.diff(close) / close[:-1]
-        returns = np.insert(returns, 0, 0)
-        returns = np.clip(returns, -0.1, 0.1)
-        
-        # Simple volatility (10-period)
-        vol = pd.Series(returns).rolling(10, min_periods=1).std().fillna(0).values
-        vol = np.clip(vol, 1e-8, 0.1)
-        
-        # Basic trend
-        trend = np.where(data['EMA_fast'] > data['EMA_slow'], 1, -1)
-        
-        # Normalized features
-        rsi_norm = data['RSI'].values / 100  # Scale to 0-1
-        atr_norm = data['ATR'].values / close  # Normalize by price
+        # Suppress numpy divide and invalid warnings for preprocessing
+        with np.errstate(divide='ignore', invalid='ignore'):
+            close = data['close'].values
+            
+            # Core price features
+            returns = np.diff(close) / close[:-1]
+            returns = np.insert(returns, 0, 0)
+            returns = np.clip(returns, -0.1, 0.1)
+            
+            # Simple volatility (10-period)
+            vol = pd.Series(returns).rolling(10, min_periods=1).std().fillna(0).values
+            vol = np.clip(vol, 1e-8, 0.1)
+            
+            # Basic trend
+            trend = np.where(data['EMA_fast'] > data['EMA_slow'], 1, -1)
+            
+            # Normalized features
+            rsi_norm = data['RSI'].values / 100  # Scale to 0-1
+            atr_norm = np.divide(data['ATR'].values, close, out=np.zeros_like(close), where=close!=0)  # Normalize by price
         
         features = np.column_stack([
             returns,    # Price movement

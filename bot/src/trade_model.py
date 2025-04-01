@@ -51,11 +51,29 @@ class TradeModel:
                 data=dummy_data,
                 bar_count=self.bar_count,
                 random_start=False,
-                lot_percentage=0.02  # Match training environment
+                balance_per_lot=1000.0  # Match training environment
             )
             
-            # Load the PPO model
-            self.model = RecurrentPPO.load(self.model_path, env=env)
+            # Define custom objects needed for model loading
+            custom_objects = {
+                "learning_rate": 0.0,
+                "lr_schedule": lambda _: 0.0,
+                "clip_range": lambda _: 0.0,
+                "n_steps": 2048,
+                "batch_size": 64,
+                "n_epochs": 10,
+                "ent_coef": 0.0,
+                "vf_coef": 0.5,
+                "clip_range_vf": None,
+            }
+            
+            # Load the PPO model with custom objects
+            self.model = RecurrentPPO.load(
+                self.model_path,
+                env=env,
+                custom_objects=custom_objects,
+                print_system_info=False
+            )
             self.logger.info(f"Model successfully loaded from {self.model_path}")
             return True
             
@@ -110,7 +128,7 @@ class TradeModel:
             data=data,
             bar_count=self.bar_count,
             random_start=False,
-            lot_percentage=0.02  # Match training environment
+            balance_per_lot=1000.0  # Match training environment
         )
         
         # Get the observation
@@ -148,14 +166,14 @@ class TradeModel:
         """Reset the LSTM states. Call this when starting a new prediction sequence."""
         self.lstm_states = None
     
-    def backtest(self, data: pd.DataFrame, initial_balance: float = 10000.0, risk_percentage: float = 1.0) -> Dict[str, Any]:
+    def backtest(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: float = 1000.0) -> Dict[str, Any]:
         """
         Run a backtest with the model.
         
         Args:
             data: DataFrame with market data
             initial_balance: Starting account balance
-            risk_percentage: Risk percentage per trade (1.0 = 1%)
+            balance_per_lot: Account balance required per 0.01 lot
             
         Returns:
             Dictionary with backtest results and trade history
@@ -172,7 +190,7 @@ class TradeModel:
         env_params = {
             'initial_balance': initial_balance,
             'bar_count': self.bar_count,
-            'lot_percentage': risk_percentage,
+            'balance_per_lot': 1000.0,  # Standard balance per lot ratio
             'random_start': False
         }
 
