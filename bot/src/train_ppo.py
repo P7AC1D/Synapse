@@ -309,7 +309,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         env_params = {
             'initial_balance': args.initial_balance,
             'bar_count': args.bar_count,
-            'lot_percentage': 0.01  # Reduced risk per trade
+            'balance_per_lot': args.balance_per_lot  # Reduced risk per trade
         }
         
         train_env = Monitor(TradingEnv(train_data, **{**env_params, 'random_start': True}))
@@ -393,6 +393,8 @@ def main():
                       help='Walk-forward step size in days')
     parser.add_argument('--bar_count', type=int, default=20,  # Increased history
                       help='Number of bars in observation window')
+    parser.add_argument('--balance_per_lot', type=float, default=1000.0,
+                      help='Account balance required per 0.01 lot (default: 1000)')
     
     parser.add_argument('--total_timesteps', type=int, default=500000,  # Increased timesteps
                       help='Total timesteps for training')

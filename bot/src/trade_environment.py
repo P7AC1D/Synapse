@@ -9,12 +9,6 @@ import warnings
 import gymnasium as gym
 from gymnasium.utils import EzPickle
 
-# Suppress specific warnings
-warnings.filterwarnings('ignore', category=DeprecationWarning)
-warnings.filterwarnings('ignore', message='.*experimental API.*')
-warnings.filterwarnings('ignore', category=RuntimeWarning)  # For numpy divide warnings
-np.seterr(divide='ignore', invalid='ignore')  # Suppress numpy warnings globally
-
 class TradingEnv(gym.Env, EzPickle):
     """Trading environment for grid-based trading with PPO-LSTM."""
     
@@ -95,14 +89,14 @@ class TradingEnv(gym.Env, EzPickle):
         self.action_space = spaces.Box(
             low=np.array([-1, self.MIN_GRID_MULTIPLIER]),  # Direction and min grid size
             high=np.array([1, self.MAX_GRID_MULTIPLIER]),  # Direction and max grid size
-            dtype=np.float32
+            dtype=np.float64
         )
 
     def _setup_observation_space(self, feature_count: int) -> None:
         """Setup observation space for features only."""
         obs_dim = self.bar_count * feature_count
         self.observation_space = spaces.Box(
-            low=-10, high=10, shape=(obs_dim,), dtype=np.float32
+            low=-10, high=10, shape=(obs_dim,), dtype=np.float64
         )
 
     def _process_action(self, action: np.ndarray) -> Tuple[int, float]:
@@ -540,7 +534,7 @@ class TradingEnv(gym.Env, EzPickle):
         window = self.raw_data.values[start:end]
         
         if window.shape[0] < self.bar_count:
-            full_window = np.zeros((self.bar_count, window.shape[1]), dtype=np.float32)
+            full_window = np.zeros((self.bar_count, window.shape[1]), dtype=np.float64)
             full_window[-window.shape[0]:] = window
             window = full_window
         
