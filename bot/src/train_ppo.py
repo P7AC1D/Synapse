@@ -230,17 +230,17 @@ def train_model(train_env, val_env, args, iteration=0):
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=5e-4,          # Increased learning rate
-        n_steps=256,                 # More frequent updates
-        batch_size=256,              # Larger batch size
+        learning_rate=8e-4,          # Higher learning rate for faster adaptation
+        n_steps=256,                 # Keep stride length
+        batch_size=256,              # Keep batch size
         gamma=0.99,
         gae_lambda=0.95,
-        clip_range=0.2,
-        clip_range_vf=0.2,
-        ent_coef=0.02,    # Increased entropy for better exploration
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        use_sde=False,    # No SDE for discrete actions
+        clip_range=0.3,              # Increased from 0.2 for more aggressive updates
+        clip_range_vf=0.3,           # Match policy clip range
+        ent_coef=0.05,              # Higher entropy to encourage exploration
+        vf_coef=0.6,                # Slightly higher value function importance
+        max_grad_norm=0.6,          # Allow slightly larger gradients
+        use_sde=False,              # No SDE for discrete actions
         policy_kwargs=policy_kwargs,
         verbose=0,
         device=args.device,
@@ -251,9 +251,9 @@ def train_model(train_env, val_env, args, iteration=0):
     
     # Configure epsilon exploration for discrete actions
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.3,     # More aggressive exploration
-        end_eps=0.1,       # Higher minimum exploration
-        decay_timesteps=int(args.total_timesteps * 0.8)  # Faster decay
+        start_eps=0.4,     # Higher initial exploration
+        end_eps=0.15,      # Higher minimum exploration
+        decay_timesteps=int(args.total_timesteps * 0.7)  # Faster decay for more aggressive exploration
     )
     callbacks.append(epsilon_callback)
     

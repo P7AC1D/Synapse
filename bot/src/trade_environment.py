@@ -467,21 +467,39 @@ class TradingEnv(gym.Env, EzPickle):
         return self._calculate_grid_reward(self.positions, total_pnl), []
 
     def _calculate_grid_reward(self, positions: List[Dict[str, Any]], total_pnl: float) -> float:
-        """Calculate reward for grid trading performance."""
+        """Calculate reward for grid trading performance with directional diversity bonus."""
         if not positions:
             return 0.0
             
+        # Base reward calculation
         grid_value = positions[0]["grid_size"] * sum(p["lot_size"] for p in positions)
         efficiency = min(2.0, abs(total_pnl / grid_value)) if grid_value > 0 else 0.0
         
         risk_adjusted_pnl = (total_pnl / self.initial_balance) * len(positions)
         utilization = len(positions) / 5.0
         
-        pnl_reward = risk_adjusted_pnl * 0.6
+        # Calculate directional diversity bonus
+        recent_trades = self.trades[-20:]  # Look at last 20 trades
+        if recent_trades:
+            long_count = sum(1 for t in recent_trades if t['direction'] == 1)
+            short_count = sum(1 for t in recent_trades if t['direction'] == -1)
+            total_trades = long_count + short_count
+            if total_trades > 0:
+                balance_ratio = min(long_count, short_count) / total_trades
+                diversity_bonus = balance_ratio * 0.3  # Up to 30% bonus for balanced trading
+            else:
+                diversity_bonus = 0
+        else:
+            diversity_bonus = 0
+        
+        # Combine all reward components
+        pnl_reward = risk_adjusted_pnl * 0.5      # Slightly reduced to make room for diversity bonus
         efficiency_reward = efficiency * 0.2
         utilization_bonus = utilization * 0.2
         
-        return pnl_reward + efficiency_reward + utilization_bonus
+        total_reward = pnl_reward + efficiency_reward + utilization_bonus + diversity_bonus
+        
+        return total_reward
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Take an environment step."""
