@@ -44,6 +44,16 @@ class TradingBot:
         self.last_bar_index = None
         self.lstm_states = None  # Store LSTM states between predictions
         
+        # Grid management
+        self.current_grid_id = 0  # Track grid IDs
+        self.active_grid = None  # Single active grid (can be long or short)
+        self.current_grid_metrics = {
+            'position_count': 0,
+            'avg_profit_per_close': 0.0,
+            'grid_efficiency': 0.0,
+            'current_direction': 0
+        }
+        
     def setup_logging(self) -> None:
         """Configure logging with both console and file output."""
         log_file = datetime.now().strftime("DRL_PPO_LSTM_Bot_%Y-%m-%d.log")
@@ -124,10 +134,57 @@ class TradingBot:
                     self.lstm_states = None
 
             # Make prediction and execute trade
+            # Make prediction
             prediction = self.model.predict_single(data)
             self.lstm_states = self.model.lstm_states  # Update LSTM states
-            self.logger.debug(f"Model prediction: {prediction}")
-            self.trade_executor.execute_trade(prediction)
+            
+            # Update grid tracking and prediction
+            if prediction['position'] != 0:
+                new_direction = prediction['position']
+                
+                # Check if we need to close existing grid in opposite direction
+                if self.active_grid and self.current_grid_metrics['current_direction'] != new_direction:
+                    self.logger.info("Closing existing grid due to direction change")
+                    self.active_grid = None
+                    self.current_grid_metrics['current_direction'] = 0
+                    self.current_grid_metrics['position_count'] = 0
+                
+                # Create new grid if needed
+                if not self.active_grid:
+                    self.current_grid_id += 1
+                    self.active_grid = {
+                        'direction': new_direction,
+                        'positions': [],
+                        'grid_size': prediction['grid_size_pips'],
+                        'created_at': current_bar.index[-1],
+                        'grid_id': self.current_grid_id,
+                        'entry_price': current_bar['close'].iloc[-1]
+                    }
+                    self.current_grid_metrics.update({
+                        'current_direction': new_direction,
+                        'position_count': 0
+                    })
+                
+                prediction['grid_id'] = self.current_grid_id
+            
+            self.logger.debug(
+                f"Grid Trade Signal - Direction: {'BUY' if prediction['position'] == 1 else 'SELL' if prediction['position'] == -1 else 'HOLD'} | "
+                f"Grid Size: {prediction.get('grid_size_pips', 0):.1f} pips | "
+                f"Grid ID: {prediction.get('grid_id', 'None')}"
+            )
+            
+            # Execute trade
+            success = self.trade_executor.execute_trade(prediction)
+            
+            # Update grid tracking on successful trade
+            if success and prediction['position'] != 0 and self.active_grid:
+                self.active_grid['positions'].append({
+                    'entry_time': current_bar.index[-1],
+                    'entry_price': current_bar['close'].iloc[-1],
+                    'grid_size': prediction['grid_size_pips'],
+                    'direction': prediction['position']
+                })
+                self.current_grid_metrics['position_count'] = len(self.active_grid['positions'])
             
         except Exception as e:
             self.logger.exception(f"Error in trading cycle: {e}")
@@ -145,12 +202,26 @@ class TradingBot:
     def cleanup(self) -> None:
         """Clean up resources before shutdown."""
         self.logger.info("Cleaning up resources...")
+        
+        # Log final grid statistics
+        if self.active_grid:
+            direction = "Long" if self.active_grid['direction'] == 1 else "Short"
+            self.logger.info(
+                f"Active Grid {self.active_grid['grid_id']} ({direction}) - "
+                f"Positions: {len(self.active_grid['positions'])} | "
+                f"Grid Size: {self.active_grid['grid_size']:.1f} pips | "
+                f"Active Since: {self.active_grid['created_at']} | "
+                f"Current Metrics: {self.current_grid_metrics}"
+            )
+        
         if self.mt5:
             self.mt5.disconnect()
+        
         # Reset model states
         if self.model:
             self.model.reset_states()
             self.lstm_states = None
+        
         self.logger.info("Cleanup complete")
         
     def run(self) -> None:

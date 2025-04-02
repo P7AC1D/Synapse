@@ -1,17 +1,104 @@
+"""
+Trading environment for grid-based trading with PPO-LSTM.
+
+This module implements a custom OpenAI Gym environment for training
+a PPO-LSTM model to trade using a dynamic grid strategy.
+"""
+
 import gymnasium
 import numpy as np
 import pandas as pd
-from enum import IntEnum
 from typing import Dict, List, Tuple, Any, Optional, Union
 from gymnasium import spaces
+import gymnasium as gym
+from gymnasium.utils import EzPickle
 
-class TradingEnv(gymnasium.Env):
-    metadata = {"render_modes": None, "render_fps": None}
+class Grid:
+    """Dynamic grid for position management."""
+    
+    def __init__(self, direction: int, initial_price: float, atr: float):
+        self.direction = direction        # 1 for long, -1 for short
+        self.base_price = initial_price   # Initial entry
+        self.avg_entry = initial_price    # Weighted average entry
+        self.positions = []               # List of active positions
+        self.total_pnl = 0.0             # Current unrealized PnL
+        self.total_lots = 0.0            # Total position size
+        
+        # Grid sizing parameters
+        self.initial_atr = atr
+        self.grid_size = self.calculate_grid_size(atr)
+        
+        # Dynamic bounds
+        self.min_grid_size = atr * 0.5
+        self.max_grid_size = atr * 3.0
+        
+    def calculate_grid_size(self, current_atr: float) -> float:
+        """Calculate grid size based on volatility."""
+        volatility_ratio = current_atr / self.initial_atr
+        base_multiplier = 1.5  # Base ATR multiplier
+        
+        # Adjust multiplier based on volatility
+        if volatility_ratio > 1.5:
+            base_multiplier *= 0.8  # Tighter grid in high volatility
+        elif volatility_ratio < 0.5:
+            base_multiplier *= 1.2  # Wider grid in low volatility
+            
+        return current_atr * base_multiplier
+        
+    def update_metrics(self, current_price: float, current_atr: float) -> None:
+        """Update grid metrics with adaptive sizing."""
+        # Update grid size dynamically
+        target_size = self.calculate_grid_size(current_atr)
+        self.grid_size = self.grid_size * 0.8 + target_size * 0.2  # Smooth transition
+        
+        if self.positions:
+            # Calculate weighted average entry
+            total_value = sum(p["entry_price"] * p["lot_size"] for p in self.positions)
+            self.total_lots = sum(p["lot_size"] for p in self.positions)
+            self.avg_entry = total_value / self.total_lots
+            
+    def should_add_position(self, current_price: float) -> bool:
+        """Determine if we should add a new position based on price movement."""
+        # First position is always allowed
+        if not self.positions:
+            return True
+        
+        # Calculate price movement thresholds
+        if self.direction == 1:  # Long grid
+            # For longs, we want to add when price moves down enough
+            price_movement = (current_price - self.avg_entry) / self.avg_entry
+            grid_threshold = -self.grid_size / self.avg_entry
+            
+            # More aggressive entry for first few positions
+            position_factor = max(0.7, 1.0 - len(self.positions) * 0.1)
+            adjusted_threshold = grid_threshold * position_factor
+            
+            return price_movement < adjusted_threshold
+            
+        else:  # Short grid
+            # For shorts, we want to add when price moves up enough
+            price_movement = (current_price - self.avg_entry) / self.avg_entry
+            grid_threshold = self.grid_size / self.avg_entry
+            
+            # More aggressive entry for first few positions
+            position_factor = max(0.7, 1.0 - len(self.positions) * 0.1)
+            adjusted_threshold = grid_threshold * position_factor
+            
+            return price_movement > adjusted_threshold
+
+class TradingEnv(gym.Env, EzPickle):
+    """Trading environment for grid-based trading with PPO-LSTM."""
+    
+    metadata = {"render_modes": ["human"], "render_fps": 30}
     
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
-                 lot_percentage: float = 0.02, bar_count: int = 10, 
-                 random_start: bool = False):
+                 balance_per_lot: float = 1000.0, random_start: bool = False,
+                 bar_count: int = 10):
         super().__init__()
+        EzPickle.__init__(self)
+        
+        # Save original datetime index
+        self.original_index = data.index.copy() if isinstance(data.index, pd.DatetimeIndex) else pd.to_datetime(data.index)
         
         # Trading constants
         self.POINT_VALUE = 0.01
@@ -19,8 +106,8 @@ class TradingEnv(gymnasium.Env):
         self.MIN_LOTS = 0.01
         self.MAX_LOTS = 100.0
         self.CONTRACT_SIZE = 1.0
-        self.MIN_SL_POINTS = 100.0  # Minimum stop loss in price points
-        self.MIN_RR_RATIO = 2.0     # Minimum risk/reward ratio
+        self.BALANCE_PER_LOT = balance_per_lot
+        self.MAX_DRAWDOWN = 0.5
         
         self.prices = {
             'close': data['close'].values,
@@ -32,217 +119,373 @@ class TradingEnv(gymnasium.Env):
         
         self.raw_data = self._preprocess_data(data)
         self.current_step = 0
-        self.bar_count = bar_count
         self.random_start = random_start
         
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.max_balance = initial_balance
-        self.lot_percentage = lot_percentage
         
+        # Trading state
         self.trades: List[Dict[str, Any]] = []
-        self.open_positions: List[Dict[str, Any]] = []
+        self.positions = []
         self.steps_since_trade = 0
         self.win_count = 0
         self.loss_count = 0
         self.reward = 0
         self.completed_episodes = 0
         self.episode_steps = 0
-        self.trade_cooldown = 5  # Minimum bars between trades
-        self.long_count = 0      # Track long trades
-        self.short_count = 0     # Track short trades
+        # Dynamic trade cooldown based on volatility
+        self.base_cooldown = 5
+        self.trade_cooldown = self.base_cooldown
+        self.max_positions = 5
+        
+        # Grid tracking
+        self.active_grid = None
+        self.grid_metrics = {
+            'position_count': 0,
+            'avg_profit_per_close': 0.0,
+            'grid_efficiency': 0.0,
+            'current_direction': 0
+        }
+        
+        # Episode settings
+        self.max_steps = 500
         
         self._setup_action_space()
-        self._setup_observation_space(5)  # 5 features
+        self._setup_observation_space(10)  # Updated for new feature count
 
-    def _setup_action_space(self) -> None:
-        """Configure simple action space for position direction only."""
-        self.action_space = spaces.Box(
-            low=np.array([-1]),  # Sell
-            high=np.array([1]),  # Buy
-            dtype=np.float32
-        )
-
-    def _setup_observation_space(self, feature_count: int) -> None:
-        """Setup observation space for features only."""
-        obs_dim = self.bar_count * feature_count
-        self.observation_space = spaces.Box(
-            low=-10, high=10, shape=(obs_dim,), dtype=np.float32
-        )
-
-    def _process_action(self, action: np.ndarray) -> Tuple[int, float, float]:
-        """Process action with fixed RRR and ATR-based stop loss."""
-        position = np.sign(action[0]) if abs(action[0]) > 0.1 else 0
-        
-        # Calculate SL based on ATR
-        current_atr = self.prices['atr'][self.current_step]
-        sl_points = max(current_atr, self.MIN_SL_POINTS)  # At least 100 points or 1 ATR
-        
-        # Fixed RRR of 1.0
-        tp_points = sl_points
-        
-        return position, sl_points, tp_points
-
-    def _execute_trade(self, position: int, sl_points: float, tp_points: float, raw_spread: float) -> float:
-        """Execute a trade with enforced minimum stop loss and trade frequency control."""
-        if position == 0 or self.steps_since_trade < self.trade_cooldown:
-            self.steps_since_trade += 1
-            return -0.1 if position != 0 else 0.0  # Penalize trying to trade during cooldown
-            
-        current_price = self.prices['close'][self.current_step]
-
-        # Enforce minimum SL and TP distances
-        sl_points = max(sl_points, self.MIN_SL_POINTS)
-        tp_points = max(tp_points, sl_points * self.MIN_RR_RATIO)
-
-        if position == 1:  # BUY
-            entry_price = current_price + raw_spread
-            sl_price = entry_price - sl_points
-            tp_price = entry_price + tp_points
-        else:  # SELL
-            entry_price = current_price - raw_spread
-            sl_price = entry_price + sl_points
-            tp_price = entry_price - tp_points
-        
-        rrr = tp_points / sl_points if sl_points > 0 else 0
-        
-        # Position sizing based on risk amount
-        stop_loss_distance = abs(entry_price - sl_price)
-        value_per_lot = stop_loss_distance * self.CONTRACT_SIZE
-        risk_amount = self.lot_percentage * self.balance
-        lot_size = risk_amount / value_per_lot
-        
-        lot_size = min(max(round(lot_size, 2), self.MIN_LOTS), self.MAX_LOTS)
-        
-        self.open_positions.append({
-            "position": position,
-            "entry_price": entry_price,
-            "sl_price": sl_price,
-            "tp_price": tp_price,
-            "lot_size": lot_size,
-            "entry_step": self.current_step,
-            "sl_points": sl_points,
-            "tp_points": tp_points,
-            "rrr": rrr,
-            "entry_spread": raw_spread,
-            "entry_atr": self.prices['atr'][self.current_step]
-        })
-        # Track trade direction
-        if position == 1:
-            self.long_count += 1
-        else:
-            self.short_count += 1
-            
-        # Balance reward for less-taken direction
-        total_trades = max(1, self.long_count + self.short_count)
-        long_ratio = self.long_count / total_trades
-        direction_bonus = 0.2 * (1 - long_ratio) if position == 1 else 0.2 * long_ratio
-        
-        self.steps_since_trade = 0
-        return direction_bonus  # Reward for balanced trading
-
-    def _evaluate_positions(self, high_price: float, low_price: float, raw_spread: float,
-                          prev_balance: float) -> Tuple[float, List[int]]:
-        """Evaluate open positions and calculate rewards."""
-        reward = 0.0
-        closed_positions = []
-        current_price = self.prices['close'][self.current_step]
-        
-        if not self.open_positions:
-            return reward, closed_positions
-        
-        positions = np.array([pos["position"] for pos in self.open_positions])
-        entry_prices = np.array([pos["entry_price"] for pos in self.open_positions])
-        lot_sizes = np.array([pos["lot_size"] for pos in self.open_positions])
-        
-        points = np.where(positions == 1,
-                         current_price - entry_prices,
-                         entry_prices - current_price) / self.POINT_VALUE
-        
-        unrealized_pnls = points * lot_sizes * self.POINT_VALUE
-        
-        rrr_scales = np.minimum([pos["rrr"] for pos in self.open_positions], 3.0)
-        positive_mask = unrealized_pnls > 0
-        reward_multipliers = np.where(positive_mask, 0.1 * rrr_scales, 0.05)
-        reward += np.sum((unrealized_pnls / prev_balance) * reward_multipliers)
-        
-        buy_mask = positions == 1
-        tp_prices = np.array([pos["tp_price"] for pos in self.open_positions])
-        sl_prices = np.array([pos["sl_price"] for pos in self.open_positions])
-        
-        hit_tp = np.where(buy_mask,
-                         high_price + raw_spread >= tp_prices,
-                         low_price - raw_spread <= tp_prices)
-        hit_sl = np.where(buy_mask,
-                         low_price - raw_spread <= sl_prices,
-                         high_price + raw_spread >= sl_prices)
-        
-        for i, (pos, tp_hit, sl_hit) in enumerate(zip(self.open_positions, hit_tp, hit_sl)):
-            if tp_hit or sl_hit:
-                exit_price = pos["tp_price"] if tp_hit else pos["sl_price"]
-                points = (exit_price - pos["entry_price"]) if pos["position"] == 1 else (pos["entry_price"] - exit_price)
-                points /= self.POINT_VALUE
-                
-                pnl = points * pos["lot_size"] * self.POINT_VALUE
-                pos["actual_rrr"] = pos["tp_points"] / pos["sl_points"] if pos["sl_points"] > 0 else 0
-                
-                reward += (pnl / prev_balance)
-                self.balance += pnl
-                
-                if pnl > 0:
-                    reward += min(pos["rrr"] / 1.0, 3.0) * 2.0
-                    self.win_count += 1
-                else:
-                    self.loss_count += 1
-                
-                closed_positions.append(i)
-                pos.update({
-                    "pnl": pnl,
-                    "exit_price": exit_price,
-                    "exit_step": self.current_step,
-                    "hit_tp": tp_hit
-                })
-                self.trades.append(pos)
-        
-        return reward, closed_positions
+        # Verify required columns
+        required_columns = ['close', 'high', 'low', 'spread', 'ATR', 'RSI', 'EMA_fast', 'EMA_slow']
+        missing_columns = [col for col in required_columns if col not in data.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Preprocess market data for the model with simplified features."""
-        close = data['close'].values
+        """Preprocess market data for the model with advanced features."""
+        features_df = pd.DataFrame(index=self.original_index)
         
-        # Core price features
-        returns = np.diff(close) / close[:-1]
-        returns = np.insert(returns, 0, 0)
-        returns = np.clip(returns, -0.1, 0.1)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            # Price data
+            close = data['close'].values
+            high = data['high'].values
+            low = data['low'].values
+            opens = data['open'].values  # Using 'opens' since 'open' is a built-in function
+            
+            # Returns and volatility
+            returns = np.diff(close) / close[:-1]
+            returns = np.insert(returns, 0, 0)
+            returns = np.clip(returns, -0.1, 0.1)
+            
+            vol = pd.Series(returns).rolling(20, min_periods=1).std()
+            vol_normalized = (vol - vol.rolling(100, min_periods=1).min()) / \
+                           (vol.rolling(100, min_periods=1).max() - vol.rolling(100, min_periods=1).min() + 1e-8)
+            
+            # Market Regime Detection (ADX-based)
+            pdm = high[1:] - high[:-1]
+            ndm = low[:-1] - low[1:]
+            pdm = np.insert(np.where(pdm > 0, pdm, 0), 0, 0)
+            ndm = np.insert(np.where(ndm > 0, ndm, 0), 0, 0)
+            
+            tr = np.maximum(high - low,
+                          np.maximum(np.abs(high - np.roll(close, 1)),
+                                   np.abs(low - np.roll(close, 1))))
+            
+            atr_period = 14
+            atr = pd.Series(tr).rolling(atr_period).mean().values
+            pdi = pd.Series(pdm).rolling(atr_period).mean() / atr * 100
+            ndi = pd.Series(ndm).rolling(atr_period).mean() / atr * 100
+            dx = np.abs(pdi - ndi) / (pdi + ndi) * 100
+            adx = pd.Series(dx).rolling(atr_period).mean()
+            
+            # Volatility Breakout Signals
+            boll_std = pd.Series(close).rolling(20).std()
+            upper_band = pd.Series(close).rolling(20).mean() + (boll_std * 2)
+            lower_band = pd.Series(close).rolling(20).mean() - (boll_std * 2)
+            
+            # Price Action Features
+            body = close - opens
+            upper_wick = high - np.maximum(close, opens)
+            lower_wick = np.minimum(close, opens) - low
+            
+            # Moving Average Features
+            fast_ma = data['EMA_fast'].values
+            slow_ma = data['EMA_slow'].values
+            ma_diff = (fast_ma - slow_ma) / slow_ma
+            ma_diff_norm = np.clip(ma_diff * 10, -1, 1)
+            
+            # Store normalized features
+            features_df['returns'] = returns
+            features_df['volatility'] = vol_normalized
+            features_df['trend'] = ma_diff_norm
+            features_df['rsi'] = data['RSI'].values / 50 - 1  # Normalize to [-1, 1]
+            features_df['atr'] = 2 * (atr / close - np.min(atr / close)) / \
+                                (np.max(atr / close) - np.min(atr / close) + 1e-8) - 1
+            
+            # New Features
+            features_df['adx_trend'] = adx / 100  # Normalize to [0,1]
+            features_df['volatility_breakout'] = (close - lower_band) / (upper_band - lower_band + 1e-8)
+            features_df['body_to_range'] = body / (high - low + 1e-8)
+            features_df['wick_ratio'] = (upper_wick - lower_wick) / (upper_wick + lower_wick + 1e-8)
+            features_df['trend_strength'] = np.clip(adx/25 - 1, -1, 1)  # Normalized trend strength
         
-        # Simple volatility (10-period)
-        vol = pd.Series(returns).rolling(10, min_periods=1).std().fillna(0).values
-        vol = np.clip(vol, 1e-8, 0.1)
-        
-        # Basic trend
-        trend = np.where(data['EMA_fast'] > data['EMA_slow'], 1, -1)
-        
-        # Normalized features
-        rsi_norm = data['RSI'].values / 100  # Scale to 0-1
-        atr_norm = data['ATR'].values / close  # Normalize by price
-        
-        features = np.column_stack([
-            returns,    # Price movement
-            vol,       # Market volatility
-            trend,     # Trend direction
-            rsi_norm,  # Momentum
-            atr_norm   # Volatility for position sizing
-        ])
-        
-        features = np.nan_to_num(features, 0)
-        return pd.DataFrame(features)
+        return features_df.fillna(0)
 
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+    def _setup_action_space(self) -> None:
+        """Configure discrete action space."""
+        self.action_space = spaces.Discrete(3)
+
+    def _setup_observation_space(self, feature_count: int) -> None:
+        """Setup observation space with proper feature bounds."""
+        # All features are normalized between -1 and 1:
+        # Base features:
+        # - returns: [-0.1, 0.1]
+        # - volatility: [-1, 1]
+        # - trend: [-1, 1]
+        # - rsi: [-1, 1]
+        # - atr: [-1, 1]
+        # New features:
+        # - adx_trend: [0, 1]
+        # - volatility_breakout: [0, 1]
+        # - body_to_range: [-1, 1]
+        # - wick_ratio: [-1, 1]
+        # - trend_strength: [-1, 1]
+        feature_count = 10  # Update to match total number of features
+        self.observation_space = spaces.Box(
+            low=-1, high=1, shape=(feature_count,), dtype=np.float32
+        )
+
+    def _process_action(self, action: Union[int, np.ndarray]) -> int:
+        """Convert discrete action to direction.
+        
+        Args:
+            action: Integer action from policy (0: hold, 1: long, 2: short)
+            
+        Returns:
+            int: Converted direction (-1: short, 0: hold, 1: long)
+        """
+        # Handle array input from policy
+        if isinstance(action, np.ndarray):
+            action = action.item()
+        
+        # Ensure action is within valid range
+        action = int(action) % 3
+            
+        # Map action to direction
+        direction_map = {
+            0: 0,   # Hold
+            1: 1,   # Long
+            2: -1   # Short
+        }
+        
+        return direction_map[action]
+
+    def _execute_grid_trade(self, direction: int, raw_spread: float) -> float:
+        """Execute a trade with dynamic grid sizing."""
+        # Update trade cooldown based on volatility
+        current_atr = self.prices['atr'][self.current_step]
+        vol_scale = current_atr / self.prices['close'][self.current_step]
+        self.trade_cooldown = max(2, int(self.base_cooldown * (1.0 - vol_scale * 5)))
+        
+        # Check cooldown and return penalty if needed
+        if direction == 0:
+            self.steps_since_trade += 1
+            return 0.0
+        elif self.steps_since_trade < self.trade_cooldown:
+            self.steps_since_trade += 1
+            return -0.1 * (1.0 + len(self.positions) / self.max_positions)  # Higher penalty with more positions
+            
+        current_price = self.prices['close'][self.current_step]
+        current_atr = self.prices['atr'][self.current_step]
+        
+        if self.active_grid and direction != self.active_grid.direction:
+            self._close_grid()
+            return -0.2
+        
+        if not self.active_grid:
+            self.active_grid = Grid(direction, current_price, current_atr)
+            self.grid_metrics['current_direction'] = direction
+        
+        self.active_grid.update_metrics(current_price, current_atr)
+            
+        if not self.active_grid.should_add_position(current_price):
+            return -0.1
+            
+        # Calculate dynamic lot sizing based on multiple factors
+        equity_ratio = self.balance / self.initial_balance
+        risk_factor = max(0.5, min(1.5, equity_ratio))  # Scale risk based on equity growth
+        
+        # Base lot size calculation
+        base_lot = max(self.MIN_LOTS, round(self.balance / self.BALANCE_PER_LOT / 100, 2))
+        
+        # Volatility scaling (reduce size in high volatility)
+        volatility_ratio = current_atr / self.active_grid.initial_atr
+        volatility_scale = 1.0 / max(1.0, volatility_ratio)  # Inverse relationship
+        
+        # Position scaling (reduce subsequent position sizes)
+        position_discount = max(0.5, 1.0 - (len(self.positions) * 0.15))
+        
+        # Trend alignment bonus
+        trend = self.raw_data.values[self.current_step][2]  # Normalized trend feature
+        trend_alignment = 1.0
+        if (self.active_grid.direction == 1 and trend > 0.5) or \
+           (self.active_grid.direction == -1 and trend < -0.5):
+            trend_alignment = 1.2  # Increase size when trading with trend
+        
+        # Combine all scaling factors
+        lot_size = min(
+            self.MAX_LOTS,
+            base_lot * risk_factor * volatility_scale * position_discount * trend_alignment
+        )
+        
+        position = {
+            "direction": direction,
+            "entry_price": current_price + (raw_spread if direction == 1 else -raw_spread),
+            "lot_size": lot_size,
+            "entry_time": str(self.original_index[self.current_step]),
+            "entry_step": self.current_step,
+            "entry_atr": current_atr,
+            "grid_size": self.active_grid.grid_size,
+            "current_profit_pips": 0.0
+        }
+        
+        self.positions.append(position)
+        self.active_grid.positions.append(position)
+        self.grid_metrics['position_count'] = len(self.positions)
+        
+        self.active_grid.update_metrics(current_price, current_atr)
+        self.steps_since_trade = 0
+        
+        position_bonus = min(1.0, len(self.positions) / 5.0) * 0.3
+        volatility_bonus = min(1.0, current_atr / self.active_grid.initial_atr) * 0.2
+        direction_bonus = 0.2 if len(self.positions) == 1 else 0.1
+        
+        return position_bonus + volatility_bonus + direction_bonus
+    
+    def _close_grid(self) -> float:
+        """Close all positions in current grid."""
+        if not self.active_grid:
+            return 0.0
+        
+        current_price = self.prices['close'][self.current_step]
+        total_pnl = 0.0
+        
+        for pos in self.positions:
+            if self.active_grid.direction == 1:
+                profit_points = current_price - pos["entry_price"]
+            else:
+                profit_points = pos["entry_price"] - current_price
+            
+            pos["exit_price"] = current_price
+            pos["exit_step"] = self.current_step
+            pos["exit_time"] = str(self.original_index[self.current_step])
+            pos["profit_pips"] = profit_points / 0.0001
+            pos["pnl"] = profit_points * pos["lot_size"]
+            pos["hold_time"] = pos["exit_step"] - pos["entry_step"]
+            total_pnl += pos["pnl"]
+            
+            if pos["pnl"] > 0:
+                self.win_count += 1
+            else:
+                self.loss_count += 1
+                
+            self.trades.append(pos)
+            
+        self.balance += total_pnl
+        self.positions.clear()
+        
+        reward = self._calculate_grid_reward(self.active_grid.positions, total_pnl)
+        
+        self.active_grid = None
+        self.grid_metrics['position_count'] = 0
+        self.grid_metrics['current_direction'] = 0
+        
+        return reward
+
+    def _manage_grid_positions(self) -> Tuple[float, List[Dict[str, Any]]]:
+        """Manage grid positions."""
+        if not self.active_grid:
+            return 0.0, []
+            
+        current_price = self.prices['close'][self.current_step]
+        current_atr = self.prices['atr'][self.current_step]
+        total_pnl = 0.0
+        
+        for pos in self.positions:
+            if self.active_grid.direction == 1:
+                profit_points = current_price - pos["entry_price"]
+            else:
+                profit_points = pos["entry_price"] - current_price
+                
+            pos["current_profit_pips"] = profit_points / 0.0001
+            pos_pnl = profit_points * pos["lot_size"]
+            total_pnl += pos_pnl
+            
+        self.active_grid.total_pnl = total_pnl
+        self.active_grid.update_metrics(current_price, current_atr)
+        
+        # Calculate dynamic take profit and stop loss based on volatility and positions
+        current_atr = self.prices['atr'][self.current_step]
+        current_price = self.prices['close'][self.current_step]
+        volatility_factor = current_atr / current_price
+        position_factor = 1.0 + (len(self.positions) * 0.2)
+        
+        # Grid value represents total risk
+        grid_value = self.active_grid.grid_size * self.active_grid.total_lots
+        
+        # Scale take profit and stop loss based on market conditions
+        base_tp_factor = 1.0 + (0.1 * len(self.positions))  # Increased TP with more positions
+        base_sl_factor = 1.5 - (0.1 * len(self.positions))  # Tighter SL with more positions
+        
+        # Adjust factors based on volatility
+        volatility_scale = np.clip(volatility_factor * 20, 0.5, 2.0)
+        take_profit = grid_value * base_tp_factor * volatility_scale
+        stop_loss = -grid_value * base_sl_factor / volatility_scale  # Tighter SL in high volatility
+        
+        # Consider trend for exit thresholds
+        trend = self.raw_data.values[self.current_step][2]  # Trend feature from normalized data
+        if (self.active_grid.direction == 1 and trend < -0.5) or \
+           (self.active_grid.direction == -1 and trend > 0.5):
+            # Tighten exits when trading against trend
+            take_profit *= 0.8
+            stop_loss *= 1.2
+        
+        should_close = (
+            total_pnl > take_profit or
+            (total_pnl < stop_loss and len(self.positions) >= 2) or
+            (abs(total_pnl) < grid_value * 0.1 and len(self.positions) >= 4)  # Close small PnL with many positions
+        )
+        
+        if should_close:
+            reward = self._close_grid()
+            return reward, []
+            
+        if len(self.positions) < self.max_positions:
+            current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
+            if self.active_grid.should_add_position(current_price):
+                self._execute_grid_trade(self.active_grid.direction, current_spread)
+                
+        return self._calculate_grid_reward(self.positions, total_pnl), []
+
+    def _calculate_grid_reward(self, positions: List[Dict[str, Any]], total_pnl: float) -> float:
+        """Calculate reward for grid trading performance."""
+        if not positions:
+            return 0.0
+            
+        grid_value = positions[0]["grid_size"] * sum(p["lot_size"] for p in positions)
+        efficiency = min(2.0, abs(total_pnl / grid_value)) if grid_value > 0 else 0.0
+        
+        risk_adjusted_pnl = (total_pnl / self.initial_balance) * len(positions)
+        utilization = len(positions) / 5.0
+        
+        pnl_reward = risk_adjusted_pnl * 0.6
+        efficiency_reward = efficiency * 0.2
+        utilization_bonus = utilization * 0.2
+        
+        return pnl_reward + efficiency_reward + utilization_bonus
+
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Take an environment step."""
-        position, sl_points, tp_points = self._process_action(action)
-
-        high_price = self.prices['high'][self.current_step]
-        low_price = self.prices['low'][self.current_step]
+        direction = self._process_action(action)
         current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
 
         previous_balance = self.balance
@@ -253,75 +496,79 @@ class TradingEnv(gymnasium.Env):
         
         done = (self.episode_steps >= self.max_steps) or (self.current_step >= len(self.raw_data) - 1)
 
-        trade_reward = 0
-        growth_reward = 0
-        drawdown_penalty = 0
-
-        position_reward, closed_positions = self._evaluate_positions(
-            high_price, low_price, current_spread, previous_balance
+        grid_reward, _ = self._manage_grid_positions()
+        
+        execution_reward = 0.0
+        if direction != 0:
+            execution_reward = self._execute_grid_trade(direction, current_spread)
+        
+        growth_reward = np.log(self.balance / previous_balance) * 5.0 if self.balance > previous_balance else 0.0
+        drawdown = (self.max_balance - self.balance) / self.max_balance
+        drawdown_penalty = drawdown * 3.0 if drawdown > 0.1 else 0.0
+        
+        # Calculate risk-adjusted rewards
+        current_return = (self.balance / self.initial_balance) - 1
+        risk_factor = max(0.5, 1.0 - drawdown * 2)  # Penalize high drawdown more
+        
+        # Calculate grid efficiency metrics
+        if self.active_grid and self.positions:
+            grid_size = self.active_grid.grid_size
+            avg_position_pnl = self.active_grid.total_pnl / len(self.positions)
+            grid_efficiency = min(2.0, abs(avg_position_pnl / grid_size))
+            position_utilization = len(self.positions) / self.max_positions
+        else:
+            grid_efficiency = 0.0
+            position_utilization = 0.0
+        
+        # Combine reward components with dynamic weights
+        grid_weight = 0.5
+        execution_weight = 0.2
+        growth_weight = 0.2
+        risk_weight = 0.1
+        
+        reward = (
+            (grid_reward * grid_weight * (1.0 + grid_efficiency)) +
+            (execution_reward * execution_weight * (1.0 + position_utilization)) +
+            (growth_reward * growth_weight * risk_factor) -
+            (drawdown_penalty * risk_weight)
         )
-        trade_reward += position_reward
         
-        for i in sorted(closed_positions, reverse=True):
-            self.open_positions.pop(i)
-            
-        if position != 0:
-            self._execute_trade(position, sl_points, tp_points, current_spread)
-        trade_execution_reward = self._execute_trade(position, sl_points, tp_points, current_spread)
-        trade_reward += trade_execution_reward
-        
-        if previous_balance > 0:
-            growth_ratio = self.balance / self.initial_balance
-            if growth_ratio > 1:
-                growth_reward += np.log(growth_ratio) * 5.0
-            
-            if hasattr(self, 'last_balance_ratio'):
-                growth_acceleration = self.balance / previous_balance - self.last_balance_ratio
-                if growth_acceleration > 0:
-                    growth_reward += growth_acceleration * 2.0
-            self.last_balance_ratio = self.balance / previous_balance
-            
-            if self.balance < self.max_balance:
-                drawdown = (self.max_balance - self.balance) / self.max_balance
-                drawdown_penalty = drawdown * 5.0
-
-        reward = (trade_reward * 0.9) + (growth_reward * 0.15) - (drawdown_penalty * 0.05)
-        
-        # Penalize waiting too long between trades
-        if self.steps_since_trade > 5:
-            reward -= (self.steps_since_trade - 5) * 0.05
-        
-        # Add trading frequency bonus
-        if len(self.trades) > 0:
-            trade_frequency = len(self.trades) / self.episode_steps
-            reward += trade_frequency * 2.0
-        
-        # Check for bankruptcy or excessive drawdown
+        # Handle terminal conditions
         max_drawdown = (self.max_balance - self.balance) / self.max_balance
-        if self.balance <= 0:
-            self.open_positions.clear()
-            reward = -100
+        if self.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN:
+            self._close_grid()
+            base_penalty = -100 if self.balance <= 0 else -50
+            reward = base_penalty * (1.0 + max_drawdown)  # Scale penalty with drawdown
             done = True
-        elif max_drawdown >= 0.5:
-            self.open_positions.clear()
-            reward = -50
-            done = True
-
-        if done:
-            final_return = (self.balance / self.initial_balance) - 1
+        
+        # Add completion bonus based on multiple factors
+        if done and self.balance > self.initial_balance:
             win_rate = (self.win_count / (self.win_count + self.loss_count)) if (self.win_count + self.loss_count) > 0 else 0
-            
-            if self.balance > self.initial_balance:
-                reward += final_return * 20.0
-                reward += win_rate * 20.0
-                reward += (len(self.trades) / 50.0) * 10.0
-            else:
-                reward += final_return * 15.0
+            avg_trade_return = current_return / max(1, len(self.trades))
+            completion_bonus = (
+                current_return * 5.0 +          # Overall return
+                win_rate * 3.0 +               # Win rate bonus
+                (1.0 - max_drawdown) * 2.0 +   # Low drawdown bonus
+                avg_trade_return * 5.0         # Consistent returns bonus
+            )
+            reward += completion_bonus
+        
+        self.grid_metrics.update({
+            'position_count': len(self.positions),
+            'avg_profit_per_close': (sum(t["pnl"] for t in self.trades) / len(self.trades)) if self.trades else 0.0,
+            'grid_efficiency': (self.balance - self.initial_balance) / self.initial_balance * 100
+        })
         
         obs = self.get_history()
         self.reward = reward
         
-        return obs, reward, done, False, {}
+        truncated = self.current_step >= len(self.raw_data) - 1
+        return obs, reward, done, truncated, {
+            "balance": self.balance,
+            "total_pnl": self.balance - self.initial_balance,
+            "drawdown": max_drawdown * 100,
+            "grid_metrics": self.grid_metrics
+        }
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         """Reset the environment."""
@@ -329,102 +576,100 @@ class TradingEnv(gymnasium.Env):
             np.random.seed(seed)
 
         min_episode_length = 500
-        max_episode_length = min(5000, len(self.raw_data) - self.bar_count)
+        max_episode_length = min(5000, len(self.raw_data))
         
         scale_factor = min(self.completed_episodes / 25, 1.0)
         self.max_steps = int(min_episode_length + (max_episode_length - min_episode_length) * scale_factor)
         
         if self.random_start:
-            latest_start = len(self.raw_data) - self.max_steps - self.bar_count
+            latest_start = len(self.raw_data) - self.max_steps - 1
             self.current_step = np.random.randint(0, max(1, latest_start))
         else:
             self.current_step = 0
             
         self.balance = self.initial_balance
         self.max_balance = self.initial_balance
-        self.open_positions.clear()
+        
         self.trades.clear()
+        self.positions.clear()
+        
         self.steps_since_trade = 0
         self.win_count = 0
         self.loss_count = 0
         self.episode_steps = 0
         
+        self.active_grid = None
+        self.grid_metrics.update({
+            'position_count': 0,
+            'avg_profit_per_close': 0.0,
+            'grid_efficiency': 0.0,
+            'current_direction': 0
+        })
+        
         self.completed_episodes += 1
         
-        return self.get_history(), {}
+        return self.get_history(), {
+            "balance": self.balance,
+            "positions": len(self.positions)
+        }
         
     def get_history(self) -> np.ndarray:
-        """Get the observation window."""
-        start = max(0, self.current_step - self.bar_count + 1)
-        end = self.current_step + 1
-        window = self.raw_data.values[start:end]
-        
-        if window.shape[0] < self.bar_count:
-            full_window = np.zeros((self.bar_count, window.shape[1]), dtype=np.float32)
-            full_window[-window.shape[0]:] = window
-            window = full_window
-        
-        return window.ravel()
+        """Get current bar features."""
+        return self.raw_data.values[self.current_step]
 
     def render(self) -> None:
         """Print environment state and trade statistics."""
         print(f"\n===== Episode {self.completed_episodes}, Step {self.episode_steps}/{self.max_steps} =====")
-        print(f"Open Positions: {len(self.open_positions)}")
+        print(f"Current Balance: {self.balance:.2f}")
+        print(f"Grid Positions: {len(self.positions)}")
         
         if len(self.trades) == 0:
             print("\nNo completed trades yet.")
             return
             
         trades_df = pd.DataFrame(self.trades)
-        num_tp = sum(1 for trade in self.trades if trade["pnl"] > 0.0)
-        num_sl = sum(1 for trade in self.trades if trade["pnl"] < 0.0)
-        total_trades = len(self.trades)
         
-        avg_pnl_tp = trades_df[trades_df["pnl"] > 0.0]["pnl"].mean() if num_tp > 0 else 0.0
-        avg_pnl_sl = abs(trades_df[trades_df["pnl"] < 0.0]["pnl"].mean()) if num_sl > 0 else 0.0
+        winning_trades = trades_df[trades_df["pnl"] > 0]
+        losing_trades = trades_df[trades_df["pnl"] < 0]
         
-        total_return = ((self.balance - self.initial_balance) / self.initial_balance) * 100
-        expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
+        long_trades = trades_df[trades_df["direction"] == 1]
+        short_trades = trades_df[trades_df["direction"] == -1]
+        long_wins = long_trades[long_trades["pnl"] > 0]
+        short_wins = short_trades[short_trades["pnl"] > 0]
         
-        avg_rrr = trades_df["actual_rrr"].mean() if total_trades > 0 else 0.0
-        avg_holding_length = (trades_df["exit_step"] - trades_df["entry_step"]).mean() if total_trades > 0 else 0.0
+        avg_hold_time = trades_df["hold_time"].mean()
+        avg_win_hold = winning_trades["hold_time"].mean()
+        avg_loss_hold = losing_trades["hold_time"].mean()
         
-        num_buy = trades_df[trades_df["position"] == 1].shape[0]
-        num_sell = trades_df[trades_df["position"] == -1].shape[0]
+        print("\n===== Performance Metrics =====")
+        print(f"Total Return: {((self.balance - self.initial_balance) / self.initial_balance * 100):.2f}%")
+        print(f"Total Trades: {len(self.trades)}")
+        print(f"Overall Win Rate: {(len(winning_trades) / len(self.trades) * 100):.2f}%")
+        print(f"Average Win: {winning_trades['pnl'].mean():.2f}")
+        print(f"Average Loss: {losing_trades['pnl'].mean():.2f}")
+        print(f"Sharpe Ratio: {(winning_trades['pnl'].mean() / winning_trades['pnl'].std() * np.sqrt(252)):.2f}")
+        print(f"Current Drawdown: {((self.max_balance - self.balance) / self.max_balance * 100):.2f}%")
         
-        buy_win_rate = (trades_df[(trades_df["position"] == 1) & (trades_df["pnl"] > 0.0)].shape[0] / num_buy * 100) if num_buy > 0 else 0.0
-        sell_win_rate = (trades_df[(trades_df["position"] == -1) & (trades_df["pnl"] > 0.0)].shape[0] / num_sell * 100) if num_sell > 0 else 0.0
-        total_win_rate = (num_tp / total_trades * 100) if total_trades > 0 else 0.0
-
-        def kelly_criterion(win_rate, win_loss_ratio):
-            if win_loss_ratio == 0:
-                return 0.0
-            return round(win_rate - ((1 - win_rate) / win_loss_ratio), 4)
-            
-        def sharpe_ratio(returns, risk_free_rate=0.00, trading_periods=252):
-            if len(returns) < 2:
-                return 0.0
-            excess_returns = np.array(returns) - (risk_free_rate / trading_periods)
-            return (np.mean(excess_returns) / np.std(excess_returns, ddof=1)) * np.sqrt(trading_periods)
-
-        kelly_criteria = kelly_criterion(total_win_rate / 100.0, avg_rrr)
-        sharpe = sharpe_ratio(trades_df["pnl"] / self.initial_balance) if total_trades > 0 else 0.0
+        print("\n===== Hold Time Analysis =====")
+        print(f"Average Hold Time: {avg_hold_time:.1f} bars")
+        print(f"Winners Hold Time: {avg_win_hold:.1f} bars")
+        print(f"Losers Hold Time: {avg_loss_hold:.1f} bars")
         
-        metrics_text = (
-            f"\n===== Trading Performance Metrics =====\n"
-            f"Current Balance: {self.balance:.2f}\n"
-            f"Total Return: {total_return:.2f}%\n"
-            f"Total Trades: {total_trades}\n"
-            f"Win Rate: {total_win_rate:.2f}%\n"
-            f"Buy Win Rate: {buy_win_rate:.2f}%\n"
-            f"Sell Win Rate: {sell_win_rate:.2f}%\n"
-            f"Average TP Profit: {avg_pnl_tp:.2f}\n"
-            f"Average SL Loss: {avg_pnl_sl:.2f}\n"
-            f"Average RRR: {avg_rrr:.2f}\n"
-            f"Average Hold Length: {avg_holding_length:.1f} bars\n"
-            f"Expected Value: {expected_value:.2f}\n"
-            f"Kelly Criterion: {kelly_criteria:.4f}\n"
-            f"Sharpe Ratio: {sharpe:.2f}\n"
-        )
+        print("\n===== Directional Performance =====")
+        total_trades = len(trades_df)
+        long_pct = (len(long_trades) / total_trades * 100) if total_trades > 0 else 0.0
+        short_pct = (len(short_trades) / total_trades * 100) if total_trades > 0 else 0.0
         
-        print(metrics_text)
+        print(f"Long Trades: {len(long_trades)} ({long_pct:.1f}%)")
+        print(f"Long Win Rate: {(len(long_wins) / len(long_trades) * 100):.1f}% (Avg PnL: {long_trades['pnl'].mean():.2f})" if len(long_trades) > 0 else "Long Win Rate: N/A")
+        print(f"Short Trades: {len(short_trades)} ({short_pct:.1f}%)")
+        print(f"Short Win Rate: {(len(short_wins) / len(short_trades) * 100):.1f}% (Avg PnL: {short_trades['pnl'].mean():.2f})" if len(short_trades) > 0 else "Short Win Rate: N/A")
+        
+        print("\n===== Grid Stats =====")
+        if self.active_grid:
+            direction = "Long" if self.active_grid.direction == 1 else "Short"
+            print(f"Active {direction} Grid:")
+            print(f"  Positions: {len(self.active_grid.positions)}")
+            print(f"  Average Entry: {self.active_grid.avg_entry:.2f}")
+            print(f"  Grid Size: {self.active_grid.grid_size:.2f}")
+            print(f"  Total PnL: {self.active_grid.total_pnl:.2f}")

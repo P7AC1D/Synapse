@@ -13,17 +13,15 @@ from trade_environment import TradingEnv
 class TradeModel:
     """Class for loading and making predictions with a trained PPO-LSTM model."""
     
-    def __init__(self, model_path: str, bar_count: int = 10):
+    def __init__(self, model_path: str):
         """
         Initialize the trade model.
         
         Args:
             model_path: Path to the saved model file
-            bar_count: Number of bars in each observation
         """
         self.logger = logging.getLogger(__name__)
         self.model_path = Path(model_path)
-        self.bar_count = bar_count
         self.model = None
         self.required_columns = [
             'close', 'high', 'low', 'spread',  # Price data
@@ -43,19 +41,52 @@ class TradeModel:
         """
         try:
             # Create a temporary environment for model loading with dummy data
-            dummy_data = pd.DataFrame(
-                np.zeros((self.bar_count + 1, len(self.required_columns))),
-                columns=self.required_columns
-            )
+            # Create more realistic dummy data
+            dummy_length = 512  # Match n_steps
+            price = 1.0
+            prices = []
+            
+            for _ in range(dummy_length):
+                price *= (1 + np.random.normal(0, 0.001))  # Add some variance
+                prices.append(price)
+            
+            dummy_data = pd.DataFrame({
+                'close': prices,
+                'high': [p * (1 + 0.001) for p in prices],
+                'low': [p * (1 - 0.001) for p in prices],
+                'spread': [0.0001] * dummy_length,
+                'EMA_fast': prices,  # Will be normalized by env
+                'EMA_slow': prices,  # Will be normalized by env
+                'RSI': [50.0] * dummy_length,
+                'ATR': [price * 0.001 for price in prices]  # Realistic ATR values
+            })
+            
             env = TradingEnv(
                 data=dummy_data,
-                bar_count=self.bar_count,
                 random_start=False,
-                lot_percentage=0.02  # Match training environment
+                balance_per_lot=1000.0  # Match training environment
             )
             
-            # Load the PPO model
-            self.model = RecurrentPPO.load(self.model_path, env=env)
+            # Define custom objects to match training configuration
+            custom_objects = {
+                "learning_rate": 0.0,
+                "lr_schedule": lambda _: 0.0,
+                "clip_range": lambda _: 0.2,      # Match training value
+                "n_steps": 512,                   # Match training value
+                "batch_size": 128,                # Match training value
+                "n_epochs": 10,
+                "ent_coef": 0.02,                # Match training entropy
+                "vf_coef": 0.5,
+                "clip_range_vf": 0.2             # Match training value
+            }
+            
+            # Load the PPO model with custom objects
+            self.model = RecurrentPPO.load(
+                self.model_path,
+                env=env,
+                custom_objects=custom_objects,
+                print_system_info=False
+            )
             self.logger.info(f"Model successfully loaded from {self.model_path}")
             return True
             
@@ -108,35 +139,38 @@ class TradeModel:
         # Create a temporary environment with simplified features
         env = TradingEnv(
             data=data,
-            bar_count=self.bar_count,
             random_start=False,
-            lot_percentage=0.02  # Match training environment
+            balance_per_lot=1000.0  # Match training environment
         )
         
-        # Get the observation
+        # Get normalized observation
         observation = env.get_history()
         
-        # Make prediction with LSTM state management
+        # Make prediction with LSTM state management and proper deterministic setting
         action, self.lstm_states = self.model.predict(
             observation, 
             state=self.lstm_states,
-            deterministic=True
+            deterministic=True,     # Use deterministic for backtesting
+            episode_start=None,     # Maintain episode continuity
+            action_masks=None       # No action masking
         )
         
         # Process single action value for position
         position = np.sign(action[0]) if abs(action[0]) > 0.1 else 0
         
-        # Stop loss is fixed at 1.0 * ATR
-        sl_points = float(data.iloc[-1]['ATR'])
-        tp_points = sl_points  # Fixed 1:1 RRR
+        # Get ATR and current market conditions
+        current_atr = float(data.iloc[-1]['ATR'])
         
-        # Create prediction result
+        # Extract grid size from action
+        grid_multiplier = float(np.clip(action[1], 0.1, 3.0))  # Match TradingEnv limits
+        grid_size_pips = current_atr * grid_multiplier
+        
+        # Create prediction result with grid parameters
         result = {
             'position': int(position),  # -1 for sell, 0 for hold, 1 for buy
-            'sl_points': sl_points,
-            'tp_points': sl_points,  # Equal to SL for 1:1 ratio
-            'risk_reward_ratio': 1.0,  # Fixed RRR
-            'atr': float(data.iloc[-1]['ATR'])
+            'grid_size_pips': grid_size_pips,
+            'grid_multiplier': grid_multiplier,
+            'atr': current_atr
         }
 
         self.logger.debug(f"Prediction: {result}")
@@ -146,14 +180,14 @@ class TradeModel:
         """Reset the LSTM states. Call this when starting a new prediction sequence."""
         self.lstm_states = None
     
-    def backtest(self, data: pd.DataFrame, initial_balance: float = 10000.0, risk_percentage: float = 1.0) -> Dict[str, Any]:
+    def backtest(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: float = 1000.0) -> Dict[str, Any]:
         """
         Run a backtest with the model.
         
         Args:
             data: DataFrame with market data
             initial_balance: Starting account balance
-            risk_percentage: Risk percentage per trade (1.0 = 1%)
+            balance_per_lot: Account balance required per 0.01 lot
             
         Returns:
             Dictionary with backtest results and trade history
@@ -167,15 +201,13 @@ class TradeModel:
         # Prepare data
         data = self.prepare_data(data)
         
-        env_params = {
-            'initial_balance': initial_balance,
-            'bar_count': self.bar_count,
-            'lot_percentage': risk_percentage,
-            'random_start': False
-        }
-
         # Create environment for backtesting
-        env = TradingEnv(data=data, **env_params)
+        env = TradingEnv(
+            data=data,
+            initial_balance=initial_balance,
+            balance_per_lot=balance_per_lot,
+            random_start=False
+        )
         
         # Reset LSTM states for backtest
         lstm_states = None
@@ -187,7 +219,13 @@ class TradeModel:
         total_reward = 0.0
         
         while not done:
-            action, lstm_states = self.model.predict(obs, state=lstm_states, deterministic=True)
+            action, lstm_states = self.model.predict(
+                obs, 
+                state=lstm_states,
+                deterministic=True,
+                episode_start=None if step > 0 else True,  # Mark episode start
+                action_masks=None
+            )
             obs, reward, done, _, _ = env.step(action)
             total_reward += reward
             step += 1
@@ -195,117 +233,69 @@ class TradeModel:
         return self._calculate_backtest_metrics(env, step, total_reward)
 
     def _calculate_backtest_metrics(self, env: TradingEnv, total_steps: int, total_reward: float) -> Dict[str, Any]:
-        """
-        Calculate metrics from backtest results.
-        
-        Args:
-            env: Trading environment with completed backtest
-            total_steps: Total number of steps in the backtest
-            total_reward: Total reward accumulated during backtest
-            
-        Returns:
-            Dictionary with calculated metrics
-        """
-        # Handle case with no trades
-        if not env.trades:
-            return {
-                'final_balance': float(env.balance),
-                'initial_balance': float(env.initial_balance),
-                'return_pct': 0.0,
-                'total_trades': 0,
-                'win_count': 0,
-                'loss_count': 0,
-                'win_rate': 0.0,
-                'profit_factor': 0.0,
-                'max_drawdown_pct': 0.0,
-                'total_steps': total_steps,
-                'total_reward': total_reward,
-                'open_positions': len(getattr(env, 'open_positions', [])),
-                'trades': []
-            }
-            
-        # Create DataFrame from trades for easier analysis
-        trades_df = pd.DataFrame(env.trades)
-        
-        # Basic profit metrics
-        winning_trades = [t['pnl'] for t in env.trades if t['pnl'] > 0]
-        losing_trades = [t['pnl'] for t in env.trades if t['pnl'] < 0]
-        
-        # Winning/losing trades statistics
-        total_trades = len(env.trades)
-        win_count = len(winning_trades)
-        loss_count = len(losing_trades)
-        win_rate = (win_count / total_trades) * 100 if total_trades > 0 else 0.0
-        
-        # Profit/loss statistics
-        avg_profit = np.mean(winning_trades) if winning_trades else 0.0
-        avg_loss = abs(np.mean(losing_trades)) if losing_trades else 0.0
-        total_profit = sum(winning_trades)
-        total_loss = abs(sum(losing_trades))
-        profit_factor = total_profit / total_loss if total_loss > 0 else float('inf')
-        
-        # Position-specific statistics
-        if 'position' in trades_df.columns:
-            num_buy = trades_df[trades_df["position"] == 1].shape[0]
-            num_sell = trades_df[trades_df["position"] == -1].shape[0]
-            buy_win_count = trades_df[(trades_df["position"] == 1) & (trades_df["pnl"] > 0.0)].shape[0]
-            sell_win_count = trades_df[(trades_df["position"] == -1) & (trades_df["pnl"] > 0.0)].shape[0]
-            buy_win_rate = (buy_win_count / num_buy * 100) if num_buy > 0 else 0.0
-            sell_win_rate = (sell_win_count / num_sell * 100) if num_sell > 0 else 0.0
-        else:
-            num_buy = num_sell = 0
-            buy_win_rate = sell_win_rate = 0.0
-        
-        # Risk metrics
-        avg_rrr = trades_df["rrr"].mean() if 'rrr' in trades_df.columns else 0.0
-        expected_value = trades_df["pnl"].mean() if total_trades > 0 else 0.0
-        
-        # Kelly criterion
-        kelly = (win_rate/100.0) - ((1 - (win_rate/100.0)) / avg_rrr) if avg_rrr > 0 else 0.0
-        
-        # Calculate drawdowns
-        balance_history = []
-        current_balance = env.initial_balance
-        peak_balance = current_balance
-        max_drawdown = 0.0
-        
-        for trade in env.trades:
-            current_balance += trade['pnl']
-            balance_history.append(current_balance)
-            peak_balance = max(peak_balance, current_balance)
-            drawdown = (peak_balance - current_balance) / peak_balance if peak_balance > 0 else 0
-            max_drawdown = max(max_drawdown, drawdown)
-        
-        # Sharpe ratio calculation
-        if total_trades > 1:
-            daily_returns = trades_df["pnl"] / env.initial_balance
-            excess_returns = np.array(daily_returns)
-            sharpe = np.mean(excess_returns) / np.std(excess_returns, ddof=1) * np.sqrt(252) if np.std(excess_returns, ddof=1) > 0 else 0.0
-        else:
-            sharpe = 0.0
-        
-        return {
+        """Calculate metrics from backtest results."""
+        metrics = {
             'final_balance': float(env.balance),
             'initial_balance': float(env.initial_balance),
-            'return_pct': float(((env.balance / env.initial_balance) - 1) * 100),
-            'total_trades': total_trades,
-            'win_count': win_count,
-            'loss_count': loss_count,
-            'win_rate': float(win_rate),
-            'avg_profit': float(avg_profit),
-            'avg_loss': float(avg_loss),
-            'profit_factor': float(profit_factor),
-            'max_drawdown_pct': float(max_drawdown * 100),
-            'long_trades': int(num_buy),
-            'short_trades': int(num_sell),
-            'long_win_rate': float(buy_win_rate),
-            'short_win_rate': float(sell_win_rate),
-            'avg_rrr': float(avg_rrr),
-            'expected_value': float(expected_value),
-            'kelly_criterion': float(kelly),
-            'sharpe_ratio': float(sharpe),
+            'return_pct': ((env.balance / env.initial_balance) - 1) * 100,
+            'total_trades': len(env.trades),
+            'win_count': env.win_count,
+            'loss_count': env.loss_count,
+            'win_rate': (env.win_count / len(env.trades) * 100) if env.trades else 0.0,
             'total_steps': total_steps,
             'total_reward': total_reward,
-            'open_positions': len(getattr(env, 'open_positions', [])),
+            'active_positions': len(env.positions),
+            'grid_metrics': env.grid_metrics,
             'trades': env.trades
         }
+        
+        if env.trades:
+            trades_df = pd.DataFrame(env.trades)
+            
+            # Split trades by direction
+            long_trades = trades_df[trades_df['direction'] == 1]
+            short_trades = trades_df[trades_df['direction'] == -1]
+            long_wins = long_trades[long_trades['pnl'] > 0]
+            short_wins = short_trades[short_trades['pnl'] > 0]
+            
+            # Calculate directional metrics
+            metrics['long_trades'] = len(long_trades)
+            metrics['short_trades'] = len(short_trades)
+            metrics['long_win_rate'] = (len(long_wins) / len(long_trades) * 100) if len(long_trades) > 0 else 0.0
+            metrics['short_win_rate'] = (len(short_wins) / len(short_trades) * 100) if len(short_trades) > 0 else 0.0
+            
+            # Overall win/loss metrics
+            winning_trades = trades_df[trades_df['pnl'] > 0]
+            losing_trades = trades_df[trades_df['pnl'] < 0]
+            
+            # Calculate PnL metrics
+            metrics['total_profit'] = float(winning_trades['pnl'].sum()) if not winning_trades.empty else 0.0
+            metrics['total_loss'] = float(abs(losing_trades['pnl'].sum())) if not losing_trades.empty else 0.0
+            metrics['profit_factor'] = metrics['total_profit'] / metrics['total_loss'] if metrics['total_loss'] > 0 else float('inf')
+            metrics['expected_value'] = float(trades_df['pnl'].mean()) if not trades_df.empty else 0.0
+            
+            # Calculate drawdown
+            balance_history = []
+            current_balance = env.initial_balance
+            peak_balance = current_balance
+            max_drawdown = 0.0
+            
+            for trade in env.trades:
+                current_balance += trade['pnl']
+                balance_history.append(current_balance)
+                peak_balance = max(peak_balance, current_balance)
+                drawdown = (peak_balance - current_balance) / peak_balance if peak_balance > 0 else 0
+                max_drawdown = max(max_drawdown, drawdown)
+            
+            metrics['max_drawdown_pct'] = float(max_drawdown * 100)
+            
+            # Calculate Sharpe ratio
+            returns = pd.Series(trades_df['pnl']) / env.initial_balance
+            metrics['sharpe_ratio'] = float((returns.mean() / returns.std()) * np.sqrt(252)) if len(returns) > 1 else 0.0
+            
+            # Hold time analysis
+            metrics['avg_hold_time'] = float(trades_df['hold_time'].mean())
+            metrics['win_hold_time'] = float(winning_trades['hold_time'].mean()) if not winning_trades.empty else 0.0
+            metrics['loss_hold_time'] = float(losing_trades['hold_time'].mean()) if not losing_trades.empty else 0.0
+        
+        return metrics
