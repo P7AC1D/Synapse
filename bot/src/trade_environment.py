@@ -477,7 +477,7 @@ class TradingEnv(gym.Env, EzPickle):
         # Calculate grid efficiency metrics
         if self.active_grid and self.positions:
             grid_size = self.active_grid.grid_size
-            avg_position_pnl = total_pnl / len(self.positions)
+            avg_position_pnl = self.active_grid.total_pnl / len(self.positions)
             grid_efficiency = min(2.0, abs(avg_position_pnl / grid_size))
             position_utilization = len(self.positions) / self.max_positions
         else:
