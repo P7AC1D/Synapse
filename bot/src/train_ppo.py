@@ -213,10 +213,10 @@ def train_model(train_env, val_env, args, iteration=0):
     # Configure policy for discrete action space
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 128,     # Increased capacity
-        "n_lstm_layers": 2,          # Deeper LSTM
-        "shared_lstm": True,
-        "enable_critic_lstm": True,   # Separate LSTM for critic
+        "lstm_hidden_size": 128,      # Increased capacity
+        "n_lstm_layers": 2,           # Deeper LSTM
+        "shared_lstm": True,          # Use shared LSTM
+        "enable_critic_lstm": False,  # Disable separate critic LSTM
         "net_arch": {
             "pi": [64, 32],          # Deeper actor network
             "vf": [64, 32]           # Deeper critic network
