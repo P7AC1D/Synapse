@@ -41,15 +41,24 @@ class TradeModel:
         """
         try:
             # Create a temporary environment for model loading with dummy data
+            # Create more realistic dummy data
+            dummy_length = 512  # Match n_steps
+            price = 1.0
+            prices = []
+            
+            for _ in range(dummy_length):
+                price *= (1 + np.random.normal(0, 0.001))  # Add some variance
+                prices.append(price)
+            
             dummy_data = pd.DataFrame({
-                'close': [1.0] * 100,
-                'high': [1.0] * 100,
-                'low': [1.0] * 100,
-                'spread': [0.0001] * 100,
-                'EMA_fast': [1.0] * 100,
-                'EMA_slow': [1.0] * 100,
-                'RSI': [50.0] * 100,
-                'ATR': [0.001] * 100
+                'close': prices,
+                'high': [p * (1 + 0.001) for p in prices],
+                'low': [p * (1 - 0.001) for p in prices],
+                'spread': [0.0001] * dummy_length,
+                'EMA_fast': prices,  # Will be normalized by env
+                'EMA_slow': prices,  # Will be normalized by env
+                'RSI': [50.0] * dummy_length,
+                'ATR': [price * 0.001 for price in prices]  # Realistic ATR values
             })
             
             env = TradingEnv(
@@ -58,17 +67,17 @@ class TradeModel:
                 balance_per_lot=1000.0  # Match training environment
             )
             
-            # Define custom objects needed for model loading
+            # Define custom objects to match training configuration
             custom_objects = {
                 "learning_rate": 0.0,
                 "lr_schedule": lambda _: 0.0,
-                "clip_range": lambda _: 0.0,
-                "n_steps": 2048,
-                "batch_size": 64,
+                "clip_range": lambda _: 0.2,      # Match training value
+                "n_steps": 512,                   # Match training value
+                "batch_size": 128,                # Match training value
                 "n_epochs": 10,
-                "ent_coef": 0.0,
+                "ent_coef": 0.02,                # Match training entropy
                 "vf_coef": 0.5,
-                "clip_range_vf": None,
+                "clip_range_vf": 0.2             # Match training value
             }
             
             # Load the PPO model with custom objects
@@ -134,14 +143,16 @@ class TradeModel:
             balance_per_lot=1000.0  # Match training environment
         )
         
-        # Get the observation
+        # Get normalized observation
         observation = env.get_history()
         
-        # Make prediction with LSTM state management
+        # Make prediction with LSTM state management and proper deterministic setting
         action, self.lstm_states = self.model.predict(
             observation, 
             state=self.lstm_states,
-            deterministic=True
+            deterministic=True,     # Use deterministic for backtesting
+            episode_start=None,     # Maintain episode continuity
+            action_masks=None       # No action masking
         )
         
         # Process single action value for position
@@ -208,7 +219,13 @@ class TradeModel:
         total_reward = 0.0
         
         while not done:
-            action, lstm_states = self.model.predict(obs, state=lstm_states, deterministic=True)
+            action, lstm_states = self.model.predict(
+                obs, 
+                state=lstm_states,
+                deterministic=True,
+                episode_start=None if step > 0 else True,  # Mark episode start
+                action_masks=None
+            )
             obs, reward, done, _, _ = env.step(action)
             total_reward += reward
             step += 1

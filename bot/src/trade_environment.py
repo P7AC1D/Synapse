@@ -58,14 +58,33 @@ class Grid:
             self.avg_entry = total_value / self.total_lots
             
     def should_add_position(self, current_price: float) -> bool:
-        """Determine if we should add a new position."""
+        """Determine if we should add a new position based on price movement."""
+        # First position is always allowed
         if not self.positions:
             return True
-            
+        
+        # Calculate price movement thresholds
         if self.direction == 1:  # Long grid
-            return current_price < self.avg_entry - self.grid_size
+            # For longs, we want to add when price moves down enough
+            price_movement = (current_price - self.avg_entry) / self.avg_entry
+            grid_threshold = -self.grid_size / self.avg_entry
+            
+            # More aggressive entry for first few positions
+            position_factor = max(0.7, 1.0 - len(self.positions) * 0.1)
+            adjusted_threshold = grid_threshold * position_factor
+            
+            return price_movement < adjusted_threshold
+            
         else:  # Short grid
-            return current_price > self.avg_entry + self.grid_size
+            # For shorts, we want to add when price moves up enough
+            price_movement = (current_price - self.avg_entry) / self.avg_entry
+            grid_threshold = self.grid_size / self.avg_entry
+            
+            # More aggressive entry for first few positions
+            position_factor = max(0.7, 1.0 - len(self.positions) * 0.1)
+            adjusted_threshold = grid_threshold * position_factor
+            
+            return price_movement > adjusted_threshold
 
 class TradingEnv(gym.Env, EzPickle):
     """Trading environment for grid-based trading with PPO-LSTM."""
@@ -115,7 +134,10 @@ class TradingEnv(gym.Env, EzPickle):
         self.reward = 0
         self.completed_episodes = 0
         self.episode_steps = 0
-        self.trade_cooldown = 5
+        # Dynamic trade cooldown based on volatility
+        self.base_cooldown = 5
+        self.trade_cooldown = self.base_cooldown
+        self.max_positions = 5
         
         # Grid tracking
         self.active_grid = None
@@ -139,30 +161,45 @@ class TradingEnv(gym.Env, EzPickle):
             raise ValueError(f"Missing required columns: {missing_columns}")
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Preprocess market data for the model."""
+        """Preprocess market data for the model with improved normalization."""
         features_df = pd.DataFrame(index=self.original_index)
         
         with np.errstate(divide='ignore', invalid='ignore'):
+            # Price data
             close = data['close'].values
+            
+            # Returns (normalized and more sensitive to recent moves)
             returns = np.diff(close) / close[:-1]
             returns = np.insert(returns, 0, 0)
-            returns = np.clip(returns, -0.1, 0.1)
+            returns = np.clip(returns, -0.1, 0.1)  # Clip extreme values
             
-            vol = pd.Series(returns).rolling(10, min_periods=1).std().fillna(0).values
-            vol = np.clip(vol, 1e-8, 0.1)
+            # Volatility (normalized relative to historical range)
+            vol = pd.Series(returns).rolling(20, min_periods=1).std()
+            vol_normalized = (vol - vol.rolling(100, min_periods=1).min()) / \
+                           (vol.rolling(100, min_periods=1).max() - vol.rolling(100, min_periods=1).min() + 1e-8)
+            vol_normalized = vol_normalized.fillna(0).values
             
-            trend = np.where(data['EMA_fast'].values > data['EMA_slow'].values, 1, -1)
+            # Trend indicators (normalized to [-1, 1] range)
+            fast_ma = data['EMA_fast'].values
+            slow_ma = data['EMA_slow'].values
+            ma_diff = (fast_ma - slow_ma) / slow_ma
+            ma_diff_norm = np.clip(ma_diff * 10, -1, 1)  # Scale difference and clip
             
-            rsi_norm = data['RSI'].values / 100
-            atr_norm = data['ATR'].values / close
-            atr_norm = np.clip(atr_norm, 0, 0.1)
+            # RSI (already 0-100, normalize to [-1, 1])
+            rsi = data['RSI'].values / 50 - 1
             
+            # ATR (normalize by price and recent range)
+            atr = data['ATR'].values
+            atr_norm = atr / close
+            atr_norm = 2 * (atr_norm - np.min(atr_norm)) / (np.max(atr_norm) - np.min(atr_norm) + 1e-8) - 1
+            
+            # Store normalized features
             features_df['returns'] = returns
-            features_df['volatility'] = vol
-            features_df['trend'] = trend
-            features_df['rsi'] = rsi_norm
+            features_df['volatility'] = vol_normalized
+            features_df['trend'] = ma_diff_norm
+            features_df['rsi'] = rsi
             features_df['atr'] = atr_norm
-            
+        
         return features_df.fillna(0)
 
     def _setup_action_space(self) -> None:
@@ -170,24 +207,56 @@ class TradingEnv(gym.Env, EzPickle):
         self.action_space = spaces.Discrete(3)
 
     def _setup_observation_space(self, feature_count: int) -> None:
-        """Setup observation space."""
+        """Setup observation space with proper feature bounds."""
+        # Features are normalized between -1 and 1:
+        # - returns: [-0.1, 0.1]
+        # - volatility: [0, 1] -> normalized to [-1, 1]
+        # - trend: [-1, 1]
+        # - rsi: [-1, 1]
+        # - atr: [-1, 1]
         self.observation_space = spaces.Box(
-            low=-10, high=10, shape=(feature_count,), dtype=np.float32
+            low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
 
     def _process_action(self, action: Union[int, np.ndarray]) -> int:
-        """Convert discrete action to direction."""
+        """Convert discrete action to direction.
+        
+        Args:
+            action: Integer action from policy (0: hold, 1: long, 2: short)
+            
+        Returns:
+            int: Converted direction (-1: short, 0: hold, 1: long)
+        """
+        # Handle array input from policy
         if isinstance(action, np.ndarray):
             action = action.item()
+        
+        # Ensure action is within valid range
+        action = int(action) % 3
             
-        direction_map = {0: 0, 1: 1, 2: -1}
-        return direction_map[int(action)]
+        # Map action to direction
+        direction_map = {
+            0: 0,   # Hold
+            1: 1,   # Long
+            2: -1   # Short
+        }
+        
+        return direction_map[action]
 
     def _execute_grid_trade(self, direction: int, raw_spread: float) -> float:
         """Execute a trade with dynamic grid sizing."""
-        if direction == 0 or self.steps_since_trade < self.trade_cooldown:
+        # Update trade cooldown based on volatility
+        current_atr = self.prices['atr'][self.current_step]
+        vol_scale = current_atr / self.prices['close'][self.current_step]
+        self.trade_cooldown = max(2, int(self.base_cooldown * (1.0 - vol_scale * 5)))
+        
+        # Check cooldown and return penalty if needed
+        if direction == 0:
             self.steps_since_trade += 1
-            return -0.1 if direction != 0 else 0.0
+            return 0.0
+        elif self.steps_since_trade < self.trade_cooldown:
+            self.steps_since_trade += 1
+            return -0.1 * (1.0 + len(self.positions) / self.max_positions)  # Higher penalty with more positions
             
         current_price = self.prices['close'][self.current_step]
         current_atr = self.prices['atr'][self.current_step]
@@ -205,10 +274,32 @@ class TradingEnv(gym.Env, EzPickle):
         if not self.active_grid.should_add_position(current_price):
             return -0.1
             
+        # Calculate dynamic lot sizing based on multiple factors
+        equity_ratio = self.balance / self.initial_balance
+        risk_factor = max(0.5, min(1.5, equity_ratio))  # Scale risk based on equity growth
+        
+        # Base lot size calculation
         base_lot = max(self.MIN_LOTS, round(self.balance / self.BALANCE_PER_LOT / 100, 2))
-        volatility_scale = min(current_atr / self.active_grid.initial_atr, 2.0)
-        position_scale = 1.0 + (len(self.positions) * 0.2)
-        lot_size = min(self.MAX_LOTS, base_lot * volatility_scale * position_scale)
+        
+        # Volatility scaling (reduce size in high volatility)
+        volatility_ratio = current_atr / self.active_grid.initial_atr
+        volatility_scale = 1.0 / max(1.0, volatility_ratio)  # Inverse relationship
+        
+        # Position scaling (reduce subsequent position sizes)
+        position_discount = max(0.5, 1.0 - (len(self.positions) * 0.15))
+        
+        # Trend alignment bonus
+        trend = self.raw_data.values[self.current_step][2]  # Normalized trend feature
+        trend_alignment = 1.0
+        if (self.active_grid.direction == 1 and trend > 0.5) or \
+           (self.active_grid.direction == -1 and trend < -0.5):
+            trend_alignment = 1.2  # Increase size when trading with trend
+        
+        # Combine all scaling factors
+        lot_size = min(
+            self.MAX_LOTS,
+            base_lot * risk_factor * volatility_scale * position_discount * trend_alignment
+        )
         
         position = {
             "direction": direction,
@@ -296,21 +387,43 @@ class TradingEnv(gym.Env, EzPickle):
         self.active_grid.total_pnl = total_pnl
         self.active_grid.update_metrics(current_price, current_atr)
         
+        # Calculate dynamic take profit and stop loss based on volatility and positions
+        current_atr = self.prices['atr'][self.current_step]
+        current_price = self.prices['close'][self.current_step]
+        volatility_factor = current_atr / current_price
+        position_factor = 1.0 + (len(self.positions) * 0.2)
+        
+        # Grid value represents total risk
         grid_value = self.active_grid.grid_size * self.active_grid.total_lots
-        take_profit = grid_value * (1.0 + 0.1 * len(self.positions))
-        stop_loss = -grid_value * (1.5 - 0.1 * len(self.positions))
+        
+        # Scale take profit and stop loss based on market conditions
+        base_tp_factor = 1.0 + (0.1 * len(self.positions))  # Increased TP with more positions
+        base_sl_factor = 1.5 - (0.1 * len(self.positions))  # Tighter SL with more positions
+        
+        # Adjust factors based on volatility
+        volatility_scale = np.clip(volatility_factor * 20, 0.5, 2.0)
+        take_profit = grid_value * base_tp_factor * volatility_scale
+        stop_loss = -grid_value * base_sl_factor / volatility_scale  # Tighter SL in high volatility
+        
+        # Consider trend for exit thresholds
+        trend = self.raw_data.values[self.current_step][2]  # Trend feature from normalized data
+        if (self.active_grid.direction == 1 and trend < -0.5) or \
+           (self.active_grid.direction == -1 and trend > 0.5):
+            # Tighten exits when trading against trend
+            take_profit *= 0.8
+            stop_loss *= 1.2
         
         should_close = (
             total_pnl > take_profit or
-            (total_pnl < stop_loss and
-             len(self.positions) >= 3)
+            (total_pnl < stop_loss and len(self.positions) >= 2) or
+            (abs(total_pnl) < grid_value * 0.1 and len(self.positions) >= 4)  # Close small PnL with many positions
         )
         
         if should_close:
             reward = self._close_grid()
             return reward, []
             
-        if len(self.positions) < 5:
+        if len(self.positions) < self.max_positions:
             current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
             if self.active_grid.should_add_position(current_price):
                 self._execute_grid_trade(self.active_grid.direction, current_spread)
@@ -357,23 +470,52 @@ class TradingEnv(gym.Env, EzPickle):
         drawdown = (self.max_balance - self.balance) / self.max_balance
         drawdown_penalty = drawdown * 3.0 if drawdown > 0.1 else 0.0
         
+        # Calculate risk-adjusted rewards
+        current_return = (self.balance / self.initial_balance) - 1
+        risk_factor = max(0.5, 1.0 - drawdown * 2)  # Penalize high drawdown more
+        
+        # Calculate grid efficiency metrics
+        if self.active_grid and self.positions:
+            grid_size = self.active_grid.grid_size
+            avg_position_pnl = total_pnl / len(self.positions)
+            grid_efficiency = min(2.0, abs(avg_position_pnl / grid_size))
+            position_utilization = len(self.positions) / self.max_positions
+        else:
+            grid_efficiency = 0.0
+            position_utilization = 0.0
+        
+        # Combine reward components with dynamic weights
+        grid_weight = 0.5
+        execution_weight = 0.2
+        growth_weight = 0.2
+        risk_weight = 0.1
+        
         reward = (
-            (grid_reward * 0.6) +
-            (execution_reward * 0.2) +
-            (growth_reward * 0.2) -
-            drawdown_penalty
+            (grid_reward * grid_weight * (1.0 + grid_efficiency)) +
+            (execution_reward * execution_weight * (1.0 + position_utilization)) +
+            (growth_reward * growth_weight * risk_factor) -
+            (drawdown_penalty * risk_weight)
         )
-            
+        
+        # Handle terminal conditions
         max_drawdown = (self.max_balance - self.balance) / self.max_balance
         if self.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN:
             self._close_grid()
-            reward = -100 if self.balance <= 0 else -50
+            base_penalty = -100 if self.balance <= 0 else -50
+            reward = base_penalty * (1.0 + max_drawdown)  # Scale penalty with drawdown
             done = True
-            
+        
+        # Add completion bonus based on multiple factors
         if done and self.balance > self.initial_balance:
-            final_return = (self.balance / self.initial_balance) - 1
             win_rate = (self.win_count / (self.win_count + self.loss_count)) if (self.win_count + self.loss_count) > 0 else 0
-            reward += final_return * 10.0 + win_rate * 10.0
+            avg_trade_return = current_return / max(1, len(self.trades))
+            completion_bonus = (
+                current_return * 5.0 +          # Overall return
+                win_rate * 3.0 +               # Win rate bonus
+                (1.0 - max_drawdown) * 2.0 +   # Low drawdown bonus
+                avg_trade_return * 5.0         # Consistent returns bonus
+            )
+            reward += completion_bonus
         
         self.grid_metrics.update({
             'position_count': len(self.positions),
