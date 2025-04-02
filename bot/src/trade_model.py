@@ -24,8 +24,15 @@ class TradeModel:
         self.model_path = Path(model_path)
         self.model = None
         self.required_columns = [
-            'close', 'high', 'low', 'spread',  # Price data
-            'EMA_fast', 'EMA_slow', 'RSI', 'ATR'  # Indicators for our simplified features
+            'open',   # Required for price action features
+            'close',  # Price data
+            'high',   # Price data
+            'low',    # Price data
+            'spread', # Price data
+            'EMA_fast',  # Trend features
+            'EMA_slow',  # Trend features
+            'RSI',       # Momentum features
+            'ATR'        # Volatility features
         ]
         
         self.lstm_states = None  # Store LSTM states for continuous prediction
@@ -50,16 +57,23 @@ class TradeModel:
                 price *= (1 + np.random.normal(0, 0.001))  # Add some variance
                 prices.append(price)
             
+            # Create dummy data with exactly the same columns as the actual data
             dummy_data = pd.DataFrame({
-                'close': prices,
+                'time': pd.date_range(start='2024-01-01', periods=dummy_length, freq='15min'),
+                'open': prices,     # Base price
+                'close': [p * (1 + np.random.normal(0, 0.0005)) for p in prices],
                 'high': [p * (1 + 0.001) for p in prices],
                 'low': [p * (1 - 0.001) for p in prices],
                 'spread': [0.0001] * dummy_length,
-                'EMA_fast': prices,  # Will be normalized by env
-                'EMA_slow': prices,  # Will be normalized by env
+                'volume': [1000] * dummy_length,
+                'EMA_fast': prices,
+                'EMA_slow': prices,
                 'RSI': [50.0] * dummy_length,
-                'ATR': [price * 0.001 for price in prices]  # Realistic ATR values
+                'ATR': [price * 0.001 for price in prices],
+                'OBV': [0] * dummy_length,
+                'VWAP': prices
             })
+            dummy_data.set_index('time', inplace=True)
             
             env = TradingEnv(
                 data=dummy_data,
