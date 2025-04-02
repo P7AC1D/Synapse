@@ -235,10 +235,19 @@ class TradeModel:
         if env.trades:
             trades_df = pd.DataFrame(env.trades)
             
-            # Calculate position metrics
-            metrics['long_trades'] = len(trades_df[trades_df['direction'] == 1])
-            metrics['short_trades'] = len(trades_df[trades_df['direction'] == -1])
+            # Split trades by direction
+            long_trades = trades_df[trades_df['direction'] == 1]
+            short_trades = trades_df[trades_df['direction'] == -1]
+            long_wins = long_trades[long_trades['pnl'] > 0]
+            short_wins = short_trades[short_trades['pnl'] > 0]
             
+            # Calculate directional metrics
+            metrics['long_trades'] = len(long_trades)
+            metrics['short_trades'] = len(short_trades)
+            metrics['long_win_rate'] = (len(long_wins) / len(long_trades) * 100) if len(long_trades) > 0 else 0.0
+            metrics['short_win_rate'] = (len(short_wins) / len(short_trades) * 100) if len(short_trades) > 0 else 0.0
+            
+            # Overall win/loss metrics
             winning_trades = trades_df[trades_df['pnl'] > 0]
             losing_trades = trades_df[trades_df['pnl'] < 0]
             

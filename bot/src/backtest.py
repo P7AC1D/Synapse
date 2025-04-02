@@ -16,14 +16,15 @@ def plot_results(results: dict, save_path: str = None):
     plt.figure(figsize=(15, 15))
     
     # Convert trades to DataFrame for plotting
-    trades_df = pd.DataFrame(results['trades'])
+    trades = results.get('trades', [])
+    trades_df = pd.DataFrame(trades)
     
     # Extract balance history from trades
     balance_history = []
-    current_balance = results['initial_balance']
+    current_balance = results.get('initial_balance', 0.0)
     balance_history.append(current_balance)
     
-    for trade in results['trades']:
+    for trade in trades:
         current_balance += trade['pnl']
         balance_history.append(current_balance)
     
@@ -73,12 +74,13 @@ def plot_results(results: dict, save_path: str = None):
     
     # Plot trade PnLs
     plt.subplot(513)
-    profits = trades_df['pnl'].cumsum()
-    plt.plot(profits, label='Cumulative PnL')
-    plt.xlabel('Trade Number')
-    plt.ylabel('Cumulative Profit/Loss')
-    plt.legend()
-    plt.grid(True)
+    if not trades_df.empty and 'pnl' in trades_df.columns:
+        profits = trades_df['pnl'].cumsum()
+        plt.plot(profits, label='Cumulative PnL')
+        plt.xlabel('Trade Number')
+        plt.ylabel('Cumulative Profit/Loss')
+        plt.legend()
+        plt.grid(True)
     
     # Plot grid size distribution
     plt.subplot(514)
@@ -110,29 +112,29 @@ def print_metrics(results: dict):
     """Print formatted backtest metrics with grid trading statistics."""
     print("\n=== Performance Metrics ===")
     performance_metrics = [
-        ('Initial Balance', results['initial_balance'], '.2f'),
-        ('Final Balance', results['final_balance'], '.2f'),
-        ('Total Return', results['return_pct'], '.2f%'),
-        ('Total Trades', results['total_trades'], 'd'),
-        ('Win Rate', results['win_rate'], '.2f%'),
-        ('Profit Factor', results['profit_factor'], '.2f'),
-        ('Expected Value', results['expected_value'], '.2f'),
-        ('Sharpe Ratio', results['sharpe_ratio'], '.2f')
+        ('Initial Balance', results.get('initial_balance', 0.0), '.2f'),
+        ('Final Balance', results.get('final_balance', 0.0), '.2f'),
+        ('Total Return', results.get('return_pct', 0.0), '.2f%'),
+        ('Total Trades', results.get('total_trades', 0), 'd'),
+        ('Win Rate', results.get('win_rate', 0.0), '.2f%'),
+        ('Profit Factor', results.get('profit_factor', 0.0), '.2f'),
+        ('Expected Value', results.get('expected_value', 0.0), '.2f'),
+        ('Sharpe Ratio', results.get('sharpe_ratio', 0.0), '.2f')
     ]
     
     print("\n=== Risk Metrics ===")
     risk_metrics = [
-        ('Max Drawdown', results['max_drawdown_pct'], '.2f%'),
+        ('Max Drawdown', results.get('max_drawdown_pct', 0.0), '.2f%'),
         ('Current Drawdown', results.get('current_drawdown_pct', 0.0), '.2f%'),
         ('Historical Max DD', results.get('historical_max_drawdown_pct', 0.0), '.2f%')
     ]
     
     print("\n=== Directional Analysis ===")
     directional_metrics = [
-        ('Long Trades', results['long_trades'], 'd'),
-        ('Long Win Rate', results['long_win_rate'], '.2f%'),
-        ('Short Trades', results['short_trades'], 'd'),
-        ('Short Win Rate', results['short_win_rate'], '.2f%')
+        ('Long Trades', results.get('long_trades', 0), 'd'),
+        ('Long Win Rate', results.get('long_win_rate', 0.0), '.2f%'),
+        ('Short Trades', results.get('short_trades', 0), 'd'),
+        ('Short Win Rate', results.get('short_win_rate', 0.0), '.2f%')
     ]
     
     print("\n=== Hold Time Analysis ===")
@@ -144,11 +146,12 @@ def print_metrics(results: dict):
     
     print("\n=== Grid Metrics ===")
     if 'grid_metrics' in results:
+        grid_metrics = results.get('grid_metrics', {})
         grid_metrics = [
-            ('Total Grids', results['grid_metrics']['total_grids'], 'd'),
-            ('Avg Positions/Grid', results['grid_metrics']['avg_positions_per_grid'], '.2f'),
-            ('Grid Efficiency', results['grid_metrics']['grid_efficiency'], '.2f%'),
-            ('Position Count', results['grid_metrics'].get('position_count', 0), 'd')
+            ('Total Grids', grid_metrics.get('total_grids', 0), 'd'),
+            ('Avg Positions/Grid', grid_metrics.get('avg_positions_per_grid', 0.0), '.2f'),
+            ('Grid Efficiency', grid_metrics.get('grid_efficiency', 0.0), '.2f%'),
+            ('Position Count', grid_metrics.get('position_count', 0), 'd')
         ]
     else:
         grid_metrics = []
@@ -210,7 +213,6 @@ def main():
         results_file = os.path.join(args.results_dir, 'backtest_results.json')
         with open(results_file, 'w') as f:
             # Convert results to serializable format
-            # Convert numpy types to native Python types for JSON serialization
             def convert_to_serializable(obj):
                 if isinstance(obj, bool):
                     return bool(obj)
@@ -240,8 +242,9 @@ def main():
         plot_results(results, save_path=plot_path)
         
         # Save detailed trade log
-        if results['trades']:
-            trades_df = pd.DataFrame(results['trades'])
+        trades = results.get('trades', [])
+        if trades:
+            trades_df = pd.DataFrame(trades)
             trades_file = os.path.join(args.results_dir, 'trades_log.csv')
             trades_df.to_csv(trades_file)
             print(f"\nTrades log saved to: {trades_file}")

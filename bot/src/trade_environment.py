@@ -478,10 +478,14 @@ class TradingEnv(gym.Env, EzPickle):
         print(f"Losers Hold Time: {avg_loss_hold:.1f} bars")
         
         print("\n===== Directional Performance =====")
-        print(f"Long Trades: {len(long_trades)} ({(len(long_trades) / len(trades_df) * 100):.1f}%)")
-        print(f"Long Win Rate: {(len(long_wins) / len(long_trades) * 100):.1f}% (Avg PnL: {long_trades['pnl'].mean():.2f})")
-        print(f"Short Trades: {len(short_trades)} ({(len(short_trades) / len(trades_df) * 100):.1f}%)")
-        print(f"Short Win Rate: {(len(short_wins) / len(short_trades) * 100):.1f}% (Avg PnL: {short_trades['pnl'].mean():.2f})")
+        total_trades = len(trades_df)
+        long_pct = (len(long_trades) / total_trades * 100) if total_trades > 0 else 0.0
+        short_pct = (len(short_trades) / total_trades * 100) if total_trades > 0 else 0.0
+        
+        print(f"Long Trades: {len(long_trades)} ({long_pct:.1f}%)")
+        print(f"Long Win Rate: {(len(long_wins) / len(long_trades) * 100):.1f}% (Avg PnL: {long_trades['pnl'].mean():.2f})" if len(long_trades) > 0 else "Long Win Rate: N/A")
+        print(f"Short Trades: {len(short_trades)} ({short_pct:.1f}%)")
+        print(f"Short Win Rate: {(len(short_wins) / len(short_trades) * 100):.1f}% (Avg PnL: {short_trades['pnl'].mean():.2f})" if len(short_trades) > 0 else "Short Win Rate: N/A")
         
         print("\n===== Grid Stats =====")
         if self.active_grid:
