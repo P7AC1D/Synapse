@@ -213,13 +213,13 @@ def train_model(train_env, val_env, args, iteration=0):
     # Configure policy for discrete action space
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 64,
-        "n_lstm_layers": 1,
+        "lstm_hidden_size": 128,     # Increased capacity
+        "n_lstm_layers": 2,          # Deeper LSTM
         "shared_lstm": True,
-        "enable_critic_lstm": False,
+        "enable_critic_lstm": True,   # Separate LSTM for critic
         "net_arch": {
-            "pi": [32],  # Simplified actor network
-            "vf": [32]   # Simplified critic network
+            "pi": [64, 32],          # Deeper actor network
+            "vf": [64, 32]           # Deeper critic network
         },
         "optimizer_kwargs": {
             "eps": 1e-5,
@@ -230,9 +230,9 @@ def train_model(train_env, val_env, args, iteration=0):
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=lr_schedule,
-        n_steps=512,
-        batch_size=128,
+        learning_rate=5e-4,          # Increased learning rate
+        n_steps=256,                 # More frequent updates
+        batch_size=256,              # Larger batch size
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
@@ -251,9 +251,9 @@ def train_model(train_env, val_env, args, iteration=0):
     
     # Configure epsilon exploration for discrete actions
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.2,     # Increased initial exploration
-        end_eps=0.05,      # Higher minimum exploration
-        decay_timesteps=int(args.total_timesteps * 0.9)  # Slower decay
+        start_eps=0.3,     # More aggressive exploration
+        end_eps=0.1,       # Higher minimum exploration
+        decay_timesteps=int(args.total_timesteps * 0.8)  # Faster decay
     )
     callbacks.append(epsilon_callback)
     
@@ -434,9 +434,9 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=30,
+    parser.add_argument('--initial_window', type=int, default=45,
                       help='Initial training window in days')
-    parser.add_argument('--step_size', type=int, default=14,
+    parser.add_argument('--step_size', type=int, default=7,
                       help='Walk-forward step size in days')
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')

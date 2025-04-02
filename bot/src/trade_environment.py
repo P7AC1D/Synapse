@@ -152,7 +152,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.max_steps = 500
         
         self._setup_action_space()
-        self._setup_observation_space(5)
+        self._setup_observation_space(10)  # Updated for new feature count
 
         # Verify required columns
         required_columns = ['close', 'high', 'low', 'spread', 'ATR', 'RSI', 'EMA_fast', 'EMA_slow']
@@ -161,44 +161,72 @@ class TradingEnv(gym.Env, EzPickle):
             raise ValueError(f"Missing required columns: {missing_columns}")
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """Preprocess market data for the model with improved normalization."""
+        """Preprocess market data for the model with advanced features."""
         features_df = pd.DataFrame(index=self.original_index)
         
         with np.errstate(divide='ignore', invalid='ignore'):
             # Price data
             close = data['close'].values
+            high = data['high'].values
+            low = data['low'].values
+            opens = data['open'].values  # Using 'opens' since 'open' is a built-in function
             
-            # Returns (normalized and more sensitive to recent moves)
+            # Returns and volatility
             returns = np.diff(close) / close[:-1]
             returns = np.insert(returns, 0, 0)
-            returns = np.clip(returns, -0.1, 0.1)  # Clip extreme values
+            returns = np.clip(returns, -0.1, 0.1)
             
-            # Volatility (normalized relative to historical range)
             vol = pd.Series(returns).rolling(20, min_periods=1).std()
             vol_normalized = (vol - vol.rolling(100, min_periods=1).min()) / \
                            (vol.rolling(100, min_periods=1).max() - vol.rolling(100, min_periods=1).min() + 1e-8)
-            vol_normalized = vol_normalized.fillna(0).values
             
-            # Trend indicators (normalized to [-1, 1] range)
+            # Market Regime Detection (ADX-based)
+            pdm = high[1:] - high[:-1]
+            ndm = low[:-1] - low[1:]
+            pdm = np.insert(np.where(pdm > 0, pdm, 0), 0, 0)
+            ndm = np.insert(np.where(ndm > 0, ndm, 0), 0, 0)
+            
+            tr = np.maximum(high - low,
+                          np.maximum(np.abs(high - np.roll(close, 1)),
+                                   np.abs(low - np.roll(close, 1))))
+            
+            atr_period = 14
+            atr = pd.Series(tr).rolling(atr_period).mean().values
+            pdi = pd.Series(pdm).rolling(atr_period).mean() / atr * 100
+            ndi = pd.Series(ndm).rolling(atr_period).mean() / atr * 100
+            dx = np.abs(pdi - ndi) / (pdi + ndi) * 100
+            adx = pd.Series(dx).rolling(atr_period).mean()
+            
+            # Volatility Breakout Signals
+            boll_std = pd.Series(close).rolling(20).std()
+            upper_band = pd.Series(close).rolling(20).mean() + (boll_std * 2)
+            lower_band = pd.Series(close).rolling(20).mean() - (boll_std * 2)
+            
+            # Price Action Features
+            body = close - opens
+            upper_wick = high - np.maximum(close, opens)
+            lower_wick = np.minimum(close, opens) - low
+            
+            # Moving Average Features
             fast_ma = data['EMA_fast'].values
             slow_ma = data['EMA_slow'].values
             ma_diff = (fast_ma - slow_ma) / slow_ma
-            ma_diff_norm = np.clip(ma_diff * 10, -1, 1)  # Scale difference and clip
-            
-            # RSI (already 0-100, normalize to [-1, 1])
-            rsi = data['RSI'].values / 50 - 1
-            
-            # ATR (normalize by price and recent range)
-            atr = data['ATR'].values
-            atr_norm = atr / close
-            atr_norm = 2 * (atr_norm - np.min(atr_norm)) / (np.max(atr_norm) - np.min(atr_norm) + 1e-8) - 1
+            ma_diff_norm = np.clip(ma_diff * 10, -1, 1)
             
             # Store normalized features
             features_df['returns'] = returns
             features_df['volatility'] = vol_normalized
             features_df['trend'] = ma_diff_norm
-            features_df['rsi'] = rsi
-            features_df['atr'] = atr_norm
+            features_df['rsi'] = data['RSI'].values / 50 - 1  # Normalize to [-1, 1]
+            features_df['atr'] = 2 * (atr / close - np.min(atr / close)) / \
+                                (np.max(atr / close) - np.min(atr / close) + 1e-8) - 1
+            
+            # New Features
+            features_df['adx_trend'] = adx / 100  # Normalize to [0,1]
+            features_df['volatility_breakout'] = (close - lower_band) / (upper_band - lower_band + 1e-8)
+            features_df['body_to_range'] = body / (high - low + 1e-8)
+            features_df['wick_ratio'] = (upper_wick - lower_wick) / (upper_wick + lower_wick + 1e-8)
+            features_df['trend_strength'] = np.clip(adx/25 - 1, -1, 1)  # Normalized trend strength
         
         return features_df.fillna(0)
 
@@ -208,12 +236,20 @@ class TradingEnv(gym.Env, EzPickle):
 
     def _setup_observation_space(self, feature_count: int) -> None:
         """Setup observation space with proper feature bounds."""
-        # Features are normalized between -1 and 1:
+        # All features are normalized between -1 and 1:
+        # Base features:
         # - returns: [-0.1, 0.1]
-        # - volatility: [0, 1] -> normalized to [-1, 1]
+        # - volatility: [-1, 1]
         # - trend: [-1, 1]
         # - rsi: [-1, 1]
         # - atr: [-1, 1]
+        # New features:
+        # - adx_trend: [0, 1]
+        # - volatility_breakout: [0, 1]
+        # - body_to_range: [-1, 1]
+        # - wick_ratio: [-1, 1]
+        # - trend_strength: [-1, 1]
+        feature_count = 10  # Update to match total number of features
         self.observation_space = spaces.Box(
             low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
