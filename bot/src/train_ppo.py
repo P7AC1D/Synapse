@@ -213,13 +213,13 @@ def train_model(train_env, val_env, args, iteration=0):
     # Configure policy for discrete action space
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 128,
-        "n_lstm_layers": 2,
-        "shared_lstm": False,
-        "enable_critic_lstm": True,
+        "lstm_hidden_size": 64,
+        "n_lstm_layers": 1,
+        "shared_lstm": True,
+        "enable_critic_lstm": False,
         "net_arch": {
-            "pi": [128, 64],  # Actor network
-            "vf": [128, 64]   # Critic network
+            "pi": [32],  # Simplified actor network
+            "vf": [32]   # Simplified critic network
         },
         "optimizer_kwargs": {
             "eps": 1e-5,
@@ -231,15 +231,15 @@ def train_model(train_env, val_env, args, iteration=0):
         "MlpLstmPolicy",
         train_env,
         learning_rate=lr_schedule,
-        n_steps=1024,
-        batch_size=256,
+        n_steps=512,
+        batch_size=128,
         gamma=0.99,
-        gae_lambda=0.98,
-        clip_range=0.1,
-        clip_range_vf=0.1,
-        ent_coef=0.01,    # Higher entropy for discrete actions
-        vf_coef=0.8,
-        max_grad_norm=0.3,
+        gae_lambda=0.95,
+        clip_range=0.2,
+        clip_range_vf=0.2,
+        ent_coef=0.02,    # Increased entropy for better exploration
+        vf_coef=0.5,
+        max_grad_norm=0.5,
         use_sde=False,    # No SDE for discrete actions
         policy_kwargs=policy_kwargs,
         verbose=0,
@@ -251,9 +251,9 @@ def train_model(train_env, val_env, args, iteration=0):
     
     # Configure epsilon exploration for discrete actions
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.1,    # Higher initial exploration
-        end_eps=0.01,     # Higher final exploration
-        decay_timesteps=int(args.total_timesteps * 0.8)
+        start_eps=0.2,     # Increased initial exploration
+        end_eps=0.05,      # Higher minimum exploration
+        decay_timesteps=int(args.total_timesteps * 0.9)  # Slower decay
     )
     callbacks.append(epsilon_callback)
     
@@ -373,9 +373,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             callbacks = []
             
             epsilon_callback = CustomEpsilonCallback(
-                start_eps=0.05,
-                end_eps=0.01,
-                decay_timesteps=int(period_timesteps * 0.9)
+                start_eps=0.15,  # Keep exploration high in later iterations
+                end_eps=0.05,    # Maintain minimum exploration
+                decay_timesteps=int(period_timesteps * 0.95)  # Even slower decay for continued learning
             )
             callbacks.append(epsilon_callback)
             
