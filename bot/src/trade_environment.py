@@ -148,9 +148,6 @@ class TradingEnv(gym.Env, EzPickle):
             'current_direction': 0
         }
         
-        # Episode settings
-        self.max_steps = 500
-        
         self._setup_action_space()
         self._setup_observation_space(10)  # Updated for new feature count
 
@@ -512,7 +509,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.episode_steps += 1
         self.current_step += 1
         
-        done = (self.episode_steps >= self.max_steps) or (self.current_step >= len(self.raw_data) - 1)
+        done = (self.current_step >= len(self.raw_data) - 1)
 
         grid_reward, _ = self._manage_grid_positions()
         
@@ -593,15 +590,8 @@ class TradingEnv(gym.Env, EzPickle):
         if seed is not None:
             np.random.seed(seed)
 
-        min_episode_length = 500
-        max_episode_length = min(5000, len(self.raw_data))
-        
-        scale_factor = min(self.completed_episodes / 25, 1.0)
-        self.max_steps = int(min_episode_length + (max_episode_length - min_episode_length) * scale_factor)
-        
         if self.random_start:
-            latest_start = len(self.raw_data) - self.max_steps - 1
-            self.current_step = np.random.randint(0, max(1, latest_start))
+            self.current_step = np.random.randint(0, len(self.raw_data) - 1)
         else:
             self.current_step = 0
             
@@ -637,7 +627,7 @@ class TradingEnv(gym.Env, EzPickle):
 
     def render(self) -> None:
         """Print environment state and trade statistics."""
-        print(f"\n===== Episode {self.completed_episodes}, Step {self.episode_steps}/{self.max_steps} =====")
+        print(f"\n===== Episode {self.completed_episodes}, Step {self.episode_steps} =====")
         print(f"Current Balance: {self.balance:.2f}")
         print(f"Grid Positions: {len(self.positions)}")
         
