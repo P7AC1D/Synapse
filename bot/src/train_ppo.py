@@ -18,7 +18,7 @@ from gymnasium import spaces
 
 class CustomEpsilonCallback(BaseCallback):
     """Custom callback for epsilon decay during training"""
-    def __init__(self, start_eps=0.2, end_eps=0.02, decay_timesteps=800000):
+    def __init__(self, start_eps=0.2, end_eps=0.02, decay_timesteps=1600000):
         super().__init__()
         self.start_eps = start_eps
         self.end_eps = end_eps
@@ -434,20 +434,20 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=45,
-                      help='Initial training window in days')
-    parser.add_argument('--step_size', type=int, default=7,
-                      help='Walk-forward step size in days')
+    parser.add_argument('--initial_window', type=int, default=28,
+                      help='Initial training window in days (4 weeks)')
+    parser.add_argument('--step_size', type=int, default=14,
+                      help='Walk-forward step size in days (2 weeks)')
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     
-    parser.add_argument('--total_timesteps', type=int, default=500000,
+    parser.add_argument('--total_timesteps', type=int, default=1000000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=3e-4,
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=1e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=50000,
+    parser.add_argument('--eval_freq', type=int, default=100000,
                       help='Evaluation frequency in timesteps')
     
     args = parser.parse_args()

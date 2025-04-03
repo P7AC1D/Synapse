@@ -28,20 +28,20 @@ class Grid:
         self.initial_atr = atr
         self.grid_size = self.calculate_grid_size(atr)
         
-        # Dynamic bounds
-        self.min_grid_size = atr * 0.5
-        self.max_grid_size = atr * 3.0
+        # Dynamic bounds - tighter overall grid
+        self.min_grid_size = atr * 0.3   # Allow closer positions
+        self.max_grid_size = atr * 2.0   # Reduce maximum spacing
         
     def calculate_grid_size(self, current_atr: float) -> float:
         """Calculate grid size based on volatility."""
         volatility_ratio = current_atr / self.initial_atr
-        base_multiplier = 1.5  # Base ATR multiplier
+        base_multiplier = 1.0  # Reduced base multiplier for tighter spacing
         
-        # Adjust multiplier based on volatility
-        if volatility_ratio > 1.5:
-            base_multiplier *= 0.8  # Tighter grid in high volatility
-        elif volatility_ratio < 0.5:
-            base_multiplier *= 1.2  # Wider grid in low volatility
+        # More sensitive volatility adjustments
+        if volatility_ratio > 1.2:
+            base_multiplier *= 0.6  # More aggressive reduction in high volatility
+        elif volatility_ratio < 0.8:
+            base_multiplier *= 1.4  # More aggressive expansion in low volatility
             
         return current_atr * base_multiplier
         
@@ -320,7 +320,7 @@ class TradingEnv(gym.Env, EzPickle):
         volatility_scale = 1.0 / max(1.0, volatility_ratio)  # Inverse relationship
         
         # Position scaling (reduce subsequent position sizes)
-        position_discount = max(0.5, 1.0 - (len(self.positions) * 0.15))
+        position_discount = max(0.7, 1.0 - (len(self.positions) * 0.1))  # Less aggressive scaling
         
         # Trend alignment bonus
         trend = self.raw_data.values[self.current_step][2]  # Normalized trend feature
@@ -429,8 +429,8 @@ class TradingEnv(gym.Env, EzPickle):
         grid_value = self.active_grid.grid_size * self.active_grid.total_lots
         
         # Scale take profit and stop loss based on market conditions
-        base_tp_factor = 1.0 + (0.1 * len(self.positions))  # Increased TP with more positions
-        base_sl_factor = 1.5 - (0.1 * len(self.positions))  # Tighter SL with more positions
+        base_tp_factor = 0.8 + (0.15 * len(self.positions))  # Earlier profits for first positions
+        base_sl_factor = 1.2 - (0.15 * len(self.positions))  # Tighter overall stops
         
         # Adjust factors based on volatility
         volatility_scale = np.clip(volatility_factor * 20, 0.5, 2.0)
