@@ -450,10 +450,22 @@ def main():
                 )
                 
                 # Calculate score for determining best model
-                score = results['return_pct'] * (1 - results['max_drawdown_pct']/100)
-                if score > best_score:
-                    best_score = score
-                    best_result = {'model': model, 'results': results}
+                # Safely calculate score using defensive programming
+                try:
+                    # Get metrics with defaults for safety
+                    return_pct = results.get('return_pct', 0)
+                    max_drawdown = results.get('max_drawdown_pct', 0)
+                    
+                    # Calculate score (higher return with lower drawdown is better)
+                    score = return_pct * (1 - max_drawdown/100) if max_drawdown != 100 else float('-inf')
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_result = {'model': model, 'results': results}
+                        
+                except Exception as e:
+                    print(f"Warning: Could not calculate score for seed {seed}, period {period}: {str(e)}")
+                    continue
                 
                 # Add metadata and save results
                 results_with_meta = {
@@ -478,7 +490,11 @@ def main():
                 continue
         
         if not all_results:
-            raise ValueError("No successful backtests to analyze")
+            print("\nNo valid backtest results found. This could be due to:")
+            print("1. No trades executed during the test period")
+            print("2. All models failed to load or execute properly")
+            print("3. Invalid market data or configuration")
+            raise ValueError("No successful backtests completed - check logs for details")
         
         # Save combined results
         results_file = os.path.join(results_dir, 'backtest_results.json')

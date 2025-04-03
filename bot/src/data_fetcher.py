@@ -51,24 +51,40 @@ class DataFetcher:
             
         return self._format_data(rates)
         
-    def fetch_current_bar(self) -> Optional[pd.DataFrame]:
+    def fetch_current_bar(self, include_history: bool = True) -> Optional[pd.DataFrame]:
         """
-        Fetch only the current bar data.
+        Fetch current bar data with optional historical bars for LSTM preloading.
         
+        Args:
+            include_history: If True, include historical bars for LSTM state preloading
+            
         Returns:
-            DataFrame with current bar or None if failed
+            DataFrame with bar data or None if failed
         """
         try:
-            rates = self.mt5_connector.fetch_current_bar(self.symbol, self.timeframe)
+            # Determine how many bars to fetch
+            if include_history:
+                # Fetch more bars for LSTM preloading
+                preload_bars = min(50, self.num_bars // 4)  # Use 25% of configured bars or 50, whichever is smaller
+                total_bars = preload_bars + 1  # +1 for current bar
+                rates = self.mt5_connector.fetch_data(self.symbol, self.timeframe, total_bars)
+            else:
+                rates = self.mt5_connector.fetch_current_bar(self.symbol, self.timeframe)
 
             if rates is None or len(rates) == 0:
-                self.logger.warning(f"No current bar data returned. Error: {mt5.last_error()}")
+                self.logger.warning(f"No bar data returned. Error: {mt5.last_error()}")
                 return None
+
+            df = self._format_data(rates)
+            
+            # For single bar requests, extract just the last bar
+            if not include_history:
+                df = df.tail(1)
                 
-            return self._format_current_bar(rates)
+            return df
             
         except Exception as e:
-            self.logger.error(f"Error fetching current bar: {e}")
+            self.logger.error(f"Error fetching bar data: {e}")
             return None
 
     def _format_current_bar(self, data: Any) -> pd.DataFrame:

@@ -47,31 +47,21 @@ class TradeModel:
             bool: True if model loaded successfully, False otherwise
         """
         try:
-            # Create a temporary environment for model loading with dummy data
-            # Create more realistic dummy data
-            dummy_length = 512  # Match n_steps
-            price = 1.0
-            prices = []
-            
-            for _ in range(dummy_length):
-                price *= (1 + np.random.normal(0, 0.001))  # Add some variance
-                prices.append(price)
-            
-            # Create dummy data with exactly the same columns as the actual data
+            # Create minimal dummy data for model loading
             dummy_data = pd.DataFrame({
-                'time': pd.date_range(start='2024-01-01', periods=dummy_length, freq='15min'),
-                'open': prices,     # Base price
-                'close': [p * (1 + np.random.normal(0, 0.0005)) for p in prices],
-                'high': [p * (1 + 0.001) for p in prices],
-                'low': [p * (1 - 0.001) for p in prices],
-                'spread': [0.0001] * dummy_length,
-                'volume': [1000] * dummy_length,
-                'EMA_fast': prices,
-                'EMA_slow': prices,
-                'RSI': [50.0] * dummy_length,
-                'ATR': [price * 0.001 for price in prices],
-                'OBV': [0] * dummy_length,
-                'VWAP': prices
+                'time': pd.date_range(start='2024-01-01', periods=10, freq='15min'),
+                'open': [1.0] * 10,
+                'close': [1.0] * 10,
+                'high': [1.0] * 10,
+                'low': [1.0] * 10,
+                'spread': [0.0001] * 10,
+                'volume': [1000] * 10,
+                'EMA_fast': [1.0] * 10,
+                'EMA_slow': [1.0] * 10,
+                'RSI': [50.0] * 10,
+                'ATR': [0.001] * 10,
+                'OBV': [0] * 10,
+                'VWAP': [1.0] * 10
             })
             dummy_data.set_index('time', inplace=True)
             
@@ -81,24 +71,10 @@ class TradeModel:
                 balance_per_lot=1000.0  # Match training environment
             )
             
-            # Define custom objects to match training configuration
-            custom_objects = {
-                "learning_rate": 0.0,
-                "lr_schedule": lambda _: 0.0,
-                "clip_range": lambda _: 0.2,      # Match training value
-                "n_steps": 512,                   # Match training value
-                "batch_size": 128,                # Match training value
-                "n_epochs": 10,
-                "ent_coef": 0.02,                # Match training entropy
-                "vf_coef": 0.5,
-                "clip_range_vf": 0.2             # Match training value
-            }
-            
-            # Load the PPO model with custom objects
+            # Load the PPO model with saved hyperparameters
             self.model = RecurrentPPO.load(
                 self.model_path,
                 env=env,
-                custom_objects=custom_objects,
                 print_system_info=False
             )
             self.logger.info(f"Model successfully loaded from {self.model_path}")
@@ -146,6 +122,11 @@ class TradeModel:
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_model() first.")
+        
+        # If no LSTM states exist, preload with historical data
+        if self.lstm_states is None and len(data_frame) > 1:
+            historical_data = data_frame.iloc[:-1]  # All but the last bar
+            self.preload_states(historical_data)
             
         # Prepare data
         data = self.prepare_data(data_frame)
@@ -164,19 +145,17 @@ class TradeModel:
         action, self.lstm_states = self.model.predict(
             observation, 
             state=self.lstm_states,
-            deterministic=True,     # Use deterministic for backtesting
-            episode_start=None,     # Maintain episode continuity
-            action_masks=None       # No action masking
+            deterministic=True     # Use deterministic for backtesting
         )
         
-        # Process single action value for position
-        position = np.sign(action[0]) if abs(action[0]) > 0.1 else 0
+        # Action is already discrete (0,1,2), convert to position (-1,0,1)
+        position = int(action) - 1  # Convert 0,1,2 to -1,0,1
         
         # Get ATR and current market conditions
         current_atr = float(data.iloc[-1]['ATR'])
         
-        # Extract grid size from action
-        grid_multiplier = float(np.clip(action[1], 0.1, 3.0))  # Match TradingEnv limits
+        # Use fixed grid multiplier since we have a discrete action space
+        grid_multiplier = 1.5  # Default multiplier
         grid_size_pips = current_atr * grid_multiplier
         
         # Create prediction result with grid parameters
@@ -193,6 +172,47 @@ class TradeModel:
     def reset_states(self) -> None:
         """Reset the LSTM states. Call this when starting a new prediction sequence."""
         self.lstm_states = None
+        
+    def preload_states(self, historical_data: pd.DataFrame) -> None:
+        """
+        Preload LSTM states with historical data.
+        
+        Args:
+            historical_data: DataFrame with past market data
+            
+        Raises:
+            ValueError: If model not loaded or data preparation fails
+        """
+        if self.model is None:
+            raise ValueError("Model not loaded. Call load_model() first.")
+            
+        # Prepare and validate data
+        data = self.prepare_data(historical_data)
+        
+        # Reset states before preloading
+        self.reset_states()
+        
+        # Create environment for preloading
+        env = TradingEnv(
+            data=data,
+            random_start=False,
+            balance_per_lot=1000.0  # Match training environment
+        )
+        
+        # Step through historical data to build up LSTM state
+        obs, _ = env.reset()
+        for _ in range(len(data)):
+            # Action doesn't matter for preloading, we only care about state updates
+            _, self.lstm_states = self.model.predict(
+                obs,
+                state=self.lstm_states,
+                deterministic=True
+            )
+            obs, _, done, _, _ = env.step(1)
+            if done:
+                break
+                
+        self.logger.info(f"LSTM states preloaded with {len(data)} historical bars")
     
     def backtest(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: float = 1000.0) -> Dict[str, Any]:
         """
@@ -223,10 +243,16 @@ class TradeModel:
             random_start=False
         )
         
-        # Reset LSTM states for backtest
-        lstm_states = None
+        # Preload LSTM states with initial data
+        preload_bars = min(50, len(data) // 4)  # Use 25% of data or 50 bars, whichever is smaller
+        if preload_bars > 0:
+            preload_data = data.iloc[:preload_bars]
+            self.preload_states(preload_data)
+            lstm_states = self.lstm_states
+        else:
+            lstm_states = None
         
-        # Run backtest
+        # Reset states and run backtest
         obs, _ = env.reset()
         done = False
         step = 0
@@ -236,11 +262,16 @@ class TradeModel:
             action, lstm_states = self.model.predict(
                 obs, 
                 state=lstm_states,
-                deterministic=True,
-                episode_start=None if step > 0 else True,  # Mark episode start
-                action_masks=None
+                deterministic=True
             )
-            obs, reward, done, _, _ = env.step(action)
+            # Action is already discrete (0,1,2)
+            discrete_action = int(action)
+            direction = discrete_action - 1  # Convert to -1,0,1
+            self.logger.info(f"Step {step}:")
+            self.logger.info(f"  Observation: {obs}")
+            self.logger.info(f"  Action={discrete_action}, Direction={direction}")
+            self.logger.info(f"  Price: {data.iloc[env.current_step]['close']:.2f}")
+            obs, reward, done, _, _ = env.step(discrete_action)
             total_reward += reward
             step += 1
             
@@ -288,20 +319,26 @@ class TradeModel:
             metrics['profit_factor'] = metrics['total_profit'] / metrics['total_loss'] if metrics['total_loss'] > 0 else float('inf')
             metrics['expected_value'] = float(trades_df['pnl'].mean()) if not trades_df.empty else 0.0
             
-            # Calculate drawdown
-            balance_history = []
-            current_balance = env.initial_balance
-            peak_balance = current_balance
-            max_drawdown = 0.0
-            
-            for trade in env.trades:
-                current_balance += trade['pnl']
-                balance_history.append(current_balance)
-                peak_balance = max(peak_balance, current_balance)
-                drawdown = (peak_balance - current_balance) / peak_balance if peak_balance > 0 else 0
-                max_drawdown = max(max_drawdown, drawdown)
-            
-            metrics['max_drawdown_pct'] = float(max_drawdown * 100)
+            # Initialize default metrics for zero-trade case
+            metrics['max_drawdown_pct'] = 0.0
+            metrics['current_drawdown_pct'] = 0.0
+            metrics['historical_max_drawdown_pct'] = 0.0
+
+            # Calculate drawdown only if there are trades
+            if env.trades:
+                balance_history = []
+                current_balance = env.initial_balance
+                peak_balance = current_balance
+                max_drawdown = 0.0
+                
+                for trade in env.trades:
+                    current_balance += trade['pnl']
+                    balance_history.append(current_balance)
+                    peak_balance = max(peak_balance, current_balance)
+                    drawdown = (peak_balance - current_balance) / peak_balance if peak_balance > 0 else 0
+                    max_drawdown = max(max_drawdown, drawdown)
+                
+                metrics['max_drawdown_pct'] = float(max_drawdown * 100)
             
             # Calculate Sharpe ratio
             returns = pd.Series(trades_df['pnl']) / env.initial_balance
