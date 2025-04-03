@@ -148,8 +148,13 @@ class TradeModel:
             deterministic=True     # Use deterministic for backtesting
         )
         
-        # Action is already discrete (0,1,2), convert to position (-1,0,1)
-        position = int(action) - 1  # Convert 0,1,2 to -1,0,1
+        # Convert action using environment's direction mapping
+        direction_map = {
+            0: 0,   # Hold
+            1: 1,   # Long
+            2: -1   # Short
+        }
+        position = direction_map[int(action)]
         
         # Get ATR and current market conditions
         current_atr = float(data.iloc[-1]['ATR'])
@@ -264,9 +269,14 @@ class TradeModel:
                 state=lstm_states,
                 deterministic=True
             )
-            # Action is already discrete (0,1,2)
-            discrete_action = int(action)
-            direction = discrete_action - 1  # Convert to -1,0,1
+            # Convert action using environment's direction mapping
+            discrete_action = int(action) % 3
+            direction_map = {
+                0: 0,   # Hold
+                1: 1,   # Long
+                2: -1   # Short
+            }
+            direction = direction_map[discrete_action]
             self.logger.info(f"Step {step}:")
             self.logger.info(f"  Observation: {obs}")
             self.logger.info(f"  Action={discrete_action}, Direction={direction}")
