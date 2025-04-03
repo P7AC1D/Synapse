@@ -34,8 +34,8 @@ class CustomEpsilonCallback(BaseCallback):
         return True
 
 class UnifiedEvalCallback(BaseCallback):
-    """Optimized evaluation callback with enhanced progress tracking."""
-    def __init__(self, eval_env, eval_freq=50000, best_model_save_path=None, 
+    """Optimized evaluation callback with enhanced progress tracking and comprehensive evaluation."""
+    def __init__(self, eval_env, train_data, val_data, eval_freq=100000, best_model_save_path=None, 
                  log_path=None, deterministic=True, verbose=1, iteration=0):
         super(UnifiedEvalCallback, self).__init__(verbose=verbose)
         self.eval_env = eval_env
@@ -43,18 +43,85 @@ class UnifiedEvalCallback(BaseCallback):
         self.best_model_save_path = best_model_save_path
         self.log_path = log_path
         self.deterministic = deterministic
-        self.best_final_balance = -float("inf")
-        self.best_return = -float("inf")
         self.eval_results = []
         self.last_time_trigger = 0
         self.iteration = iteration
-        self.max_drawdown = 0.0
-        self.current_period_max_balance = 0.0
         
+        # Store separate datasets
+        self.train_data = train_data
+        self.val_data = val_data
+        
+        # Create combined evaluation environment
+        self.combined_data = pd.concat([train_data, val_data])
+        env_params = {
+            'initial_balance': eval_env.env.initial_balance,
+            'balance_per_lot': eval_env.env.BALANCE_PER_LOT,
+            'random_start': False
+        }
+        self.combined_env = Monitor(TradingEnv(self.combined_data, **env_params))
+        
+        # Initialize tracking metrics
+        self.best_score = -float("inf")
+        self.best_metrics = {}
+        self.max_drawdown = 0.0
+        
+        # Back up raw data for reference
         if hasattr(self.eval_env, 'env'):
             self.eval_env.env.raw_data_backup = self.eval_env.env.raw_data.copy()
         else:
             self.eval_env.raw_data_backup = self.eval_env.raw_data.copy()
+            
+    def _run_eval_episode(self, env) -> Dict[str, float]:
+        """Run a complete evaluation episode on given environment."""
+        obs, _ = env.reset()
+        done = False
+        lstm_states = None
+        running_balance = env.env.initial_balance
+        max_balance = running_balance
+        episode_reward = 0
+        
+        while not done:
+            action, lstm_states = self.model.predict(
+                obs, state=lstm_states, deterministic=self.deterministic
+            )
+            obs, reward, terminated, truncated, info = env.step(action)
+            done = terminated or truncated
+            episode_reward += reward
+            
+            # Track running metrics
+            running_balance = env.env.balance
+            max_balance = max(max_balance, running_balance)
+        
+        # Calculate metrics
+        total_return = (running_balance - env.env.initial_balance) / env.env.initial_balance
+        max_drawdown = 0.0
+        if max_balance > env.env.initial_balance:
+            max_drawdown = (max_balance - running_balance) / max_balance
+            
+        # Calculate trade quality metrics
+        trades = env.env.trades
+        win_rate = len([t for t in trades if t['pnl'] > 0]) / max(len(trades), 1)
+        avg_profit = sum(t['pnl'] for t in trades) / max(len(trades), 1)
+        
+        return {
+            'return': total_return,
+            'max_drawdown': max_drawdown,
+            'reward': episode_reward,
+            'win_rate': win_rate,
+            'avg_profit': avg_profit,
+            'balance': running_balance,
+            'trades': trades
+        }
+        
+    def _calculate_trade_quality(self, metrics: Dict[str, float]) -> float:
+        """Calculate overall trade quality score."""
+        win_rate_score = metrics['win_rate']
+        profit_factor = max(0, metrics['avg_profit']) / (abs(min(0, metrics['avg_profit'])) + 1e-8)
+        drawdown_penalty = max(0, 1 - metrics['max_drawdown'] * 2)
+        
+        return (win_rate_score * 0.4 + 
+                min(profit_factor, 3) / 3 * 0.4 + 
+                drawdown_penalty * 0.2)
         
         if self.best_model_save_path:
             os.makedirs(self.best_model_save_path, exist_ok=True)
@@ -62,42 +129,85 @@ class UnifiedEvalCallback(BaseCallback):
         if self.log_path:
             os.makedirs(log_path, exist_ok=True)
         
+    def _evaluate_performance(self) -> Dict[str, Dict[str, float]]:
+        """Run comprehensive evaluation on all datasets."""
+        # Evaluate on validation set
+        val_metrics = self._run_eval_episode(self.eval_env)
+        
+        # Evaluate on combined dataset
+        combined_metrics = self._run_eval_episode(self.combined_env)
+        
+        # Calculate consistency score
+        consistency_score = val_metrics['return'] / (combined_metrics['return'] + 1e-8)
+        
+        # Calculate trade quality scores
+        val_quality = self._calculate_trade_quality(val_metrics)
+        combined_quality = self._calculate_trade_quality(combined_metrics)
+        
+        return {
+            'validation': val_metrics,
+            'combined': combined_metrics,
+            'scores': {
+                'consistency': consistency_score,
+                'val_quality': val_quality,
+                'combined_quality': combined_quality
+            }
+        }
+    
+    def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
+        """Determine if current model should be saved as best."""
+        combined = metrics['combined']
+        scores = metrics['scores']
+        
+        # Calculate composite score
+        score = (
+            combined['return'] * 0.4 +                # Weight overall return
+            -combined['max_drawdown'] * 0.3 +        # Penalize drawdowns
+            scores['consistency'] * 0.2 +            # Reward consistency
+            scores['combined_quality'] * 0.1         # Consider trade quality
+        )
+        
+        if score > self.best_score:
+            self.best_score = score
+            self.best_metrics = metrics
+            return True
+        return False
+    
     def _on_step(self) -> bool:
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
-            # Run complete evaluation episode
-            obs, _ = self.eval_env.reset()
-            done = False
-            lstm_states = None
-            episode_reward = 0
-            
-            while not done:
-                action, lstm_states = self.model.predict(obs, state=lstm_states, deterministic=self.deterministic)
-                obs, reward, terminated, truncated, _ = self.eval_env.step(action)
-                done = terminated or truncated
-                episode_reward += reward
-            
-            # Get final performance metrics
-            if hasattr(self.eval_env, 'env'):
-                final_balance = self.eval_env.env.balance
-                total_return = ((self.eval_env.env.balance - self.eval_env.env.initial_balance) 
-                              / self.eval_env.env.initial_balance)
-            else:
-                final_balance = self.eval_env.balance
-                total_return = ((self.eval_env.balance - self.eval_env.initial_balance) 
-                              / self.eval_env.initial_balance)
+            # Run comprehensive evaluation
+            metrics = self._evaluate_performance()
+            combined = metrics['combined']
+            val = metrics['validation']
             
             if self.verbose > 0:
-                print(f"\nEval num_timesteps={self.num_timesteps}, "
-                      f"balance={final_balance:.2f}, "
-                      f"return={total_return*100:.2f}%, "
-                      f"reward={episode_reward:.2f}")
+                print(f"\n===== Evaluation at timesteps={self.num_timesteps} =====")
+                print(f"Combined Dataset Metrics:")
+                print(f"  Balance: {combined['balance']:.2f}")
+                print(f"  Return: {combined['return']*100:.2f}%")
+                print(f"  Max Drawdown: {combined['max_drawdown']*100:.2f}%")
+                print(f"  Win Rate: {combined['win_rate']*100:.2f}%")
+                print(f"\nValidation Set Metrics:")
+                print(f"  Balance: {val['balance']:.2f}")
+                print(f"  Return: {val['return']*100:.2f}%")
+                print(f"  Max Drawdown: {val['max_drawdown']*100:.2f}%")
+                print(f"  Win Rate: {val['win_rate']*100:.2f}%")
             
             if self.log_path is not None:
                 self.eval_results.append({
                     'timesteps': self.num_timesteps,
-                    'balance': float(final_balance),
-                    'return': float(total_return),
-                    'reward': float(episode_reward)
+                    'combined': {
+                        'balance': float(combined['balance']),
+                        'return': float(combined['return']),
+                        'max_drawdown': float(combined['max_drawdown']),
+                        'win_rate': float(combined['win_rate'])
+                    },
+                    'validation': {
+                        'balance': float(val['balance']),
+                        'return': float(val['return']),
+                        'max_drawdown': float(val['max_drawdown']),
+                        'win_rate': float(val['win_rate'])
+                    }
                 })
                 
                 iteration_file = os.path.join(self.log_path, f"eval_results_iter_{self.iteration}.json")
@@ -171,27 +281,22 @@ class UnifiedEvalCallback(BaseCallback):
                 with open(combined_file, "w") as f:
                     json.dump(all_results, f, indent=2)
             
-            # Save best model based on final balance AND positive return
-            if final_balance > self.best_final_balance:
-                if self.verbose > 0:
-                    print(f"New best balance: {final_balance:.2f}")
+            # Check if model should be saved as best
+            if self._should_save_model(metrics) and self.best_model_save_path is not None:
+                model_path = os.path.join(self.best_model_save_path, "best_model")
+                self.model.save(model_path)
                 
-                self.best_final_balance = final_balance
-                
-                if total_return > self.best_return:
-                    self.best_return = total_return
-                    if self.best_model_save_path is not None:
-                        self.model.save(os.path.join(self.best_model_save_path, "best_balance_model"))
-                        print(f"Saved new best model with {total_return*100:.2f}% return")
+                print(f"\n=== New Best Model Saved ===")
+                print(f"Combined Return: {metrics['combined']['return']*100:.2f}%")
+                print(f"Validation Return: {metrics['validation']['return']*100:.2f}%")
+                print(f"Consistency Score: {metrics['scores']['consistency']:.2f}")
+                print(f"Trade Quality: {metrics['scores']['combined_quality']:.2f}")
             
-            print("\n===== EVALUATION METRICS =====")
-            print(f"Final balance: {final_balance:.2f}")
-            print(f"Total return: {total_return*100:.2f}%")
-            print(f"Total reward: {episode_reward:.2f}")
-            print("\n===== Drawdown Analysis =====")
-            print(f"Period Max Drawdown: {period_max_drawdown*100:.2f}%")
-            print(f"Historical Max Drawdown: {self.max_drawdown*100:.2f}%")
-            print(f"Current Drawdown: {((max_balance - running_balance) / max_balance * 100):.2f}%")
+            # Print final scores summary
+            print("\n===== Final Performance Metrics =====")
+            print(f"Combined Dataset Score: {metrics['combined_quality']:.3f}")
+            print(f"Validation Score: {metrics['validation_quality']:.3f}")
+            print(f"Overall Score: {metrics['combined']['return'] * 0.4 - metrics['combined']['max_drawdown'] * 0.3 + metrics['scores']['consistency'] * 0.2 + metrics['scores']['combined_quality'] * 0.1:.3f}")
             
             if hasattr(self.eval_env, 'env'):
                 self.eval_env.env.render()
@@ -260,6 +365,8 @@ def train_model(train_env, val_env, args, iteration=0):
     # Add evaluation callback
     unified_callback = UnifiedEvalCallback(
         val_env,
+        train_data=train_env.env.raw_data,
+        val_data=val_env.env.raw_data,
         best_model_save_path=f"../results/{args.seed}",
         log_path=f"../results/{args.seed}",
         eval_freq=args.eval_freq,
@@ -381,6 +488,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             
             unified_callback = UnifiedEvalCallback(
                 val_env,
+                train_data=train_env.env.raw_data,
+                val_data=val_env.env.raw_data,
                 best_model_save_path=f"../results/{args.seed}",
                 log_path=f"../results/{args.seed}",
                 eval_freq=args.eval_freq,
