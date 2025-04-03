@@ -124,6 +124,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.initial_balance = initial_balance
         self.balance = initial_balance
         self.max_balance = initial_balance
+        self.previous_balance = initial_balance  # Add tracking for reward calculation
         
         # Trading state
         self.trades: List[Dict[str, Any]] = []
@@ -387,16 +388,14 @@ class TradingEnv(gym.Env, EzPickle):
                 
             self.trades.append(pos)
             
+        # Update balance and clear positions
         self.balance += total_pnl
         self.positions.clear()
-        
-        reward = self._calculate_grid_reward(self.active_grid.positions, total_pnl)
-        
         self.active_grid = None
         self.grid_metrics['position_count'] = 0
         self.grid_metrics['current_direction'] = 0
         
-        return reward
+        return total_pnl
 
     def _manage_grid_positions(self) -> Tuple[float, List[Dict[str, Any]]]:
         """Manage grid positions."""
@@ -461,42 +460,80 @@ class TradingEnv(gym.Env, EzPickle):
             if self.active_grid.should_add_position(current_price):
                 self._execute_grid_trade(self.active_grid.direction, current_spread)
                 
-        return self._calculate_grid_reward(self.positions, total_pnl), []
+        return total_pnl, []  # Return raw PnL, let calculate_reward handle reward calculation
 
-    def _calculate_grid_reward(self, positions: List[Dict[str, Any]], total_pnl: float) -> float:
-        """Calculate reward for grid trading performance with directional diversity bonus."""
-        if not positions:
-            return 0.0
+    def _check_grid_spacing(self) -> float:
+        """Verify grid positions are properly spaced.
+        
+        Returns:
+            float: 1.0 for good spacing, less for poor spacing
+        """
+        if not self.active_grid or len(self.active_grid.positions) < 2:
+            return 1.0
             
-        # Base reward calculation
-        grid_value = positions[0]["grid_size"] * sum(p["lot_size"] for p in positions)
-        efficiency = min(2.0, abs(total_pnl / grid_value)) if grid_value > 0 else 0.0
+        # Sort positions by entry price
+        positions = sorted(
+            self.active_grid.positions,
+            key=lambda x: x["entry_price"]
+        )
         
-        risk_adjusted_pnl = (total_pnl / self.initial_balance) * len(positions)
-        utilization = len(positions) / 5.0
+        # Calculate average and minimum grid spacing
+        spacings = []
+        for i in range(1, len(positions)):
+            spacing = abs(positions[i]["entry_price"] - positions[i-1]["entry_price"])
+            spacings.append(spacing)
+            
+        avg_spacing = sum(spacings) / len(spacings)
+        target_spacing = self.active_grid.grid_size
         
-        # Calculate directional diversity bonus
-        recent_trades = self.trades[-20:]  # Look at last 20 trades
-        if recent_trades:
-            long_count = sum(1 for t in recent_trades if t['direction'] == 1)
-            short_count = sum(1 for t in recent_trades if t['direction'] == -1)
-            total_trades = long_count + short_count
-            if total_trades > 0:
-                balance_ratio = min(long_count, short_count) / total_trades
-                diversity_bonus = balance_ratio * 0.3  # Up to 30% bonus for balanced trading
-            else:
-                diversity_bonus = 0
+        # Score based on how close to target spacing
+        spacing_score = min(1.0, target_spacing / max(avg_spacing, target_spacing * 0.1))
+        return spacing_score
+        
+    def calculate_reward(self) -> float:
+        """Calculate the core reward based on ROE and grid quality."""
+        # Primary reward based on return on equity
+        roe = (self.balance - self.previous_balance) / self.initial_balance
+        base_reward = roe * 100  # Scale up for learning
+        
+        # Risk adjustment based on drawdown
+        current_drawdown = (self.max_balance - self.balance) / self.max_balance
+        risk_multiplier = max(0.1, 1.0 - (current_drawdown * 2))  # Floor at 0.1
+        
+        # Grid quality metrics
+        if self.active_grid:
+            grid_positions = len(self.active_grid.positions)
+            grid_spacing = self._check_grid_spacing()
+            grid_multiplier = min(1.0 + (grid_positions * 0.2), 2.0) * grid_spacing
         else:
-            diversity_bonus = 0
+            grid_multiplier = 1.0
+            
+        return base_reward * risk_multiplier * grid_multiplier
         
-        # Combine all reward components
-        pnl_reward = risk_adjusted_pnl * 0.5      # Slightly reduced to make room for diversity bonus
-        efficiency_reward = efficiency * 0.2
-        utilization_bonus = utilization * 0.2
+    def get_action_penalty(self) -> float:
+        """Calculate penalties for undesirable actions."""
+        if self.steps_since_trade < self.trade_cooldown:
+            return -0.1  # Penalty for trading too frequently
+            
+        if self.active_grid and len(self.active_grid.positions) >= self.max_positions:
+            return -0.2  # Penalty for overextending grid
+            
+        return 0.0
         
-        total_reward = pnl_reward + efficiency_reward + utilization_bonus + diversity_bonus
-        
-        return total_reward
+    def get_terminal_reward(self) -> float:
+        """Calculate terminal state rewards/penalties."""
+        if self.balance <= 0:
+            return -10.0  # Strong penalty for bankruptcy
+            
+        max_drawdown = (self.max_balance - self.balance) / self.max_balance
+        if max_drawdown >= self.MAX_DRAWDOWN:
+            return -5.0  # Penalty for excessive drawdown
+            
+        # Positive terminal reward only if profitable
+        if self.balance > self.initial_balance:
+            return (self.balance / self.initial_balance - 1) * 5.0
+            
+        return 0.0
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Take an environment step."""
@@ -509,64 +546,30 @@ class TradingEnv(gym.Env, EzPickle):
         self.episode_steps += 1
         self.current_step += 1
         
-        done = (self.current_step >= len(self.raw_data) - 1)
-
-        grid_reward, _ = self._manage_grid_positions()
-        
-        execution_reward = 0.0
-        if direction != 0:
-            execution_reward = self._execute_grid_trade(direction, current_spread)
-        
-        growth_reward = np.log(self.balance / previous_balance) * 5.0 if self.balance > previous_balance else 0.0
-        drawdown = (self.max_balance - self.balance) / self.max_balance
-        drawdown_penalty = drawdown * 3.0 if drawdown > 0.1 else 0.0
-        
-        # Calculate risk-adjusted rewards
-        current_return = (self.balance / self.initial_balance) - 1
-        risk_factor = max(0.5, 1.0 - drawdown * 2)  # Penalize high drawdown more
-        
-        # Calculate grid efficiency metrics
-        if self.active_grid and self.positions:
-            grid_size = self.active_grid.grid_size
-            avg_position_pnl = self.active_grid.total_pnl / len(self.positions)
-            grid_efficiency = min(2.0, abs(avg_position_pnl / grid_size))
-            position_utilization = len(self.positions) / self.max_positions
-        else:
-            grid_efficiency = 0.0
-            position_utilization = 0.0
-        
-        # Combine reward components with dynamic weights
-        grid_weight = 0.5
-        execution_weight = 0.2
-        growth_weight = 0.2
-        risk_weight = 0.1
-        
-        reward = (
-            (grid_reward * grid_weight * (1.0 + grid_efficiency)) +
-            (execution_reward * execution_weight * (1.0 + position_utilization)) +
-            (growth_reward * growth_weight * risk_factor) -
-            (drawdown_penalty * risk_weight)
-        )
-        
-        # Handle terminal conditions
+        # Calculate terminal conditions
+        end_of_data = (self.current_step >= len(self.raw_data) - 1)
         max_drawdown = (self.max_balance - self.balance) / self.max_balance
+        done = end_of_data
+
+        # Store previous balance for reward calculation
+        self.previous_balance = previous_balance
+        
+        # Execute grid management and trade actions
+        self._manage_grid_positions()
+        if direction != 0:
+            self._execute_grid_trade(direction, current_spread)
+            
+        # Calculate core rewards
+        reward = self.calculate_reward()      # Core reward based on ROE and grid quality
+        reward += self.get_action_penalty()   # Add any action penalties
+        
+        # Check terminal conditions
         if self.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN:
             self._close_grid()
-            base_penalty = -100 if self.balance <= 0 else -50
-            reward = base_penalty * (1.0 + max_drawdown)  # Scale penalty with drawdown
+            reward = self.get_terminal_reward()
             done = True
-        
-        # Add completion bonus based on multiple factors
-        if done and self.balance > self.initial_balance:
-            win_rate = (self.win_count / (self.win_count + self.loss_count)) if (self.win_count + self.loss_count) > 0 else 0
-            avg_trade_return = current_return / max(1, len(self.trades))
-            completion_bonus = (
-                current_return * 5.0 +          # Overall return
-                win_rate * 3.0 +               # Win rate bonus
-                (1.0 - max_drawdown) * 2.0 +   # Low drawdown bonus
-                avg_trade_return * 5.0         # Consistent returns bonus
-            )
-            reward += completion_bonus
+        elif end_of_data:  # End of episode but not bankruptcy/max drawdown
+            reward += self.get_terminal_reward()
         
         self.grid_metrics.update({
             'position_count': len(self.positions),
@@ -597,6 +600,7 @@ class TradingEnv(gym.Env, EzPickle):
             
         self.balance = self.initial_balance
         self.max_balance = self.initial_balance
+        self.previous_balance = self.initial_balance  # Reset previous balance tracking
         
         self.trades.clear()
         self.positions.clear()
