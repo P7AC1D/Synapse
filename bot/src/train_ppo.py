@@ -7,7 +7,7 @@ import re
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from typing import Tuple
+from typing import Dict, Tuple
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.utils import get_linear_fn
