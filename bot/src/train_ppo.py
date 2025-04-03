@@ -120,16 +120,18 @@ class UnifiedEvalCallback(BaseCallback):
         profit_factor = max(0, metrics['avg_profit']) / (abs(min(0, metrics['avg_profit'])) + 1e-8)
         drawdown_penalty = max(0, 1 - metrics['max_drawdown'] * 2)
         
-        return (win_rate_score * 0.4 + 
-                min(profit_factor, 3) / 3 * 0.4 + 
-                drawdown_penalty * 0.2)
-        
+        # Ensure directories exist
         if self.best_model_save_path:
             os.makedirs(self.best_model_save_path, exist_ok=True)
         
         if self.log_path:
-            os.makedirs(log_path, exist_ok=True)
-        
+            os.makedirs(self.log_path, exist_ok=True)
+            
+        # Calculate and return quality score
+        return (win_rate_score * 0.4 + 
+                min(profit_factor, 3) / 3 * 0.4 + 
+                drawdown_penalty * 0.2)
+                
     def _evaluate_performance(self) -> Dict[str, Dict[str, float]]:
         """Run comprehensive evaluation on all datasets."""
         # Evaluate on validation set
@@ -145,15 +147,19 @@ class UnifiedEvalCallback(BaseCallback):
         val_quality = self._calculate_trade_quality(val_metrics)
         combined_quality = self._calculate_trade_quality(combined_metrics)
         
-        return {
+        # Create comprehensive metrics
+        result = {
             'validation': val_metrics,
             'combined': combined_metrics,
             'scores': {
                 'consistency': consistency_score,
                 'val_quality': val_quality,
-                'combined_quality': combined_quality
+                'combined_quality': combined_quality,
+                'validation_quality': val_quality  # Add validation quality directly to scores
             }
         }
+        
+        return result
     
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
         """Determine if current model should be saved as best."""
@@ -295,8 +301,8 @@ class UnifiedEvalCallback(BaseCallback):
             
             # Print final scores summary
             print("\n===== Final Performance Metrics =====")
-            print(f"Combined Dataset Score: {metrics['combined_quality']:.3f}")
-            print(f"Validation Score: {metrics['validation_quality']:.3f}")
+            print(f"Combined Dataset Score: {metrics['scores']['combined_quality']:.3f}")
+            print(f"Validation Score: {metrics['scores']['val_quality']:.3f}")
             print(f"Overall Score: {metrics['combined']['return'] * 0.4 - metrics['combined']['max_drawdown'] * 0.3 + metrics['scores']['consistency'] * 0.2 + metrics['scores']['combined_quality'] * 0.1:.3f}")
             
             if hasattr(self.eval_env, 'env'):
@@ -487,10 +493,15 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             )
             callbacks.append(epsilon_callback)
             
+            # Deep copy raw data for continued training
+            train_data = train_env.env.raw_data.copy()
+            val_data = val_env.env.raw_data.copy()
+            
+            # Create evaluation callback for continued training
             unified_callback = UnifiedEvalCallback(
                 val_env,
-                train_data=train_env.env.raw_data,
-                val_data=val_env.env.raw_data,
+                train_data=train_data,
+                val_data=val_data,
                 best_model_save_path=f"../results/{args.seed}",
                 log_path=f"../results/{args.seed}",
                 eval_freq=args.eval_freq,
