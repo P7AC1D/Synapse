@@ -53,6 +53,7 @@ class UnifiedEvalCallback(BaseCallback):
         
         # Create combined evaluation environment
         self.combined_data = pd.concat([train_data, val_data])
+
         env_params = {
             'initial_balance': eval_env.env.initial_balance,
             'balance_per_lot': eval_env.env.BALANCE_PER_LOT,
@@ -307,7 +308,7 @@ class UnifiedEvalCallback(BaseCallback):
         
         return True
 
-def train_model(train_env, val_env, args, iteration=0):
+def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     """Train the PPO model with optimized hyperparameters for BTC trading."""
     lr_schedule = get_linear_fn(
         start=args.learning_rate,
@@ -365,8 +366,8 @@ def train_model(train_env, val_env, args, iteration=0):
     # Add evaluation callback
     unified_callback = UnifiedEvalCallback(
         val_env,
-        train_data=train_env.env.raw_data,
-        val_data=val_env.env.raw_data,
+        train_data=train_data,
+        val_data=val_data,
         best_model_save_path=f"../results/{args.seed}",
         log_path=f"../results/{args.seed}",
         eval_freq=args.eval_freq,
@@ -470,7 +471,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         period_timesteps = base_timesteps
         
         if model is None:
-            model = train_model(train_env, val_env, args, iteration=iteration)
+            model = train_model(train_env, val_env, train_data, val_data, args, iteration=iteration)
         else:
             print(f"\nContinuing training with existing model...")
             print(f"Training timesteps: {period_timesteps}")
