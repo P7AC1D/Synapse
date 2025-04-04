@@ -561,13 +561,13 @@ def main():
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     
-    parser.add_argument('--total_timesteps', type=int, default=50000,
+    parser.add_argument('--total_timesteps', type=int, default=100000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=5e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=7500,
+    parser.add_argument('--eval_freq', type=int, default=10000,
                       help='Evaluation frequency in timesteps')
     
     args = parser.parse_args()
