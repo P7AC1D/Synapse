@@ -194,11 +194,14 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"  Return: {combined['return']*100:.2f}%")
                 print(f"  Max Drawdown: {combined['max_drawdown']*100:.2f}%")
                 print(f"  Win Rate: {combined['win_rate']*100:.2f}%")
+                print(f"  Total Reward: {combined['reward']:.2f}")  # Add this line
+                
                 print(f"\nValidation Set Metrics:")
                 print(f"  Balance: {val['balance']:.2f}")
                 print(f"  Return: {val['return']*100:.2f}%")
                 print(f"  Max Drawdown: {val['max_drawdown']*100:.2f}%")
                 print(f"  Win Rate: {val['win_rate']*100:.2f}%")
+                print(f"  Total Reward: {val['reward']:.2f}")  # Add this line
             
             if self.log_path is not None:
                 self.eval_results.append({
@@ -557,13 +560,13 @@ def main():
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     
-    parser.add_argument('--total_timesteps', type=int, default=1000000,
+    parser.add_argument('--total_timesteps', type=int, default=50000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=3e-4,
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=1e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=100000,
+    parser.add_argument('--eval_freq', type=int, default=10000,
                       help='Evaluation frequency in timesteps')
     
     args = parser.parse_args()
