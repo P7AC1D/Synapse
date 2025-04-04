@@ -327,7 +327,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         "optimizer_class": th.optim.AdamW,
         "lstm_hidden_size": 256,      # Increased for 10 features
         "n_lstm_layers": 2,           # Keep 2 layers
-        "shared_lstm": True,          # Maintain shared architecture
+        "shared_lstm": False,
         "enable_critic_lstm": True,   # Enable separate critic LSTM for better value estimation
         "net_arch": {
             "pi": [128, 64],          # Wider networks for 10 features

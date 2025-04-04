@@ -311,6 +311,7 @@ class TradingEnv(gym.Env, EzPickle):
         direction = self.current_position["direction"]
         entry_price = self.current_position["entry_price"]
         lot_size = self.current_position["lot_size"]
+        entry_step = self.current_position["entry_step"]  # Store before clearing position
         
         # Calculate profit or loss
         if direction == 1:  # Long position
@@ -328,7 +329,7 @@ class TradingEnv(gym.Env, EzPickle):
             "exit_time": str(self.original_index[self.current_step]),
             "profit_pips": profit_pips,
             "pnl": pnl,
-            "hold_time": self.current_step - self.current_position["entry_step"]
+            "hold_time": self.current_step - entry_step
         })
         
         # Update trade statistics
@@ -341,6 +342,11 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Update balance and clear position
         self.balance += pnl
+        
+        # Calculate hold time before clearing position
+        hold_time = self.current_step - entry_step
+        
+        # Clear position
         self.current_position = None
         self.trade_metrics['current_direction'] = 0
         
@@ -354,7 +360,6 @@ class TradingEnv(gym.Env, EzPickle):
             self.trade_metrics['avg_loss'] = sum(t["pnl"] for t in losing_trades) / len(losing_trades) if losing_trades else 0.0
         
         # Reward based on P/L and hold time
-        hold_time = self.current_step - self.current_position["entry_step"]
         hold_factor = min(1.0, hold_time / 20)  # Scale factor based on hold time
         
         # Base reward on P/L relative to account size
