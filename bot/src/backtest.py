@@ -434,7 +434,7 @@ def main():
         
         for seed, period in zip(seeds, periods):
             try:
-                model_path = f"../results/{seed}/{'model_final.zip' if period == 'final' else 'best_balance_model.zip'}"
+                model_path = f"../results/{seed}/{'model_final.zip' if period == 'final' else 'best_model.zip'}"
                 if not os.path.exists(model_path):
                     print(f"Warning: Model not found at {model_path}, skipping...")
                     continue
