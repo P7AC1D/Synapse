@@ -372,7 +372,7 @@ class TradingEnv(gym.Env, EzPickle):
         return normalized_pnl * hold_factor
 
     def _manage_position(self) -> float:
-        """Manage current position - update unrealized P/L and check for exits.
+        """Calculate current position's unrealized P/L.
         
         Returns:
             float: Current unrealized P/L
@@ -396,25 +396,6 @@ class TradingEnv(gym.Env, EzPickle):
         
         self.current_position["current_profit_pips"] = profit_pips
         
-        # Check for stop loss or take profit (automatic exit conditions)
-        current_atr = self.prices['atr'][self.current_step]
-        entry_atr = self.current_position["entry_atr"]
-        
-        # Dynamic stop loss and take profit based on ATR
-        stop_loss_pips = -2.0 * entry_atr / self.PIP_VALUE
-        take_profit_pips = 3.0 * entry_atr / self.PIP_VALUE
-        
-        # Adjust stop/target based on time in trade
-        hold_time = self.current_step - self.current_position["entry_step"]
-        if hold_time > 10:
-            # Tighten stop loss and take profit as time passes
-            stop_loss_pips = stop_loss_pips * (1.0 + min(1.0, hold_time / 20))
-            take_profit_pips = take_profit_pips * (1.0 - min(0.3, hold_time / 40))
-        
-        # Check exit conditions
-        if (profit_pips <= stop_loss_pips) or (profit_pips >= take_profit_pips):
-            self._close_position()
-            
         return unrealized_pnl
         
     def calculate_reward(self, unrealized_pnl: float) -> float:
