@@ -80,7 +80,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.completed_episodes = 0
         self.episode_steps = 0
         # Dynamic trade cooldown based on volatility
-        self.base_cooldown = 5
+        self.base_cooldown = 3  # Reduced base cooldown
         self.trade_cooldown = self.base_cooldown
         
         # Trade metrics
@@ -134,11 +134,7 @@ class TradingEnv(gym.Env, EzPickle):
             rs = np.zeros_like(gain)
             mask = loss != 0
             rs[mask] = gain[mask] / loss[mask]
-            rsi = 100 - (100 / (1 + rs))
-            
-            # Calculate EMAs
-            ema_fast = pd.Series(close).ewm(span=12, adjust=False).mean().values
-            ema_slow = pd.Series(close).ewm(span=26, adjust=False).mean().values
+            rsi = 100 - (100 / (1 + rs))            
             
             # Returns Calculation
             returns = np.diff(close) / close[:-1]
@@ -146,26 +142,39 @@ class TradingEnv(gym.Env, EzPickle):
             returns = np.clip(returns, -0.1, 0.1)
             
             # Calculate Trend Strength (ADX-based)
-            pdm = high[1:] - high[:-1]
-            ndm = low[:-1] - low[1:]
-            pdm = np.insert(np.where(pdm > 0, pdm, 0), 0, 0)
-            ndm = np.insert(np.where(ndm > 0, ndm, 0), 0, 0)
+            pdm = np.maximum(high[1:] - high[:-1], 0)  # Positive directional movement
+            ndm = np.maximum(low[:-1] - low[1:], 0)    # Negative directional movement
+            pdm = np.insert(pdm, 0, 0)  # Add 0 at start
+            ndm = np.insert(ndm, 0, 0)  # Add 0 at start
             
-            pdi = pd.Series(pdm).rolling(atr_period).mean() / (atr + 1e-8) * 100
-            ndi = pd.Series(ndm).rolling(atr_period).mean() / (atr + 1e-8) * 100
+            # Smooth DM values with fillna to handle NaN values
+            pdm_smooth = pd.Series(pdm).rolling(atr_period, min_periods=1).mean().fillna(0)
+            ndm_smooth = pd.Series(ndm).rolling(atr_period, min_periods=1).mean().fillna(0)
             
-            dx = np.zeros_like(pdi)
-            mask = (pdi + ndi) != 0
-            dx[mask] = np.abs(pdi[mask] - ndi[mask]) / (pdi[mask] + ndi[mask]) * 100
-            adx = pd.Series(dx).rolling(atr_period).mean()
+            # Calculate directional indicators with safe values
+            atr_safe = np.where(atr < 1e-8, 1e-8, atr)  # Prevent division by zero
+            pdi = (pdm_smooth.values / atr_safe) * 100
+            ndi = (ndm_smooth.values / atr_safe) * 100
+            
+            # Calculate DX and ADX with proper NaN handling
+            sum_di = pdi + ndi
+            sum_di = np.where(sum_di < 1e-8, 1e-8, sum_di)  # Prevent division by zero
+            dx = np.abs(pdi - ndi) / sum_di * 100
+            adx = pd.Series(dx).rolling(atr_period, min_periods=1).mean().fillna(0).values
             trend_strength = np.clip(adx/25 - 1, -1, 1)
             
-            # Volatility Breakout
-            boll_std = pd.Series(close).rolling(20).std()
-            ma20 = pd.Series(close).rolling(20).mean()
+            # Volatility Breakout using Bollinger Bands with improved NaN handling
+            boll_std = pd.Series(close).rolling(20, min_periods=1).std().fillna(0).values
+            ma20 = pd.Series(close).rolling(20, min_periods=1).mean().fillna(close[0]).values
             upper_band = ma20 + (boll_std * 2)
             lower_band = ma20 - (boll_std * 2)
-            volatility_breakout = (close - lower_band) / (upper_band - lower_band + 1e-8)
+            
+            # Safer division with explicit NaN handling
+            band_range = (upper_band - lower_band)
+            band_range = np.where(band_range < 1e-8, 1e-8, band_range)  # Prevent division by zero
+            
+            position = close - lower_band
+            volatility_breakout = np.divide(position, band_range, out=np.zeros_like(position), where=band_range!=0)
             volatility_breakout = np.clip(volatility_breakout, 0, 1)
             
             # Combined Price Action Signal
@@ -187,13 +196,19 @@ class TradingEnv(gym.Env, EzPickle):
             features_df['volatility_breakout'] = volatility_breakout
             features_df['trend_strength'] = trend_strength
             features_df['candle_pattern'] = candle_pattern
-        
-        # Drop rows with NaN values instead of filling them
-        features_df = features_df.dropna()
-        
-        # Ensure we have enough data after preprocessing
-        if len(features_df) < 100:
-            raise ValueError(f"Insufficient data after preprocessing: {len(features_df)} bars. Need at least 100 bars.")
+            
+            # Calculate lookback period based on the longest indicator window
+            lookback = max(20, atr_period)  # Use max of Bollinger (20) and ATR period
+            
+            # Forward fill any NaN values in features
+            features_df = features_df.dropna()
+            
+            # Only keep data after the lookback period to ensure all indicators are properly calculated
+            features_df = features_df.iloc[lookback:]
+            
+            # Ensure we have enough data after preprocessing
+            if len(features_df) < 100:
+                raise ValueError(f"Insufficient data after preprocessing: {len(features_df)} bars. Need at least 100 bars.")
         
         # Update price data to match cleaned features
         valid_indices = features_df.index
@@ -445,29 +460,42 @@ class TradingEnv(gym.Env, EzPickle):
         """
         # Primary reward based on return on equity
         roe = (self.balance - self.previous_balance) / self.initial_balance
-        base_reward = roe * 100  # Scale up for learning
+        base_reward = roe * 50  # Reduced scaling to balance with other rewards
         
         # Add unrealized P/L component if position is open
         if self.current_position:
             # Scale unrealized P/L by position hold time
             hold_time = self.current_step - self.current_position["entry_step"]
-            unrealized_factor = min(1.0, hold_time / 20)  # Increase weight as position is held longer
+            unrealized_factor = min(1.0, hold_time / 10)  # Faster reward accumulation
             unrealized_roe = unrealized_pnl / self.initial_balance
-            unrealized_component = unrealized_roe * 50 * unrealized_factor  # Lower weight than realized P/L
+            unrealized_component = unrealized_roe * 100 * unrealized_factor  # Increased weight for unrealized gains
             base_reward += unrealized_component
+            
+            # Additional reward for holding profitable positions
+            if unrealized_pnl > 0:
+                base_reward += 0.1  # Small positive reward for maintaining profitable position
+        else:
+            # Small negative reward for having no position to encourage trading
+            base_reward -= 0.05
         
-        # Risk adjustment based on drawdown
+        # Risk adjustment based on drawdown with softer penalty
         current_drawdown = (self.max_balance - self.balance) / self.max_balance
-        risk_multiplier = max(0.1, 1.0 - (current_drawdown * 2))  # Floor at 0.1
+        risk_multiplier = max(0.2, 1.0 - current_drawdown)  # Softer floor at 0.2
         
         return base_reward * risk_multiplier
         
     def get_action_penalty(self) -> float:
         """Calculate penalties for undesirable actions."""
-        if self.steps_since_trade < self.trade_cooldown:
-            return -0.1  # Penalty for trading too frequently
+        penalty = 0.0
         
-        return 0.0
+        if self.steps_since_trade < self.trade_cooldown:
+            penalty -= 0.05  # Reduced penalty for trading too frequently
+            
+        # Additional penalties for poor trading behavior
+        if self.current_position and self.steps_since_trade == 0:
+            penalty -= 0.1  # Penalty for trying to trade while position is open
+            
+        return penalty
         
     def get_terminal_reward(self) -> float:
         """Calculate terminal state rewards/penalties."""
