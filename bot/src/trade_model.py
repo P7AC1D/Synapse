@@ -28,11 +28,7 @@ class TradeModel:
             'close',  # Price data
             'high',   # Price data
             'low',    # Price data
-            'spread', # Price data
-            'EMA_fast',  # Trend features
-            'EMA_slow',  # Trend features
-            'RSI',       # Momentum features
-            'ATR'        # Volatility features
+            'spread'  # Price data
         ]
         
         self.lstm_states = None  # Store LSTM states for continuous prediction
@@ -55,13 +51,7 @@ class TradeModel:
                 'high': [1.0] * 10,
                 'low': [1.0] * 10,
                 'spread': [0.0001] * 10,
-                'volume': [1000] * 10,
-                'EMA_fast': [1.0] * 10,
-                'EMA_slow': [1.0] * 10,
-                'RSI': [50.0] * 10,
-                'ATR': [0.001] * 10,
-                'OBV': [0] * 10,
-                'VWAP': [1.0] * 10
+                'volume': [1000] * 10  # Optional but included for completeness
             })
             dummy_data.set_index('time', inplace=True)
             
@@ -148,27 +138,13 @@ class TradeModel:
             deterministic=True     # Use deterministic for backtesting
         )
         
-        # Convert action using environment's direction mapping
-        direction_map = {
-            0: 0,   # Hold
-            1: 1,   # Long
-            2: -1   # Short
-        }
-        position = direction_map[int(action)]
+        # Process action (0=hold, 1=buy, 2=sell, 3=close)
+        discrete_action = int(action) % 4
         
-        # Get ATR and current market conditions
-        current_atr = float(data.iloc[-1]['ATR'])
-        
-        # Use fixed grid multiplier since we have a discrete action space
-        grid_multiplier = 1.5  # Default multiplier
-        grid_size_pips = current_atr * grid_multiplier
-        
-        # Create prediction result with grid parameters
+        # Create prediction result
         result = {
-            'position': int(position),  # -1 for sell, 0 for hold, 1 for buy
-            'grid_size_pips': grid_size_pips,
-            'grid_multiplier': grid_multiplier,
-            'atr': current_atr
+            'action': discrete_action,
+            'description': ['hold', 'buy', 'sell', 'close'][discrete_action]
         }
 
         self.logger.debug(f"Prediction: {result}")
@@ -269,17 +245,11 @@ class TradeModel:
                 state=lstm_states,
                 deterministic=True
             )
-            # Convert action using environment's direction mapping
-            discrete_action = int(action) % 3
-            direction_map = {
-                0: 0,   # Hold
-                1: 1,   # Long
-                2: -1   # Short
-            }
-            direction = direction_map[discrete_action]
+            # Process action (0=hold, 1=buy, 2=sell, 3=close)
+            discrete_action = int(action) % 4
             self.logger.info(f"Step {step}:")
             self.logger.info(f"  Observation: {obs}")
-            self.logger.info(f"  Action={discrete_action}, Direction={direction}")
+            self.logger.info(f"  Action: {discrete_action} (0=hold,1=buy,2=sell,3=close)")
             self.logger.info(f"  Price: {data.iloc[env.current_step]['close']:.2f}")
             obs, reward, done, _, _ = env.step(discrete_action)
             total_reward += reward
