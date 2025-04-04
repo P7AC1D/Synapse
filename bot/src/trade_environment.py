@@ -136,16 +136,12 @@ class TradingEnv(gym.Env, EzPickle):
             ema_fast = pd.Series(close).ewm(span=12, adjust=False).mean().values
             ema_slow = pd.Series(close).ewm(span=26, adjust=False).mean().values
             
-            # Returns and volatility
+            # Returns Calculation
             returns = np.diff(close) / close[:-1]
             returns = np.insert(returns, 0, 0)
             returns = np.clip(returns, -0.1, 0.1)
             
-            vol = pd.Series(returns).rolling(20, min_periods=1).std()
-            vol_normalized = (vol - vol.rolling(100, min_periods=1).min()) / \
-                           (vol.rolling(100, min_periods=1).max() - vol.rolling(100, min_periods=1).min() + 1e-8)
-            
-            # Market Regime Detection (ADX-based)
+            # Calculate Trend Strength (ADX-based)
             pdm = high[1:] - high[:-1]
             ndm = low[:-1] - low[1:]
             pdm = np.insert(np.where(pdm > 0, pdm, 0), 0, 0)
@@ -154,43 +150,54 @@ class TradingEnv(gym.Env, EzPickle):
             pdi = pd.Series(pdm).rolling(atr_period).mean() / (atr + 1e-8) * 100
             ndi = pd.Series(ndm).rolling(atr_period).mean() / (atr + 1e-8) * 100
             
-            # Avoid division by zero
             dx = np.zeros_like(pdi)
             mask = (pdi + ndi) != 0
             dx[mask] = np.abs(pdi[mask] - ndi[mask]) / (pdi[mask] + ndi[mask]) * 100
             adx = pd.Series(dx).rolling(atr_period).mean()
+            trend_strength = np.clip(adx/25 - 1, -1, 1)
             
-            # Volatility Breakout Signals
+            # Volatility Breakout
             boll_std = pd.Series(close).rolling(20).std()
-            upper_band = pd.Series(close).rolling(20).mean() + (boll_std * 2)
-            lower_band = pd.Series(close).rolling(20).mean() - (boll_std * 2)
+            ma20 = pd.Series(close).rolling(20).mean()
+            upper_band = ma20 + (boll_std * 2)
+            lower_band = ma20 - (boll_std * 2)
+            volatility_breakout = (close - lower_band) / (upper_band - lower_band + 1e-8)
+            volatility_breakout = np.clip(volatility_breakout, 0, 1)
             
-            # Price Action Features
+            # Combined Price Action Signal
             body = close - opens
             upper_wick = high - np.maximum(close, opens)
             lower_wick = np.minimum(close, opens) - low
+            range_ = high - low + 1e-8
             
-            # Moving Average Features
-            ma_diff = (ema_fast - ema_slow) / ema_slow
-            ma_diff_norm = np.clip(ma_diff * 10, -1, 1)
+            # Combine body_to_range and wick_ratio into one signal
+            candle_pattern = (body/range_ + 
+                           (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2
+            candle_pattern = np.clip(candle_pattern, -1, 1)
             
-            # Store normalized features
+            # Store optimized feature set
             features_df['returns'] = returns
-            features_df['volatility'] = vol_normalized
-            features_df['trend'] = ma_diff_norm
             features_df['rsi'] = rsi / 50 - 1  # Normalize to [-1, 1]
             features_df['atr'] = 2 * (atr / close - np.nanmin(atr / close)) / \
-                                (np.nanmax(atr / close) - np.nanmin(atr / close) + 1e-8) - 1
-            
-            # New Features
-            features_df['adx_trend'] = adx / 100  # Normalize to [0,1]
-            features_df['volatility_breakout'] = (close - lower_band) / (upper_band - lower_band + 1e-8)
-            features_df['body_to_range'] = body / (high - low + 1e-8)
-            features_df['wick_ratio'] = (upper_wick - lower_wick) / (upper_wick + lower_wick + 1e-8)
-            features_df['trend_strength'] = np.clip(adx/25 - 1, -1, 1)  # Normalized trend strength
+                              (np.nanmax(atr / close) - np.nanmin(atr / close) + 1e-8) - 1
+            features_df['volatility_breakout'] = volatility_breakout
+            features_df['trend_strength'] = trend_strength
+            features_df['candle_pattern'] = candle_pattern
         
-        # Replace NaN values with zeros
-        features_df = features_df.fillna(0)
+        # Drop rows with NaN values instead of filling them
+        features_df = features_df.dropna()
+        
+        # Update price data to match cleaned features
+        valid_indices = features_df.index
+        atr = atr[valid_indices.values]
+        self.prices = {
+            'close': data.loc[valid_indices, 'close'].values,
+            'high': data.loc[valid_indices, 'high'].values,
+            'low': data.loc[valid_indices, 'low'].values,
+            'spread': data.loc[valid_indices, 'spread'].values,
+            'atr': atr
+        }
+        self.original_index = valid_indices
         
         # Return both the features dataframe and the ATR values for position management
         return features_df, atr
@@ -199,22 +206,16 @@ class TradingEnv(gym.Env, EzPickle):
         """Configure discrete action space: 0=hold, 1=buy, 2=sell, 3=close."""
         self.action_space = spaces.Discrete(4)
 
-    def _setup_observation_space(self, _: int = 10) -> None:
+    def _setup_observation_space(self, _: int = 6) -> None:
         """Setup observation space with proper feature bounds."""
-        # All features are normalized between -1 and 1:
-        # Base features:
-        # - returns: [-0.1, 0.1]
-        # - volatility: [-1, 1]
-        # - trend: [-1, 1]
-        # - rsi: [-1, 1]
-        # - atr: [-1, 1]
-        # New features:
-        # - adx_trend: [0, 1]
-        # - volatility_breakout: [0, 1]
-        # - body_to_range: [-1, 1]
-        # - wick_ratio: [-1, 1]
-        # - trend_strength: [-1, 1]
-        feature_count = 10  # Fixed number of features
+        # Optimized feature set (6 features):
+        # 1. returns [-0.1, 0.1] - Price momentum
+        # 2. rsi [-1, 1] - Momentum oscillator
+        # 3. atr [-1, 1] - Volatility indicator
+        # 4. volatility_breakout [0, 1] - Trend with volatility context
+        # 5. trend_strength [-1, 1] - ADX-based trend quality
+        # 6. candle_pattern [-1, 1] - Combined price action signal
+        feature_count = 6  # Reduced feature set
         self.observation_space = spaces.Box(
             low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
@@ -287,14 +288,22 @@ class TradingEnv(gym.Env, EzPickle):
         self.trade_metrics['current_direction'] = self.current_position["direction"]
         self.steps_since_trade = 0
         
-        # Calculate entry reward based on volatility and trend alignment
-        trend = self.raw_data.values[self.current_step][2]  # Normalized trend feature
-        trend_alignment_bonus = 0.0
+        # Calculate entry reward based on trend alignment and volatility
+        features = self.raw_data.values[self.current_step]
+        # Use trend_strength and volatility_breakout for alignment bonus
+        trend_strength = features[4]  # trend_strength feature
+        vol_breakout = features[3]    # volatility_breakout feature
         
-        if (direction == 1 and trend > 0.3) or (direction == 2 and trend < -0.3):
-            trend_alignment_bonus = 0.2  # Bonus for trading with trend
+        trend_alignment_bonus = 0.0
+        if direction == 1:  # Long position
+            if trend_strength > 0.3 and vol_breakout > 0.6:
+                trend_alignment_bonus = 0.2
+        else:  # Short position
+            if trend_strength < -0.3 and vol_breakout < 0.4:
+                trend_alignment_bonus = 0.2
             
-        volatility_bonus = min(1.0, current_atr / (self.prices['close'][self.current_step] * 0.01)) * 0.1
+        # Use ATR-based volatility bonus    
+        volatility_bonus = min(1.0, current_atr / (self.prices['close'][self.current_step] * 0.01)) * 0.15
         
         return 0.1 + trend_alignment_bonus + volatility_bonus
     

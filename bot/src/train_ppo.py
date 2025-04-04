@@ -18,11 +18,11 @@ from gymnasium import spaces
 
 class CustomEpsilonCallback(BaseCallback):
     """Custom callback for epsilon decay during training"""
-    def __init__(self, start_eps=0.2, end_eps=0.02, decay_timesteps=1600000):
+    def __init__(self, start_eps=0.2, end_eps=0.02, decay_timesteps=21000):  # Default decay for 35k total steps * 0.6
         super().__init__()
         self.start_eps = start_eps
         self.end_eps = end_eps
-        self.decay_timesteps = decay_timesteps
+        self.decay_timesteps = min(decay_timesteps, 21000)  # Cap maximum decay time for 35k total steps
         
     def _on_step(self) -> bool:
         progress = min(1.0, self.num_timesteps / self.decay_timesteps)
@@ -325,36 +325,37 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         end_fraction=0.95
     )
     
-    # Simplified architecture for faster training
+    # Configure optimized policy for 6-feature input
     policy_kwargs = {
-        "optimizer_class": th.optim.Adam,  # Standard Adam instead of AdamW
-        "lstm_hidden_size": 128,          # Reduced from 256
-        "n_lstm_layers": 1,               # Reduced from 2 layers
-        "shared_lstm": True,              # Share LSTM for faster training
-        "enable_critic_lstm": False,      # Disable separate critic LSTM
+        "optimizer_class": th.optim.AdamW,
+        "lstm_hidden_size": 64,           # Reduced for 6 features
+        "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
+        "shared_lstm": True,              # Share LSTM to reduce parameters
+        "enable_critic_lstm": True,       # Keep separate critic LSTM
         "net_arch": {
-            "pi": [64],                   # Simplified network
-            "vf": [64]                    # Symmetrical value network
+            "pi": [32, 16],               # Narrower networks for 6 features
+            "vf": [32, 16]                # Symmetric critic network
         },
         "optimizer_kwargs": {
-            "eps": 1e-5
+            "eps": 1e-5,
+            "weight_decay": 1e-6          # Reduced weight decay
         }
     }
     
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=5e-4,
-        n_steps=256,                   # Reduced from 512
-        batch_size=64,                 # Reduced from 128
-        gamma=0.99,                    # Standard discount
-        gae_lambda=0.95,               # Standard GAE lambda
-        clip_range=0.2,
-        clip_range_vf=0.2,
-        ent_coef=0.01,
-        vf_coef=0.5,                  # Standard value
-        max_grad_norm=0.5,
-        use_sde=False,
+        learning_rate=3e-4,           # Lower learning rate for stability
+        n_steps=128,                  # Shorter sequences for 6 features
+        batch_size=32,                # Smaller batches for better generalization
+        gamma=0.995,                  # Longer-term rewards
+        gae_lambda=0.98,              # Higher lambda for better advantage estimates
+        clip_range=0.15,              # Tighter clipping for stability
+        clip_range_vf=0.15,           # Match policy clipping
+        ent_coef=0.005,               # Lower entropy for more focused learning
+        vf_coef=0.75,                 # Higher value coefficient for better value estimation
+        max_grad_norm=0.3,            # Tighter gradient clipping
+        use_sde=False,                
         policy_kwargs=policy_kwargs,
         verbose=0,
         device=args.device,
@@ -363,11 +364,11 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     
     callbacks = []
     
-    # Configure epsilon exploration for discrete actions
+    # Configure epsilon exploration tuned for 6 features
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.3,     # Moderate initial exploration
-        end_eps=0.05,      # Lower final exploration
-        decay_timesteps=int(args.total_timesteps * 0.8)  # Slower decay for thorough exploration
+        start_eps=0.2,     # Lower initial exploration due to simpler state space
+        end_eps=0.02,      # Lower final exploration
+        decay_timesteps=int(args.total_timesteps * 0.6)  # Faster decay for simpler learning
     )
     callbacks.append(epsilon_callback)
     
@@ -489,9 +490,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             callbacks = []
             
             epsilon_callback = CustomEpsilonCallback(
-                start_eps=0.15,  # Keep exploration high in later iterations
-                end_eps=0.05,    # Maintain minimum exploration
-                decay_timesteps=int(period_timesteps * 0.95)  # Even slower decay for continued learning
+                start_eps=0.1,   # Lower starting exploration for continued training
+                end_eps=0.02,    # Match final exploration target
+                decay_timesteps=int(period_timesteps * 0.5)  # Faster decay since model is pre-trained
             )
             callbacks.append(epsilon_callback)            
             
@@ -560,14 +561,14 @@ def main():
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     
-    parser.add_argument('--total_timesteps', type=int, default=50000,
-                      help='Total timesteps for training')
+    parser.add_argument('--total_timesteps', type=int, default=35000,
+                      help='Total timesteps for training (reduced for simpler 6-feature model)')
     parser.add_argument('--learning_rate', type=float, default=3e-4,
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=1e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=10000,
-                      help='Evaluation frequency in timesteps')
+    parser.add_argument('--eval_freq', type=int, default=5000,
+                      help='Evaluation frequency in timesteps (reduced for 6 features)')
     
     args = parser.parse_args()
     
