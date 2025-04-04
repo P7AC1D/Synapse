@@ -322,37 +322,36 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         end_fraction=0.95
     )
     
-    # Configure optimized policy for 10-feature discrete action space
+    # Simplified architecture for faster training
     policy_kwargs = {
-        "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 256,      # Increased for 10 features
-        "n_lstm_layers": 2,           # Keep 2 layers
-        "shared_lstm": False,
-        "enable_critic_lstm": True,   # Enable separate critic LSTM for better value estimation
+        "optimizer_class": th.optim.Adam,  # Standard Adam instead of AdamW
+        "lstm_hidden_size": 128,          # Reduced from 256
+        "n_lstm_layers": 1,               # Reduced from 2 layers
+        "shared_lstm": True,              # Share LSTM for faster training
+        "enable_critic_lstm": False,      # Disable separate critic LSTM
         "net_arch": {
-            "pi": [128, 64],          # Wider networks for 10 features
-            "vf": [128, 64]           # Symmetric critic network
+            "pi": [64],                   # Simplified network
+            "vf": [64]                    # Symmetrical value network
         },
         "optimizer_kwargs": {
-            "eps": 1e-5,
-            "weight_decay": 1e-5      # Reduced weight decay for better feature learning
+            "eps": 1e-5
         }
     }
     
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=5e-4,          # Adjusted for stability with new features
-        n_steps=512,                 # Increased for better temporal learning
-        batch_size=128,              # Reduced for more frequent updates
-        gamma=0.995,                 # Increased for longer-term rewards
-        gae_lambda=0.98,             # Increased for better advantage estimation
-        clip_range=0.2,              # Standard clip range for stability
-        clip_range_vf=0.2,           # Match policy clip range
-        ent_coef=0.01,              # Lower entropy for more focused learning
-        vf_coef=0.7,                # Higher value function importance
-        max_grad_norm=0.5,          # Reduced for stability
-        use_sde=False,              # Keep SDE disabled for discrete actions
+        learning_rate=5e-4,
+        n_steps=256,                   # Reduced from 512
+        batch_size=64,                 # Reduced from 128
+        gamma=0.99,                    # Standard discount
+        gae_lambda=0.95,               # Standard GAE lambda
+        clip_range=0.2,
+        clip_range_vf=0.2,
+        ent_coef=0.01,
+        vf_coef=0.5,                  # Standard value
+        max_grad_norm=0.5,
+        use_sde=False,
         policy_kwargs=policy_kwargs,
         verbose=0,
         device=args.device,
