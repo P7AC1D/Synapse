@@ -73,15 +73,11 @@ class TradingEnv(gym.Env, EzPickle):
         # Trading state
         self.trades: List[Dict[str, Any]] = []
         self.current_position = None
-        self.steps_since_trade = 0
         self.win_count = 0
         self.loss_count = 0
         self.reward = 0
         self.completed_episodes = 0
         self.episode_steps = 0
-        # Dynamic trade cooldown based on volatility
-        self.base_cooldown = 3  # Reduced base cooldown
-        self.trade_cooldown = self.base_cooldown
         
         # Trade metrics
         self.trade_metrics = {
@@ -273,21 +269,11 @@ class TradingEnv(gym.Env, EzPickle):
             raw_spread: Current spread to adjust entry price
             
         Returns:
-            float: Reward for the action
+            float: Always 0 (reward comes from P&L)
         """
-        # Update trade cooldown based on volatility
-        current_atr = self.prices['atr'][self.current_step]
-        vol_scale = current_atr / self.prices['close'][self.current_step]
-        self.trade_cooldown = max(2, int(self.base_cooldown * (1.0 - vol_scale * 5)))
-        
         # Check if we already have a position
         if self.current_position is not None:
-            return -0.1  # Penalty for trying to open when already have position
-            
-        # Check cooldown
-        if self.steps_since_trade < self.trade_cooldown:
-            self.steps_since_trade += 1
-            return -0.1  # Penalty for trading too frequently
+            return 0
             
         current_price = self.prices['close'][self.current_step]
         current_atr = self.prices['atr'][self.current_step]
@@ -313,26 +299,8 @@ class TradingEnv(gym.Env, EzPickle):
         }
         
         self.trade_metrics['current_direction'] = self.current_position["direction"]
-        self.steps_since_trade = 0
         
-        # Calculate entry reward based on trend alignment and volatility
-        features = self.raw_data.values[self.current_step]
-        # Use trend_strength and volatility_breakout for alignment bonus
-        trend_strength = features[4]  # trend_strength feature
-        vol_breakout = features[3]    # volatility_breakout feature
-        
-        trend_alignment_bonus = 0.0
-        if direction == 1:  # Long position
-            if trend_strength > 0.3 and vol_breakout > 0.6:
-                trend_alignment_bonus = 0.2
-        else:  # Short position
-            if trend_strength < -0.3 and vol_breakout < 0.4:
-                trend_alignment_bonus = 0.2
-            
-        # Use ATR-based volatility bonus    
-        volatility_bonus = min(1.0, current_atr / (self.prices['close'][self.current_step] * 0.01)) * 0.15
-        
-        return 0.1 + trend_alignment_bonus + volatility_bonus
+        return 0  # No immediate reward for opening
     
     def _close_position(self) -> float:
         """Close current position and calculate P/L.
@@ -450,118 +418,67 @@ class TradingEnv(gym.Env, EzPickle):
         return unrealized_pnl
         
     def calculate_reward(self, unrealized_pnl: float) -> float:
-        """Calculate reward based on unrealized P/L and risk metrics.
+        """Calculate reward based on realized P&L only.
         
         Args:
-            unrealized_pnl: Current unrealized P/L for open position
+            unrealized_pnl: Current unrealized P/L (not used)
             
         Returns:
-            float: Calculated reward
+            float: Normalized P&L as reward
         """
-        # Primary reward based on return on equity
-        roe = (self.balance - self.previous_balance) / self.initial_balance
-        base_reward = roe * 50  # Reduced scaling to balance with other rewards
-        
-        # Add unrealized P/L component if position is open
-        if self.current_position:
-            # Scale unrealized P/L by position hold time
-            hold_time = self.current_step - self.current_position["entry_step"]
-            unrealized_factor = min(1.0, hold_time / 10)  # Faster reward accumulation
-            unrealized_roe = unrealized_pnl / self.initial_balance
-            unrealized_component = unrealized_roe * 100 * unrealized_factor  # Increased weight for unrealized gains
-            base_reward += unrealized_component
-            
-            # Additional reward for holding profitable positions
-            if unrealized_pnl > 0:
-                base_reward += 0.1  # Small positive reward for maintaining profitable position
-        else:
-            # Small negative reward for having no position to encourage trading
-            base_reward -= 0.05
-        
-        # Risk adjustment based on drawdown with softer penalty
-        current_drawdown = (self.max_balance - self.balance) / self.max_balance
-        risk_multiplier = max(0.2, 1.0 - current_drawdown)  # Softer floor at 0.2
-        
-        return base_reward * risk_multiplier
+        # Simple reward based on balance change
+        return (self.balance - self.previous_balance) / self.initial_balance
         
     def get_action_penalty(self) -> float:
         """Calculate penalties for undesirable actions."""
-        penalty = 0.0
-        
-        if self.steps_since_trade < self.trade_cooldown:
-            penalty -= 0.05  # Reduced penalty for trading too frequently
-            
-        # Additional penalties for poor trading behavior
-        if self.current_position and self.steps_since_trade == 0:
-            penalty -= 0.1  # Penalty for trying to trade while position is open
-            
-        return penalty
+        return 0.0  # No penalties in simplified reward structure
         
     def get_terminal_reward(self) -> float:
         """Calculate terminal state rewards/penalties."""
-        if self.balance <= 0:
-            return -10.0  # Strong penalty for bankruptcy
-            
-        max_drawdown = (self.max_balance - self.balance) / self.max_balance
-        if max_drawdown >= self.MAX_DRAWDOWN:
-            return -5.0  # Penalty for excessive drawdown
-            
-        # Positive terminal reward only if profitable
-        if self.balance > self.initial_balance:
-            return (self.balance / self.initial_balance - 1) * 5.0
-            
-        return 0.0
+        return 0.0  # No terminal rewards in simplified structure
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Take an environment step."""
         action = self._process_action(action)
         current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
 
+        # Store previous balance for reward calculation
         previous_balance = self.balance
+        self.previous_balance = previous_balance
+        
+        # Update balance tracking
         self.max_balance = max(self.balance, self.max_balance)
         
+        # Update timesteps
         self.episode_steps += 1
         self.current_step += 1
+        
+        # Execute trade actions
+        if action == 1:  # Buy
+            self._execute_trade(1, current_spread)
+        elif action == 2:  # Sell
+            self._execute_trade(2, current_spread)
+        elif action == 3:  # Close
+            self._close_position()
+            
+        # Manage current position
+        unrealized_pnl = self._manage_position()
         
         # Calculate terminal conditions
         end_of_data = (self.current_step >= self.data_length - 1)
         max_drawdown = (self.max_balance - self.balance) / self.max_balance
         done = end_of_data or self.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
-
-        # Store previous balance for reward calculation
-        self.previous_balance = previous_balance
         
-        # Execute trade actions based on action
-        reward_modifier = 0.0
+        # Auto-close position at end of episode
+        if done and self.current_position:
+            self._close_position()
         
-        if action == 0:  # Hold
-            self.steps_since_trade += 1
-        elif action == 1:  # Buy
-            reward_modifier = self._execute_trade(1, current_spread)
-        elif action == 2:  # Sell
-            reward_modifier = self._execute_trade(2, current_spread)
-        elif action == 3:  # Close
-            reward_modifier = self._close_position()
-            
-        # Manage current position
-        unrealized_pnl = self._manage_position()
-            
-        # Calculate core rewards
-        reward = self.calculate_reward(unrealized_pnl)  # Core reward based on ROE
-        reward += reward_modifier                        # Add action rewards/penalties
-        reward += self.get_action_penalty()              # Add any action penalties
-        
-        # Check terminal conditions
-        if done:
-            # Close any open position at end of episode
-            if self.current_position:
-                self._close_position()
-            
-            # Add terminal reward
-            reward += self.get_terminal_reward()
-        
-        obs = self.get_history()
+        # Simple reward based on realized P&L only
+        reward = self.calculate_reward(unrealized_pnl)
         self.reward = reward
+        
+        # Get current observation
+        obs = self.get_history()
         
         truncated = self.current_step >= self.data_length - 1
         
@@ -604,7 +521,6 @@ class TradingEnv(gym.Env, EzPickle):
         self.trades.clear()
         self.current_position = None
         
-        self.steps_since_trade = 0
         self.win_count = 0
         self.loss_count = 0
         self.episode_steps = 0

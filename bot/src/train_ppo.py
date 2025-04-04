@@ -331,7 +331,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         "lstm_hidden_size": 128,           # Increased for better memory
         "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
         "shared_lstm": True,              # Share LSTM to reduce parameters
-        "enable_critic_lstm": False,      # Enable separate critic LSTM for better value estimation
+        "enable_critic_lstm": False,      # Disable separate critic LSTM for better value estimation
         "net_arch": {
             "pi": [64, 32],               # Wider networks for better feature representation
             "vf": [64, 32]                # Symmetric critic network
