@@ -192,8 +192,8 @@ class TradingEnv(gym.Env, EzPickle):
         features_df = features_df.dropna()
         
         # Ensure we have enough data after preprocessing
-        if len(features_df) < 1000:
-            raise ValueError(f"Insufficient data after preprocessing: {len(features_df)} bars. Need at least 1000 bars.")
+        if len(features_df) < 100:
+            raise ValueError(f"Insufficient data after preprocessing: {len(features_df)} bars. Need at least 100 bars.")
         
         # Update price data to match cleaned features
         valid_indices = features_df.index
@@ -564,7 +564,7 @@ class TradingEnv(gym.Env, EzPickle):
 
         if self.random_start:
             # Ensure we leave enough room for at least one full episode
-            max_start = max(0, self.data_length - 1000)  # Leave 1000 steps minimum
+            max_start = max(0, self.data_length - 100)  # Leave 100 steps minimum
             self.current_step = np.random.randint(0, max_start)
         else:
             self.current_step = 0

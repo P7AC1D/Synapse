@@ -331,7 +331,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         "lstm_hidden_size": 64,           # Reduced for 6 features
         "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
         "shared_lstm": True,              # Share LSTM to reduce parameters
-        "enable_critic_lstm": True,       # Keep separate critic LSTM
+        "enable_critic_lstm": False,       # Keep separate critic LSTM
         "net_arch": {
             "pi": [32, 16],               # Narrower networks for 6 features
             "vf": [32, 16]                # Symmetric critic network
