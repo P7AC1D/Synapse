@@ -50,13 +50,16 @@ class TradingEnv(gym.Env, EzPickle):
         # Preprocess data and calculate all technical indicators
         self.raw_data, atr_values = self._preprocess_data(data)
         
-        # Store price data for easy access
+        # Store data length after preprocessing for consistent indexing
+        self.data_length = len(self.raw_data)
+        
+        # Store price data matching preprocessed data length
         self.prices = {
-            'close': data['close'].values,
-            'high': data['high'].values,
-            'low': data['low'].values,
-            'spread': data['spread'].values,
-            'atr': atr_values  # This now comes from _preprocess_data
+            'close': data.loc[self.original_index, 'close'].values,
+            'high': data.loc[self.original_index, 'high'].values,
+            'low': data.loc[self.original_index, 'low'].values,
+            'spread': data.loc[self.original_index, 'spread'].values,
+            'atr': atr_values
         }
         
         self.current_step = 0
@@ -101,7 +104,8 @@ class TradingEnv(gym.Env, EzPickle):
         Returns:
             Tuple of (features_df, atr_values)
         """
-        features_df = pd.DataFrame(index=self.original_index)
+        # Create DataFrame with same index as input data
+        features_df = pd.DataFrame(index=data.index)
         
         with np.errstate(divide='ignore', invalid='ignore'):
             # Price data
@@ -187,9 +191,17 @@ class TradingEnv(gym.Env, EzPickle):
         # Drop rows with NaN values instead of filling them
         features_df = features_df.dropna()
         
+        # Ensure we have enough data after preprocessing
+        if len(features_df) < 1000:
+            raise ValueError(f"Insufficient data after preprocessing: {len(features_df)} bars. Need at least 1000 bars.")
+        
         # Update price data to match cleaned features
         valid_indices = features_df.index
-        atr = atr[valid_indices.values]
+        # Get integer positions of valid indices in original data
+        valid_positions = data.index.get_indexer(valid_indices)
+        
+        # Use integer positions for numpy array indexing
+        atr = atr[valid_positions]
         self.prices = {
             'close': data.loc[valid_indices, 'close'].values,
             'high': data.loc[valid_indices, 'high'].values,
@@ -484,7 +496,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.current_step += 1
         
         # Calculate terminal conditions
-        end_of_data = (self.current_step >= len(self.raw_data) - 1)
+        end_of_data = (self.current_step >= self.data_length - 1)
         max_drawdown = (self.max_balance - self.balance) / self.max_balance
         done = end_of_data or self.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
 
@@ -523,7 +535,7 @@ class TradingEnv(gym.Env, EzPickle):
         obs = self.get_history()
         self.reward = reward
         
-        truncated = self.current_step >= len(self.raw_data) - 1
+        truncated = self.current_step >= self.data_length - 1
         
         # Calculate position info for info dict
         position_info = {}
@@ -551,7 +563,9 @@ class TradingEnv(gym.Env, EzPickle):
             np.random.seed(seed)
 
         if self.random_start:
-            self.current_step = np.random.randint(0, len(self.raw_data) - 1)
+            # Ensure we leave enough room for at least one full episode
+            max_start = max(0, self.data_length - 1000)  # Leave 1000 steps minimum
+            self.current_step = np.random.randint(0, max_start)
         else:
             self.current_step = 0
             
