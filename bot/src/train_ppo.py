@@ -491,11 +491,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 end_eps=0.05,    # Maintain minimum exploration
                 decay_timesteps=int(period_timesteps * 0.95)  # Even slower decay for continued learning
             )
-            callbacks.append(epsilon_callback)
-            
-            # Deep copy raw data for continued training
-            train_data = train_env.env.raw_data.copy()
-            val_data = val_env.env.raw_data.copy()
+            callbacks.append(epsilon_callback)            
             
             # Create evaluation callback for continued training
             unified_callback = UnifiedEvalCallback(
