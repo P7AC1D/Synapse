@@ -229,16 +229,17 @@ class TradingEnv(gym.Env, EzPickle):
         """Configure discrete action space: 0=hold, 1=buy, 2=sell, 3=close."""
         self.action_space = spaces.Discrete(4)
 
-    def _setup_observation_space(self, _: int = 6) -> None:
+    def _setup_observation_space(self, _: int = 7) -> None:
         """Setup observation space with proper feature bounds."""
-        # Optimized feature set (6 features):
+        # Optimized feature set (7 features):
         # 1. returns [-0.1, 0.1] - Price momentum
         # 2. rsi [-1, 1] - Momentum oscillator
         # 3. atr [-1, 1] - Volatility indicator
         # 4. volatility_breakout [0, 1] - Trend with volatility context
         # 5. trend_strength [-1, 1] - ADX-based trend quality
         # 6. candle_pattern [-1, 1] - Combined price action signal
-        feature_count = 6  # Reduced feature set
+        # 7. unrealized_pnl [-1, 1] - Current position P&L
+        feature_count = 7  # Added unrealized P&L
         self.observation_space = spaces.Box(
             low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
@@ -521,8 +522,19 @@ class TradingEnv(gym.Env, EzPickle):
         }
         
     def get_history(self) -> np.ndarray:
-        """Get current bar features."""
-        return self.raw_data.values[self.current_step]
+        """Get current bar features including unrealized P&L."""
+        features = self.raw_data.values[self.current_step]
+        
+        # Calculate normalized unrealized P&L
+        if self.current_position:
+            unrealized_pnl = self._manage_position()
+            # Normalize P&L relative to initial balance
+            normalized_pnl = np.clip(unrealized_pnl / self.initial_balance, -1, 1)
+        else:
+            normalized_pnl = 0.0  # No position
+        
+        # Add normalized P&L to features
+        return np.append(features, normalized_pnl)
 
     def render(self) -> None:
         """Print environment state and trade statistics."""
