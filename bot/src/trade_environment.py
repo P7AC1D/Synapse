@@ -20,7 +20,7 @@ class TradingEnv(gym.Env, EzPickle):
     
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
                  balance_per_lot: float = 1000.0, random_start: bool = False,
-                 bar_count: int = 10):
+                 bar_count: int = 10):  # bar_count is deprecated and no longer used
         super().__init__()
         EzPickle.__init__(self)
         
@@ -91,11 +91,6 @@ class TradingEnv(gym.Env, EzPickle):
         self._setup_action_space()
         self._setup_observation_space(10)  # Keep the same observation space
 
-        # Verify required columns
-        required_columns = ['close', 'high', 'low', 'spread', 'ATR', 'RSI', 'EMA_fast', 'EMA_slow']
-        missing_columns = [col for col in required_columns if col not in data.columns]
-        if missing_columns:
-            raise ValueError(f"Missing required columns: {missing_columns}")
 
     def _preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray]:
         """Preprocess market data for the model with advanced features.
@@ -204,7 +199,7 @@ class TradingEnv(gym.Env, EzPickle):
         """Configure discrete action space: 0=hold, 1=buy, 2=sell, 3=close."""
         self.action_space = spaces.Discrete(4)
 
-    def _setup_observation_space(self, feature_count: int) -> None:
+    def _setup_observation_space(self, _: int = 10) -> None:
         """Setup observation space with proper feature bounds."""
         # All features are normalized between -1 and 1:
         # Base features:
@@ -219,7 +214,7 @@ class TradingEnv(gym.Env, EzPickle):
         # - body_to_range: [-1, 1]
         # - wick_ratio: [-1, 1]
         # - trend_strength: [-1, 1]
-        feature_count = 10  # Update to match total number of features
+        feature_count = 10  # Fixed number of features
         self.observation_space = spaces.Box(
             low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
