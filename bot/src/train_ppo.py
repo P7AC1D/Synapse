@@ -18,11 +18,11 @@ from gymnasium import spaces
 
 class CustomEpsilonCallback(BaseCallback):
     """Custom callback for epsilon decay during training"""
-    def __init__(self, start_eps=0.2, end_eps=0.02, decay_timesteps=21000):  # Default decay for 35k total steps * 0.6
+    def __init__(self, start_eps=0.4, end_eps=0.05, decay_timesteps=40000):  # Increased exploration params
         super().__init__()
         self.start_eps = start_eps
         self.end_eps = end_eps
-        self.decay_timesteps = min(decay_timesteps, 21000)  # Cap maximum decay time for 35k total steps
+        self.decay_timesteps = min(decay_timesteps, 40000)  # Increased cap for longer decay
         
     def _on_step(self) -> bool:
         progress = min(1.0, self.num_timesteps / self.decay_timesteps)
@@ -328,33 +328,33 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     # Configure optimized policy for 6-feature input
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 64,           # Reduced for 6 features
+        "lstm_hidden_size": 128,           # Increased for better memory
         "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
         "shared_lstm": True,              # Share LSTM to reduce parameters
-        "enable_critic_lstm": False,       # Keep separate critic LSTM
+        "enable_critic_lstm": True,       # Enable separate critic LSTM for better value estimation
         "net_arch": {
-            "pi": [32, 16],               # Narrower networks for 6 features
-            "vf": [32, 16]                # Symmetric critic network
+            "pi": [64, 32],               # Wider networks for better feature representation
+            "vf": [64, 32]                # Symmetric critic network
         },
         "optimizer_kwargs": {
             "eps": 1e-5,
-            "weight_decay": 1e-6          # Reduced weight decay
+            "weight_decay": 1e-7          # Further reduced weight decay
         }
     }
     
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=3e-4,           # Lower learning rate for stability
-        n_steps=128,                  # Shorter sequences for 6 features
-        batch_size=32,                # Smaller batches for better generalization
-        gamma=0.995,                  # Longer-term rewards
-        gae_lambda=0.98,              # Higher lambda for better advantage estimates
-        clip_range=0.15,              # Tighter clipping for stability
-        clip_range_vf=0.15,           # Match policy clipping
-        ent_coef=0.005,               # Lower entropy for more focused learning
-        vf_coef=0.75,                 # Higher value coefficient for better value estimation
-        max_grad_norm=0.3,            # Tighter gradient clipping
+        learning_rate=1e-3,           # Higher learning rate for faster learning
+        n_steps=256,                  # Longer sequences for better context
+        batch_size=64,                # Larger batches for more stable updates
+        gamma=0.99,                   # Shorter-term rewards
+        gae_lambda=0.95,              # Lower lambda for more immediate advantages
+        clip_range=0.2,               # Wider clipping for more policy freedom
+        clip_range_vf=0.2,            # Match policy clipping
+        ent_coef=0.01,                # Higher entropy for more exploration
+        vf_coef=0.5,                  # Lower value coefficient
+        max_grad_norm=0.5,            # Higher gradient norm for faster learning
         use_sde=False,                
         policy_kwargs=policy_kwargs,
         verbose=0,
@@ -561,14 +561,14 @@ def main():
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     
-    parser.add_argument('--total_timesteps', type=int, default=35000,
-                      help='Total timesteps for training (reduced for simpler 6-feature model)')
-    parser.add_argument('--learning_rate', type=float, default=3e-4,
+    parser.add_argument('--total_timesteps', type=int, default=50000,
+                      help='Total timesteps for training')
+    parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
-    parser.add_argument('--final_learning_rate', type=float, default=1e-5,
+    parser.add_argument('--final_learning_rate', type=float, default=5e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=5000,
-                      help='Evaluation frequency in timesteps (reduced for 6 features)')
+    parser.add_argument('--eval_freq', type=int, default=7500,
+                      help='Evaluation frequency in timesteps')
     
     args = parser.parse_args()
     
