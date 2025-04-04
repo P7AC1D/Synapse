@@ -99,25 +99,25 @@ class UnifiedEvalCallback(BaseCallback):
         if max_balance > env.env.initial_balance:
             max_drawdown = (max_balance - running_balance) / max_balance
             
-        # Calculate trade quality metrics
-        trades = env.env.trades
-        win_rate = len([t for t in trades if t['pnl'] > 0]) / max(len(trades), 1)
-        avg_profit = sum(t['pnl'] for t in trades) / max(len(trades), 1)
+        # Use environment's built-in trade metrics
+        trade_metrics = env.env.trade_metrics
         
         return {
             'return': total_return,
             'max_drawdown': max_drawdown,
             'reward': episode_reward,
-            'win_rate': win_rate,
-            'avg_profit': avg_profit,
+            'win_rate': trade_metrics['win_rate'],
+            'avg_profit': trade_metrics['avg_profit'],
+            'avg_loss': trade_metrics['avg_loss'],
             'balance': running_balance,
-            'trades': trades
+            'trades': env.env.trades,
+            'current_direction': trade_metrics['current_direction']
         }
         
     def _calculate_trade_quality(self, metrics: Dict[str, float]) -> float:
-        """Calculate overall trade quality score."""
+        """Calculate overall trade quality score with enhanced metrics."""
         win_rate_score = metrics['win_rate']
-        profit_factor = max(0, metrics['avg_profit']) / (abs(min(0, metrics['avg_profit'])) + 1e-8)
+        profit_factor = max(0, metrics['avg_profit']) / (abs(metrics['avg_loss']) + 1e-8)
         drawdown_penalty = max(0, 1 - metrics['max_drawdown'] * 2)
         
         # Ensure directories exist
@@ -127,9 +127,9 @@ class UnifiedEvalCallback(BaseCallback):
         if self.log_path:
             os.makedirs(self.log_path, exist_ok=True)
             
-        # Calculate and return quality score
-        return (win_rate_score * 0.4 + 
-                min(profit_factor, 3) / 3 * 0.4 + 
+        # Calculate quality score with adjusted weights
+        return (win_rate_score * 0.35 + 
+                min(profit_factor, 4) / 4 * 0.45 + 
                 drawdown_penalty * 0.2)
                 
     def _evaluate_performance(self) -> Dict[str, Dict[str, float]]:
@@ -251,9 +251,9 @@ class UnifiedEvalCallback(BaseCallback):
                 self.max_drawdown = max(self.max_drawdown, period_max_drawdown)
 
                 # Calculate basic metrics
-                active_positions = len(eval_env.positions)
-                num_winning_trades = sum(1 for t in eval_env.trades if t['pnl'] > 0)
-                num_losing_trades = sum(1 for t in eval_env.trades if t['pnl'] < 0)
+                active_position = 1 if eval_env.current_position else 0
+                num_winning_trades = eval_env.win_count
+                num_losing_trades = eval_env.loss_count
                 
                 try:
                     period_start = str(eval_env.original_index[0])
@@ -272,13 +272,13 @@ class UnifiedEvalCallback(BaseCallback):
                     'iteration': self.iteration,
                     'balance': float(eval_env.balance),
                     'total_trades': len(eval_env.trades),
-                    'active_positions': active_positions,
+                    'active_position': active_position,
                     'win_count': num_winning_trades,
                     'loss_count': num_losing_trades,
-                    'win_rate': (num_winning_trades / len(eval_env.trades) * 100) if eval_env.trades else 0.0,
+                    'win_rate': eval_env.trade_metrics['win_rate'] * 100,
                     'period_start': period_start,
                     'period_end': period_end,
-                    'grid_metrics': eval_env.grid_metrics,
+                    'trade_metrics': eval_env.trade_metrics,
                     'max_drawdown': period_max_drawdown * 100,
                     'historical_max_drawdown': self.max_drawdown * 100
                 }
@@ -322,37 +322,37 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         end_fraction=0.95
     )
     
-    # Configure policy for discrete action space
+    # Configure optimized policy for 10-feature discrete action space
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 128,      # Increased capacity
-        "n_lstm_layers": 2,           # Deeper LSTM
-        "shared_lstm": True,          # Use shared LSTM
-        "enable_critic_lstm": False,  # Disable separate critic LSTM
+        "lstm_hidden_size": 256,      # Increased for 10 features
+        "n_lstm_layers": 2,           # Keep 2 layers
+        "shared_lstm": True,          # Maintain shared architecture
+        "enable_critic_lstm": True,   # Enable separate critic LSTM for better value estimation
         "net_arch": {
-            "pi": [64, 32],          # Deeper actor network
-            "vf": [64, 32]           # Deeper critic network
+            "pi": [128, 64],          # Wider networks for 10 features
+            "vf": [128, 64]           # Symmetric critic network
         },
         "optimizer_kwargs": {
             "eps": 1e-5,
-            "weight_decay": 1e-4
+            "weight_decay": 1e-5      # Reduced weight decay for better feature learning
         }
     }
     
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=8e-4,          # Higher learning rate for faster adaptation
-        n_steps=256,                 # Keep stride length
-        batch_size=256,              # Keep batch size
-        gamma=0.99,
-        gae_lambda=0.95,
-        clip_range=0.3,              # Increased from 0.2 for more aggressive updates
-        clip_range_vf=0.3,           # Match policy clip range
-        ent_coef=0.05,              # Higher entropy to encourage exploration
-        vf_coef=0.6,                # Slightly higher value function importance
-        max_grad_norm=0.6,          # Allow slightly larger gradients
-        use_sde=False,              # No SDE for discrete actions
+        learning_rate=5e-4,          # Adjusted for stability with new features
+        n_steps=512,                 # Increased for better temporal learning
+        batch_size=128,              # Reduced for more frequent updates
+        gamma=0.995,                 # Increased for longer-term rewards
+        gae_lambda=0.98,             # Increased for better advantage estimation
+        clip_range=0.2,              # Standard clip range for stability
+        clip_range_vf=0.2,           # Match policy clip range
+        ent_coef=0.01,              # Lower entropy for more focused learning
+        vf_coef=0.7,                # Higher value function importance
+        max_grad_norm=0.5,          # Reduced for stability
+        use_sde=False,              # Keep SDE disabled for discrete actions
         policy_kwargs=policy_kwargs,
         verbose=0,
         device=args.device,
@@ -363,9 +363,9 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     
     # Configure epsilon exploration for discrete actions
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.4,     # Higher initial exploration
-        end_eps=0.15,      # Higher minimum exploration
-        decay_timesteps=int(args.total_timesteps * 0.7)  # Faster decay for more aggressive exploration
+        start_eps=0.3,     # Moderate initial exploration
+        end_eps=0.05,      # Lower final exploration
+        decay_timesteps=int(args.total_timesteps * 0.8)  # Slower decay for thorough exploration
     )
     callbacks.append(epsilon_callback)
     
