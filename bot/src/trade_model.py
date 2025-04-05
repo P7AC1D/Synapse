@@ -43,28 +43,9 @@ class TradeModel:
             bool: True if model loaded successfully, False otherwise
         """
         try:
-            # Create minimal dummy data for model loading
-            dummy_data = pd.DataFrame({
-                'time': pd.date_range(start='2024-01-01', periods=10, freq='15min'),
-                'open': [1.0] * 10,
-                'close': [1.0] * 10,
-                'high': [1.0] * 10,
-                'low': [1.0] * 10,
-                'spread': [0.0001] * 10,
-                'volume': [1000] * 10  # Optional but included for completeness
-            })
-            dummy_data.set_index('time', inplace=True)
-            
-            env = TradingEnv(
-                data=dummy_data,
-                random_start=False,
-                balance_per_lot=1000.0  # Match training environment
-            )
-            
             # Load the PPO model with saved hyperparameters
             self.model = RecurrentPPO.load(
                 self.model_path,
-                env=env,
                 print_system_info=False
             )
             self.logger.info(f"Model successfully loaded from {self.model_path}")
@@ -225,7 +206,7 @@ class TradeModel:
         )
         
         # Preload LSTM states with initial data
-        preload_bars = min(50, len(data) // 4)  # Use 25% of data or 50 bars, whichever is smaller
+        preload_bars = min(250, len(data) // 4)  # Use 25% of data or 250 bars, whichever is smaller
         if preload_bars > 0:
             preload_data = data.iloc[:preload_bars]
             self.preload_states(preload_data)
