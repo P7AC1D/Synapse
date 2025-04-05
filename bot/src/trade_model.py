@@ -250,8 +250,7 @@ class TradeModel:
             'win_rate': (env.win_count / len(env.trades) * 100) if env.trades else 0.0,
             'total_steps': total_steps,
             'total_reward': total_reward,
-            'active_positions': len(env.positions),
-            'grid_metrics': env.grid_metrics,
+            'active_positions': 1 if env.current_position is not None else 0,
             'trades': env.trades
         }
         

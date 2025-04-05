@@ -481,7 +481,8 @@ class TradingEnv(gym.Env, EzPickle):
             "total_pnl": self.balance - self.initial_balance,
             "drawdown": max_drawdown * 100,
             "position": position_info,
-            "trade_metrics": self.trade_metrics
+            "trade_metrics": self.trade_metrics,
+            "total_trades": len(self.trades)
         }
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
