@@ -165,11 +165,12 @@ class TradeModel:
         obs, _ = env.reset()
         for _ in range(len(data)):
             # Action doesn't matter for preloading, we only care about state updates
-            _, self.lstm_states = self.model.predict(
+            _, new_lstm_states = self.model.predict(
                 obs,
                 state=self.lstm_states,
                 deterministic=True
             )
+            self.lstm_states = new_lstm_states  # Update states
             obs, _, done, _, _ = env.step(1)
             if done:
                 break
@@ -205,34 +206,69 @@ class TradeModel:
             random_start=False
         )
         
-        # Preload LSTM states with initial data
-        preload_bars = min(250, len(data) // 4)  # Use 25% of data or 250 bars, whichever is smaller
-        if preload_bars > 0:
-            preload_data = data.iloc[:preload_bars]
-            self.preload_states(preload_data)
-            lstm_states = self.lstm_states
-        else:
-            lstm_states = None
-        
-        # Reset states and run backtest
+        # Initialize LSTM states
+        lstm_states = None
         obs, _ = env.reset()
+        
+        # Do an initial prediction to get first LSTM states
+        _, lstm_states = self.model.predict(
+            obs,
+            state=lstm_states,
+            deterministic=True
+        )
         done = False
         step = 0
         total_reward = 0.0
         
         while not done:
-            action, lstm_states = self.model.predict(
+            action, new_lstm_states = self.model.predict(
                 obs, 
                 state=lstm_states,
                 deterministic=True
             )
+            lstm_states = new_lstm_states  # Update LSTM states
             # Process action (0=hold, 1=buy, 2=sell, 3=close)
             discrete_action = int(action) % 4
-            self.logger.info(f"Step {step}:")
-            self.logger.info(f"  Observation: {obs}")
-            self.logger.info(f"  Action: {discrete_action} (0=hold,1=buy,2=sell,3=close)")
-            self.logger.info(f"  Price: {data.iloc[env.current_step]['close']:.2f}")
-            obs, reward, done, _, _ = env.step(discrete_action)
+            # Log pre-step information
+            # Format features with better readability
+            feature_dict = dict(zip(['returns', 'rsi', 'atr', 'volatility', 'trend', 'pattern', 'pnl'], obs))
+            feature_str = "\n    ".join([f"{k}: {v:.4f}" for k, v in feature_dict.items()])
+            
+            self.logger.info(f"\n=== Step {step} ===")
+            self.logger.info(f"Price: {data.iloc[env.current_step]['close']:.2f}")
+            # Format position information with safety checks
+            position_status = "None"
+            if env.current_position:
+                direction = "Long" if env.current_position['direction'] == 1 else "Short"
+                pnl = env._manage_position()  # Get current unrealized P&L
+                hold_time = env.current_step - env.current_position['entry_step']
+                position_status = (f"{direction} @ {env.current_position['entry_price']:.5f} "
+                                 f"(P&L: {pnl:+.2f}, Hold: {hold_time} bars)")
+            self.logger.info(f"Position: {position_status}")
+
+            # Show detailed action context
+            self.logger.info(f"Features:\n    {feature_str}")
+            
+            # Log action with context
+            action_desc = {0: "Hold", 1: "Buy", 2: "Sell", 3: "Close"}[discrete_action]
+            if env.current_position:
+                if discrete_action == 3:
+                    self.logger.info(f"Action: {action_desc} position ({position_status})")
+                else:
+                    self.logger.info(f"Action: {action_desc} (current: {position_status})")
+            else:
+                self.logger.info(f"Action: {action_desc}")
+            
+            # Execute step with proper action handling
+            obs, reward, done, _, info = env.step(discrete_action)  # Pass action directly to env
+            
+            # Log post-step results with more detail
+            self.logger.info("\nResults:")
+            self.logger.info(f"  Balance: {info['balance']:.2f} ({'+' if info['balance'] > env.previous_balance else ''}{info['balance'] - env.previous_balance:.2f})")
+            self.logger.info(f"  Total Return: {((info['balance'] - env.initial_balance) / env.initial_balance * 100):.2f}%")
+            self.logger.info(f"  Reward: {reward:.4f}")
+            if info['position']:
+                self.logger.info(f"  Position Update: {info['position']}")
             total_reward += reward
             step += 1
             

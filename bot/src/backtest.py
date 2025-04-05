@@ -4,11 +4,21 @@ import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import argparse
+import logging
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Dict, Any
 from trade_model import TradeModel
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
 def convert_to_serializable(obj: Any) -> Any:
     """Convert objects to JSON serializable format."""
