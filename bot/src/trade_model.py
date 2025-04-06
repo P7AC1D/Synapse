@@ -221,14 +221,16 @@ class TradeModel:
         total_reward = 0.0
         
         while not done:
-            action, new_lstm_states = self.model.predict(
+            raw_action, new_lstm_states = self.model.predict(
                 obs, 
                 state=lstm_states,
                 deterministic=True
             )
             lstm_states = new_lstm_states  # Update LSTM states
+            
             # Process action (0=hold, 1=buy, 2=sell, 3=close)
-            discrete_action = int(action) % 4
+            discrete_action = int(raw_action.item()) if isinstance(raw_action, np.ndarray) else int(raw_action)
+            discrete_action = discrete_action % 4  # Ensure in range 0-3
             # Log pre-step information
             # Format features with better readability
             feature_dict = dict(zip(['returns', 'rsi', 'atr', 'volatility', 'trend', 'pattern', 'pnl'], obs))
@@ -251,13 +253,12 @@ class TradeModel:
             
             # Log action with context
             action_desc = {0: "Hold", 1: "Buy", 2: "Sell", 3: "Close"}[discrete_action]
+            raw_action_value = float(raw_action.item()) if isinstance(raw_action, np.ndarray) else float(raw_action)
+            
             if env.current_position:
-                if discrete_action == 3:
-                    self.logger.info(f"Action: {action_desc} position ({position_status})")
-                else:
-                    self.logger.info(f"Action: {action_desc} (current: {position_status})")
+                self.logger.info(f"Action: {action_desc} (raw: {raw_action_value:.4f}) [current: {position_status}]")
             else:
-                self.logger.info(f"Action: {action_desc}")
+                self.logger.info(f"Action: {action_desc} (raw: {raw_action_value:.4f})")
             
             # Execute step with proper action handling
             obs, reward, done, _, info = env.step(discrete_action)  # Pass action directly to env
