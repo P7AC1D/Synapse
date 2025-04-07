@@ -176,16 +176,16 @@ class UnifiedEvalCallback(BaseCallback):
         return result
     
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
-        """Determine if current model should be saved as best."""
+        validation = metrics['validation']
         combined = metrics['combined']
         scores = metrics['scores']
         
-        # Calculate composite score
+        # Calculate validation-focused score
         score = (
-            combined['return'] * 0.4 +                # Weight overall return
-            -combined['max_drawdown'] * 0.3 +        # Penalize drawdowns
-            scores['consistency'] * 0.2 +            # Reward consistency
-            scores['combined_quality'] * 0.1         # Consider trade quality
+            validation['return'] * 0.4 +          # Strong weight on validation return
+            -validation['max_drawdown'] * 0.3 +   # Heavy penalty on validation drawdown
+            scores['consistency'] * 0.2 +         # Reward consistency
+            combined['return'] * 0.1              # Small weight on overall return
         )
         
         if score > self.best_score:
@@ -430,7 +430,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         gae_lambda=0.95,              # Keep lambda value
         clip_range=0.2,               # Reduced clipping for more stability
         clip_range_vf=0.2,            # Match policy clipping
-        ent_coef=0.025,                # Slightly reduced entropy for more exploitation
+        ent_coef=0.03,                # Slightly reduced entropy for more exploitation
         vf_coef=0.5,                  # Keep value coefficient
         max_grad_norm=0.3,            # Lower gradient norm for more stability
         use_sde=False,                
@@ -638,16 +638,16 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=40,
-                      help='Initial training window in days (4 weeks)')
-    parser.add_argument('--step_size', type=int, default=14,
-                      help='Walk-forward step size in days (2 weeks)')
+    parser.add_argument('--initial_window', type=int, default=60,
+                      help='Initial training window in days')
+    parser.add_argument('--step_size', type=int, default=21,
+                      help='Walk-forward step size in days')
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     parser.add_argument('--random_start', action='store_true',
                       help='Start training from random positions in the dataset')
     
-    parser.add_argument('--total_timesteps', type=int, default=384000,
+    parser.add_argument('--total_timesteps', type=int, default=800000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
