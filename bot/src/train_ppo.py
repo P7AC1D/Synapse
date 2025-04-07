@@ -317,11 +317,6 @@ class UnifiedEvalCallback(BaseCallback):
                     period_start = period_end = "NA"
                     print(f"Warning: Could not get period timestamps: {str(e)}")
 
-                # Print drawdown information
-                print("\n===== Drawdown Analysis =====")
-                print(f"Period Max Drawdown: {period_max_drawdown*100:.2f}%")
-                print(f"Historical Max Drawdown: {self.max_drawdown*100:.2f}%")
-
                 period_info = {
                     'results': self.eval_results,
                     'iteration': self.iteration,
@@ -353,13 +348,7 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"Validation Return: {metrics['validation']['return']*100:.2f}%")
                 print(f"Consistency Score: {metrics['scores']['consistency']:.2f}")
                 print(f"Trade Quality: {metrics['scores']['combined_quality']:.2f}")
-            
-            # Print final scores summary
-            print("\n===== Quality Scores =====")
-            print(f"Combined Dataset Score: {metrics['scores']['combined_quality']:.3f}")
-            print(f"Validation Score: {metrics['scores']['val_quality']:.3f}")
-            print(f"Overall Score: {metrics['combined']['return'] * 0.4 - metrics['combined']['max_drawdown'] * 0.3 + metrics['scores']['consistency'] * 0.2 + metrics['scores']['combined_quality'] * 0.1:.3f}")
-                
+
             self.last_time_trigger = self.n_calls
         
         return True
