@@ -12,6 +12,31 @@ from typing import Dict, Any
 from trade_model import TradeModel
 import time
 import sys
+import threading
+
+# Global flag to control the progress indicator
+stop_progress = False
+
+def show_progress_continuous(message="Running backtest"):
+    """Continuous progress indicator that runs until stopped."""
+    global stop_progress
+    stop_progress = False
+    chars = "|/-\\"
+    i = 0
+    while not stop_progress:
+        char = chars[i % len(chars)]
+        sys.stdout.write(f'\r{message}... {char}')
+        sys.stdout.flush()
+        time.sleep(0.1)
+        i += 1
+
+def stop_progress_indicator():
+    """Stop the progress indicator thread."""
+    global stop_progress
+    stop_progress = True
+    time.sleep(0.2)  # Give thread time to terminate
+    sys.stdout.write('\r' + ' ' * 50 + '\r')  # Clear the progress line
+    sys.stdout.flush()
 
 # Configure logging
 logging.basicConfig(
@@ -38,7 +63,7 @@ def convert_to_serializable(obj: Any) -> Any:
     elif isinstance(obj, list):
         return [convert_to_serializable(i) for i in obj]
     elif isinstance(obj, dict):
-        return {k: convert_to_serializable(v) for k, v in obj.items()}
+        return {k: convert_to_serializable(v) for k, v in obj.items() }
     return obj
 
 def print_metrics(results: dict):
@@ -279,21 +304,26 @@ def main():
         if args.quiet:
             print("Running quiet backtest...")
             progress_thread = None
-            if len(df) > 5000:  # Only for large datasets
-                import threading
-                progress_thread = threading.Thread(target=lambda: [show_progress() for _ in range(100)])
+            
+            # Start continuous progress indicator
+            if len(df) > 1000:  # For any substantial dataset
+                progress_thread = threading.Thread(
+                    target=show_progress_continuous,
+                    args=("Running backtest",)
+                )
                 progress_thread.daemon = True
                 progress_thread.start()
-                
-            results = model.evaluate(
-                data=df,
-                initial_balance=args.initial_balance,
-                balance_per_lot=args.balance_per_lot
-            )
             
-            if progress_thread and progress_thread.is_alive():
-                sys.stdout.write('\r' + ' ' * 30 + '\r')  # Clear the progress indicator
-                sys.stdout.flush()
+            try:    
+                results = model.evaluate(
+                    data=df,
+                    initial_balance=args.initial_balance,
+                    balance_per_lot=args.balance_per_lot
+                )
+            finally:
+                # Always stop the progress indicator
+                if progress_thread and progress_thread.is_alive():
+                    stop_progress_indicator()
         else:
             print("Running detailed backtest...")
             results = model.backtest(
