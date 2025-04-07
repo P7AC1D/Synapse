@@ -78,9 +78,11 @@ class UnifiedEvalCallback(BaseCallback):
         else:
             self.eval_env.raw_data_backup = self.eval_env.raw_data.copy()
             
-    def _run_eval_episode(self, env) -> Dict[str, float]:
+    def _run_eval_episode(self, env, eval_seed: int = None, start_pos: int = None) -> Dict[str, float]:
         """Run a complete evaluation episode on given environment."""
-        obs, _ = env.reset()
+        if start_pos is not None:
+            env.env.current_step = start_pos
+        obs, _ = env.reset(seed=eval_seed)
         done = False
         lstm_states = None
         running_balance = env.env.initial_balance
@@ -140,11 +142,17 @@ class UnifiedEvalCallback(BaseCallback):
                 
     def _evaluate_performance(self) -> Dict[str, Dict[str, float]]:
         """Run comprehensive evaluation on all datasets."""
-        # Evaluate on validation set
-        val_metrics = self._run_eval_episode(self.eval_env)
+        # Generate consistent seed and start position for both evaluations
+        eval_seed = np.random.randint(0, 1000000)
+        if self.eval_env.env.random_start:
+            max_start = max(0, self.eval_env.env.data_length - 100)
+            start_pos = np.random.randint(0, max_start)
+        else:
+            start_pos = 0
         
-        # Evaluate on combined dataset
-        combined_metrics = self._run_eval_episode(self.combined_env)
+        # Use same seed and start position for both evaluations
+        combined_metrics = self._run_eval_episode(self.combined_env, eval_seed=eval_seed, start_pos=start_pos)
+        val_metrics = self._run_eval_episode(self.eval_env, eval_seed=eval_seed, start_pos=start_pos)
         
         # Calculate consistency score
         consistency_score = val_metrics['return'] / (combined_metrics['return'] + 1e-8)
