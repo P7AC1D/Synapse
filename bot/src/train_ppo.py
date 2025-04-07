@@ -629,7 +629,7 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=28,
+    parser.add_argument('--initial_window', type=int, default=40,
                       help='Initial training window in days (4 weeks)')
     parser.add_argument('--step_size', type=int, default=14,
                       help='Walk-forward step size in days (2 weeks)')
@@ -638,7 +638,7 @@ def main():
     parser.add_argument('--random_start', action='store_true',
                       help='Start training from random positions in the dataset')
     
-    parser.add_argument('--total_timesteps', type=int, default=100000,
+    parser.add_argument('--total_timesteps', type=int, default=384000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')

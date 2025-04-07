@@ -379,13 +379,9 @@ class TradingEnv(gym.Env, EzPickle):
             self.trade_metrics['avg_profit'] = sum(t["pnl"] for t in winning_trades) / len(winning_trades) if winning_trades else 0.0
             self.trade_metrics['avg_loss'] = sum(t["pnl"] for t in losing_trades) / len(losing_trades) if losing_trades else 0.0
         
-        # Reward based on P/L and hold time
-        hold_factor = min(1.0, hold_time / 20)  # Scale factor based on hold time
-        
-        # Base reward on P/L relative to account size
+        # Base reward on P/L relative to account size only
         normalized_pnl = pnl / self.initial_balance * 100
-        
-        return normalized_pnl * hold_factor
+        return normalized_pnl
 
     def _manage_position(self) -> float:
         """Calculate current position's unrealized P/L.
