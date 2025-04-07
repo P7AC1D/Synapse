@@ -402,7 +402,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         end_fraction=0.95
     )
     
-    # Update the policy_kwargs to add dropout
+    # Update the policy_kwargs by removing the unsupported dropout parameter
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
         "lstm_hidden_size": 128,          # Keep effective LSTM size
@@ -414,24 +414,23 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
             "vf": [64, 32]                # Symmetric critic network
         },
         "activation_fn": th.nn.ReLU,      # Explicitly define activation
-        "dropout": 0.15,                  # Add dropout for regularization
         "optimizer_kwargs": {
             "eps": 1e-5,
-            "weight_decay": 1e-7          # Keep reduced weight decay
+            "weight_decay": 5e-7          # Increased weight decay acts as regularization
         }
     }
 
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=5e-4,           # Reduced learning rate for stability
+        learning_rate=3e-4,           # Reduced learning rate for stability
         n_steps=256,                  # Keep longer sequences for context
         batch_size=64,                # Increased batch size to reduce variance
         gamma=0.99,                   # Keep discount factor
         gae_lambda=0.95,              # Keep lambda value
         clip_range=0.2,               # Reduced clipping for more stability
         clip_range_vf=0.2,            # Match policy clipping
-        ent_coef=0.02,                # Slightly reduced entropy for more exploitation
+        ent_coef=0.025,                # Slightly reduced entropy for more exploitation
         vf_coef=0.5,                  # Keep value coefficient
         max_grad_norm=0.3,            # Lower gradient norm for more stability
         use_sde=False,                
