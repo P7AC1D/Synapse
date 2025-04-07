@@ -18,14 +18,20 @@ from gymnasium import spaces
 
 class CustomEpsilonCallback(BaseCallback):
     """Custom callback for epsilon decay during training"""
-    def __init__(self, start_eps=0.4, end_eps=0.05, decay_timesteps=40000):  # Increased exploration params
+    def __init__(self, start_eps=0.5, end_eps=0.02, decay_timesteps=60000, iteration=0):  # Enhanced exploration
         super().__init__()
         self.start_eps = start_eps
         self.end_eps = end_eps
-        self.decay_timesteps = min(decay_timesteps, 40000)  # Increased cap for longer decay
+        self.decay_timesteps = min(decay_timesteps, 60000)  # Extended cap for longer exploration
+        self.iteration = iteration  # Track training iteration
         
     def _on_step(self) -> bool:
-        progress = min(1.0, self.num_timesteps / self.decay_timesteps)
+        # Use slower decay in early iterations
+        if self.iteration <= 1:
+            progress = min(1.0, (self.num_timesteps / self.decay_timesteps) ** 1.5)  # Slower decay curve
+        else:
+            progress = min(1.0, self.num_timesteps / self.decay_timesteps)
+            
         current_eps = self.start_eps + progress * (self.end_eps - self.start_eps)
         
         if hasattr(self.model, 'policy') and hasattr(self.model.policy, 'exploration_rate'):
@@ -388,12 +394,12 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         train_env,
         learning_rate=1e-3,           # Higher learning rate for faster learning
         n_steps=256,                  # Longer sequences for better context
-        batch_size=64,                # Larger batches for more stable updates
-        gamma=0.99,                   # Shorter-term rewards
-        gae_lambda=0.95,              # Lower lambda for more immediate advantages
-        clip_range=0.2,               # Wider clipping for more policy freedom
-        clip_range_vf=0.2,            # Match policy clipping
-        ent_coef=0.01,                # Higher entropy for more exploration
+        batch_size=32,                # Start with smaller batches for more exploration
+        gamma=0.99,                   # Maintain shorter-term rewards
+        gae_lambda=0.95,              # Keep lower lambda for immediate advantages
+        clip_range=0.3,               # Even wider clipping for more exploration
+        clip_range_vf=0.3,            # Match policy clipping
+        ent_coef=0.03,                # Increased entropy for more exploration
         vf_coef=0.5,                  # Lower value coefficient
         max_grad_norm=0.5,            # Higher gradient norm for faster learning
         use_sde=False,                
@@ -406,10 +412,12 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     callbacks = []
     
     # Configure epsilon exploration tuned for 6 features
+    # Configure enhanced exploration with iteration awareness
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.2,     # Lower initial exploration due to simpler state space
-        end_eps=0.02,      # Lower final exploration
-        decay_timesteps=int(args.total_timesteps * 0.6)  # Faster decay for simpler learning
+        start_eps=0.5,     # Higher initial exploration
+        end_eps=0.02,      # Keep same final exploration
+        decay_timesteps=int(args.total_timesteps * 0.8),  # Extended decay period
+        iteration=iteration  # Pass iteration number for adaptive decay
     )
     callbacks.append(epsilon_callback)
     
@@ -531,10 +539,13 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             
             callbacks = []
             
+            # Adjust exploration based on iteration progress
+            start_eps = 0.3 if iteration < 3 else 0.1  # Higher exploration in early iterations
             epsilon_callback = CustomEpsilonCallback(
-                start_eps=0.1,   # Lower starting exploration for continued training
-                end_eps=0.02,    # Match final exploration target
-                decay_timesteps=int(period_timesteps * 0.5)  # Faster decay since model is pre-trained
+                start_eps=start_eps,
+                end_eps=0.02,    # Keep same final exploration
+                decay_timesteps=int(period_timesteps * 0.7),  # Slower decay
+                iteration=iteration
             )
             callbacks.append(epsilon_callback)            
             
