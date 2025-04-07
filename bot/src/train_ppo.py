@@ -187,21 +187,67 @@ class UnifiedEvalCallback(BaseCallback):
             combined = metrics['combined']
             val = metrics['validation']
             
+            def print_detailed_metrics(env, name, metrics):
+                """Helper function to print detailed metrics for each dataset"""
+                print(f"\n===== {name} Metrics =====")
+                print(f"  Balance: {metrics['balance']:.2f}")
+                print(f"  Return: {metrics['return']*100:.2f}%")
+                print(f"  Max Drawdown: {metrics['max_drawdown']*100:.2f}%")
+                print(f"  Win Rate: {metrics['win_rate']*100:.2f}%")
+                print(f"  Total Reward: {metrics['reward']:.2f}")
+                
+                # Performance Metrics
+                total_trades = len(env.env.trades)
+                winning_trades = [t for t in env.env.trades if t['pnl'] > 0]
+                losing_trades = [t for t in env.env.trades if t['pnl'] <= 0]
+                
+                print("\n  Performance Metrics:")
+                print(f"    Total Trades: {total_trades}")
+                print(f"    Average Win: {np.mean([t['pnl'] for t in winning_trades]):.2f}" if winning_trades else "    Average Win: N/A")
+                print(f"    Average Loss: {np.mean([t['pnl'] for t in losing_trades]):.2f}" if losing_trades else "    Average Loss: N/A")
+                profit_factor = abs(sum(t['pnl'] for t in winning_trades) / sum(t['pnl'] for t in losing_trades)) if losing_trades else float('inf')
+                print(f"    Profit Factor: {profit_factor:.2f}")
+                
+                # Hold Time Analysis
+                if env.env.trades:
+                    hold_times = [t['hold_time'] for t in env.env.trades]
+                    win_hold_times = [t['hold_time'] for t in winning_trades]
+                    loss_hold_times = [t['hold_time'] for t in losing_trades]
+                    
+                    print("\n  Hold Time Analysis:")
+                    print(f"    Average Hold Time: {np.mean(hold_times):.1f} bars")
+                    print(f"    Winners Hold Time: {np.mean(win_hold_times):.1f} bars" if win_hold_times else "    Winners Hold Time: N/A")
+                    print(f"    Losers Hold Time: {np.mean(loss_hold_times):.1f} bars" if loss_hold_times else "    Losers Hold Time: N/A")
+                
+                # Directional Performance
+                if env.env.trades:
+                    long_trades = [t for t in env.env.trades if t['direction'] == 1]
+                    short_trades = [t for t in env.env.trades if t['direction'] == -1]
+                    
+                    print("\n  Directional Performance:")
+                    
+                    if long_trades:
+                        long_wins = [t for t in long_trades if t['pnl'] > 0]
+                        long_pct = len(long_trades) / total_trades * 100
+                        long_wr = len(long_wins) / len(long_trades) * 100 if long_trades else 0
+                        long_avg = np.mean([t['pnl'] for t in long_trades])
+                        print(f"    Long Trades: {len(long_trades)} ({long_pct:.1f}%)")
+                        print(f"    Long Win Rate: {long_wr:.1f}% (Avg PnL: {long_avg:.2f})")
+                    
+                    if short_trades:
+                        short_wins = [t for t in short_trades if t['pnl'] > 0]
+                        short_pct = len(short_trades) / total_trades * 100
+                        short_wr = len(short_wins) / len(short_trades) * 100 if short_trades else 0
+                        short_avg = np.mean([t['pnl'] for t in short_trades])
+                        print(f"    Short Trades: {len(short_trades)} ({short_pct:.1f}%)")
+                        print(f"    Short Win Rate: {short_wr:.1f}% (Avg PnL: {short_avg:.2f})")
+
             if self.verbose > 0:
                 print(f"\n===== Evaluation at timesteps={self.num_timesteps} =====")
-                print(f"Combined Dataset Metrics:")
-                print(f"  Balance: {combined['balance']:.2f}")
-                print(f"  Return: {combined['return']*100:.2f}%")
-                print(f"  Max Drawdown: {combined['max_drawdown']*100:.2f}%")
-                print(f"  Win Rate: {combined['win_rate']*100:.2f}%")
-                print(f"  Total Reward: {combined['reward']:.2f}")  # Add this line
-                
-                print(f"\nValidation Set Metrics:")
-                print(f"  Balance: {val['balance']:.2f}")
-                print(f"  Return: {val['return']*100:.2f}%")
-                print(f"  Max Drawdown: {val['max_drawdown']*100:.2f}%")
-                print(f"  Win Rate: {val['win_rate']*100:.2f}%")
-                print(f"  Total Reward: {val['reward']:.2f}")  # Add this line
+                # Print detailed metrics for combined dataset
+                print_detailed_metrics(self.combined_env, "Combined Dataset", combined)
+                # Print detailed metrics for validation dataset
+                print_detailed_metrics(self.eval_env, "Validation Set", val)
             
             if self.log_path is not None:
                 self.eval_results.append({
@@ -303,15 +349,10 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"Trade Quality: {metrics['scores']['combined_quality']:.2f}")
             
             # Print final scores summary
-            print("\n===== Final Performance Metrics =====")
+            print("\n===== Quality Scores =====")
             print(f"Combined Dataset Score: {metrics['scores']['combined_quality']:.3f}")
             print(f"Validation Score: {metrics['scores']['val_quality']:.3f}")
             print(f"Overall Score: {metrics['combined']['return'] * 0.4 - metrics['combined']['max_drawdown'] * 0.3 + metrics['scores']['consistency'] * 0.2 + metrics['scores']['combined_quality'] * 0.1:.3f}")
-            
-            if hasattr(self.eval_env, 'env'):
-                self.eval_env.env.render()
-            else:
-                self.eval_env.render()
                 
             self.last_time_trigger = self.n_calls
         
