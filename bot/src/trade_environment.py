@@ -284,7 +284,7 @@ class TradingEnv(gym.Env, EzPickle):
             self.MIN_LOTS, 
             min(
                 self.MAX_LOTS,
-                round(self.balance / self.BALANCE_PER_LOT, 2)
+                round(self.balance * self.MIN_LOTS / self.BALANCE_PER_LOT, 2)
             )
         )
         
