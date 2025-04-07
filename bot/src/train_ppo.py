@@ -176,17 +176,27 @@ class UnifiedEvalCallback(BaseCallback):
         return result
     
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
+        """Determine if current model should be saved as best."""
         validation = metrics['validation']
         combined = metrics['combined']
-        scores = metrics['scores']
+        scores = metrics.get('scores', {})
+        
+        # IMPORTANT: Reject any model with negative validation return
+        if validation['return'] < 0:
+            return False
         
         # Calculate validation-focused score
         score = (
-            validation['return'] * 0.4 +          # Strong weight on validation return
-            -validation['max_drawdown'] * 0.3 +   # Heavy penalty on validation drawdown
-            scores['consistency'] * 0.2 +         # Reward consistency
-            combined['return'] * 0.1              # Small weight on overall return
+            validation['return'] * 0.4 +                  # Strong weight on validation return
+            -validation.get('max_drawdown', 0) * 0.3 +    # Penalize drawdown
+            min(scores.get('consistency', 0), 0.5) * 0.2 + # Reward consistency (capped)
+            combined['return'] * 0.1                      # Small weight on combined return
         )
+        
+        # For debugging, print score details
+        print(f"Model score: {score:.4f} (Validation: {validation['return']*100:.2f}%, "
+              f"Drawdown: {validation.get('max_drawdown', 0)*100:.2f}%, " 
+              f"Consistency: {scores.get('consistency', 0):.2f})")
         
         if score > self.best_score:
             self.best_score = score
