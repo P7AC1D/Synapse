@@ -121,6 +121,12 @@ def plot_results(results: dict, save_path: str = None):
     
     # Convert trades to DataFrame for plotting
     trades = results.get('trades', [])
+    
+    # Handle empty trades case gracefully
+    if not trades:
+        print("No trades to plot. Skipping visualization.")
+        return
+        
     trades_df = pd.DataFrame(trades)
     
     # Extract balance history from trades
@@ -129,7 +135,7 @@ def plot_results(results: dict, save_path: str = None):
     balance_history.append(current_balance)
     
     for trade in trades:
-        current_balance += trade['pnl']
+        current_balance += trade.get('pnl', 0)
         balance_history.append(current_balance)
     
     # Plot balance curve and equity curve
@@ -169,7 +175,7 @@ def plot_results(results: dict, save_path: str = None):
     
     # Plot trade PnLs with performance analytics
     plt.subplot(613)
-    if not trades_df.empty:
+    if not trades_df.empty and 'pnl' in trades_df.columns:
         trades_df['pnl_cum'] = trades_df['pnl'].cumsum()
         plt.plot(trades_df['pnl_cum'], label='Cumulative PnL')
         plt.title('Trade Performance')
@@ -178,9 +184,9 @@ def plot_results(results: dict, save_path: str = None):
         plt.legend()
         plt.grid(True)
     
-    # Plot win rate and drawdown analysis
+    # Plot win rate and drawdown analysis - FIX HERE
     plt.subplot(614)
-    if not trades_df.empty:
+    if not trades_df.empty and 'pnl' in trades_df.columns:
         rolling_window = min(50, len(trades_df))
         trades_df['win'] = trades_df['pnl'] > 0
         rolling_winrate = trades_df['win'].rolling(rolling_window).mean() * 100
@@ -192,7 +198,11 @@ def plot_results(results: dict, save_path: str = None):
         ax1.set_ylabel('Win Rate %', color='g')
         ax1.tick_params(axis='y', labelcolor='g')
         
-        ax2.plot(trades_df['drawdown'], 'r-', alpha=0.3, label='Drawdown')
+        # Calculate drawdown per trade - FIXED!
+        # This ensures we have a drawdown value for each trade
+        trade_drawdowns = pd.Series(drawdowns.iloc[1:].values[:len(trades_df)])
+        
+        ax2.plot(trade_drawdowns, 'r-', alpha=0.3, label='Drawdown')
         ax2.set_ylabel('Drawdown %', color='r')
         ax2.tick_params(axis='y', labelcolor='r')
         
