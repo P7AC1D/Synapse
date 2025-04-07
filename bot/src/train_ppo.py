@@ -193,83 +193,116 @@ class UnifiedEvalCallback(BaseCallback):
             combined = metrics['combined']
             val = metrics['validation']
             
-            def print_detailed_metrics(env, name, metrics):
-                """Helper function to print detailed metrics for each dataset"""
+            def get_detailed_metrics(env, name, metrics):
+                """Helper function to collect and print detailed metrics for each dataset"""
+                basic_metrics = {
+                    "name": name,
+                    "balance": metrics['balance'],
+                    "return": metrics['return'] * 100,
+                    "max_drawdown": metrics['max_drawdown'] * 100,
+                    "win_rate": metrics['win_rate'] * 100,
+                    "total_reward": metrics['reward']
+                }
+
                 print(f"\n===== {name} Metrics =====")
-                print(f"  Balance: {metrics['balance']:.2f}")
-                print(f"  Return: {metrics['return']*100:.2f}%")
-                print(f"  Max Drawdown: {metrics['max_drawdown']*100:.2f}%")
-                print(f"  Win Rate: {metrics['win_rate']*100:.2f}%")
-                print(f"  Total Reward: {metrics['reward']:.2f}")
+                print(f"  Balance: {basic_metrics['balance']:.2f}")
+                print(f"  Return: {basic_metrics['return']:.2f}%")
+                print(f"  Max Drawdown: {basic_metrics['max_drawdown']:.2f}%")
+                print(f"  Win Rate: {basic_metrics['win_rate']:.2f}%")
+                print(f"  Total Reward: {basic_metrics['total_reward']:.2f}")
                 
                 # Performance Metrics
                 total_trades = len(env.env.trades)
                 winning_trades = [t for t in env.env.trades if t['pnl'] > 0]
                 losing_trades = [t for t in env.env.trades if t['pnl'] <= 0]
                 
+                avg_win = np.mean([t['pnl'] for t in winning_trades]) if winning_trades else 0
+                avg_loss = np.mean([t['pnl'] for t in losing_trades]) if losing_trades else 0
+                profit_factor = abs(sum(t['pnl'] for t in winning_trades) / sum(t['pnl'] for t in losing_trades)) if losing_trades else float('inf')
+                
+                performance_metrics = {
+                    "total_trades": total_trades,
+                    "average_win": float(avg_win),
+                    "average_loss": float(avg_loss),
+                    "profit_factor": float(profit_factor)
+                }
+                
                 print("\n  Performance Metrics:")
                 print(f"    Total Trades: {total_trades}")
-                print(f"    Average Win: {np.mean([t['pnl'] for t in winning_trades]):.2f}" if winning_trades else "    Average Win: N/A")
-                print(f"    Average Loss: {np.mean([t['pnl'] for t in losing_trades]):.2f}" if losing_trades else "    Average Loss: N/A")
-                profit_factor = abs(sum(t['pnl'] for t in winning_trades) / sum(t['pnl'] for t in losing_trades)) if losing_trades else float('inf')
+                print(f"    Average Win: {avg_win:.2f}" if winning_trades else "    Average Win: N/A")
+                print(f"    Average Loss: {avg_loss:.2f}" if losing_trades else "    Average Loss: N/A")
                 print(f"    Profit Factor: {profit_factor:.2f}")
                 
                 # Hold Time Analysis
+                hold_metrics = {}
                 if env.env.trades:
                     hold_times = [t['hold_time'] for t in env.env.trades]
                     win_hold_times = [t['hold_time'] for t in winning_trades]
                     loss_hold_times = [t['hold_time'] for t in losing_trades]
                     
+                    hold_metrics = {
+                        "average_hold_time": float(np.mean(hold_times)),
+                        "winners_hold_time": float(np.mean(win_hold_times)) if win_hold_times else 0,
+                        "losers_hold_time": float(np.mean(loss_hold_times)) if loss_hold_times else 0
+                    }
+                    
                     print("\n  Hold Time Analysis:")
-                    print(f"    Average Hold Time: {np.mean(hold_times):.1f} bars")
-                    print(f"    Winners Hold Time: {np.mean(win_hold_times):.1f} bars" if win_hold_times else "    Winners Hold Time: N/A")
-                    print(f"    Losers Hold Time: {np.mean(loss_hold_times):.1f} bars" if loss_hold_times else "    Losers Hold Time: N/A")
+                    print(f"    Average Hold Time: {hold_metrics['average_hold_time']:.1f} bars")
+                    print(f"    Winners Hold Time: {hold_metrics['winners_hold_time']:.1f} bars" if win_hold_times else "    Winners Hold Time: N/A")
+                    print(f"    Losers Hold Time: {hold_metrics['losers_hold_time']:.1f} bars" if loss_hold_times else "    Losers Hold Time: N/A")
                 
                 # Directional Performance
+                directional_metrics = {}
                 if env.env.trades:
                     long_trades = [t for t in env.env.trades if t['direction'] == 1]
                     short_trades = [t for t in env.env.trades if t['direction'] == -1]
                     
                     print("\n  Directional Performance:")
                     
+                    directional_metrics = {
+                        "long": {
+                            "count": len(long_trades),
+                            "percentage": float(len(long_trades) / total_trades * 100) if total_trades > 0 else 0,
+                            "win_rate": 0,
+                            "avg_pnl": 0
+                        },
+                        "short": {
+                            "count": len(short_trades),
+                            "percentage": float(len(short_trades) / total_trades * 100) if total_trades > 0 else 0,
+                            "win_rate": 0,
+                            "avg_pnl": 0
+                        }
+                    }
+                    
                     if long_trades:
                         long_wins = [t for t in long_trades if t['pnl'] > 0]
-                        long_pct = len(long_trades) / total_trades * 100
-                        long_wr = len(long_wins) / len(long_trades) * 100 if long_trades else 0
-                        long_avg = np.mean([t['pnl'] for t in long_trades])
-                        print(f"    Long Trades: {len(long_trades)} ({long_pct:.1f}%)")
-                        print(f"    Long Win Rate: {long_wr:.1f}% (Avg PnL: {long_avg:.2f})")
+                        directional_metrics["long"]["win_rate"] = float(len(long_wins) / len(long_trades) * 100)
+                        directional_metrics["long"]["avg_pnl"] = float(np.mean([t['pnl'] for t in long_trades]))
+                        print(f"    Long Trades: {len(long_trades)} ({directional_metrics['long']['percentage']:.1f}%)")
+                        print(f"    Long Win Rate: {directional_metrics['long']['win_rate']:.1f}% (Avg PnL: {directional_metrics['long']['avg_pnl']:.2f})")
                     
                     if short_trades:
                         short_wins = [t for t in short_trades if t['pnl'] > 0]
-                        short_pct = len(short_trades) / total_trades * 100
-                        short_wr = len(short_wins) / len(short_trades) * 100 if short_trades else 0
-                        short_avg = np.mean([t['pnl'] for t in short_trades])
-                        print(f"    Short Trades: {len(short_trades)} ({short_pct:.1f}%)")
-                        print(f"    Short Win Rate: {short_wr:.1f}% (Avg PnL: {short_avg:.2f})")
+                        directional_metrics["short"]["win_rate"] = float(len(short_wins) / len(short_trades) * 100)
+                        directional_metrics["short"]["avg_pnl"] = float(np.mean([t['pnl'] for t in short_trades]))
+                        print(f"    Short Trades: {len(short_trades)} ({directional_metrics['short']['percentage']:.1f}%)")
+                        print(f"    Short Win Rate: {directional_metrics['short']['win_rate']:.1f}% (Avg PnL: {directional_metrics['short']['avg_pnl']:.2f})")
 
-            if self.verbose > 0:
-                print(f"\n===== Evaluation at timesteps={self.num_timesteps} =====")
-                # Print detailed metrics for combined dataset
-                print_detailed_metrics(self.combined_env, "Combined Dataset", combined)
-                # Print detailed metrics for validation dataset
-                print_detailed_metrics(self.eval_env, "Validation Set", val)
+                # Combine all metrics
+                return {**basic_metrics, 
+                       "performance": performance_metrics,
+                       "hold_times": hold_metrics,
+                       "directional": directional_metrics}
+
+            # Get detailed metrics for both datasets
+            combined_metrics = get_detailed_metrics(self.combined_env, "Combined Dataset", combined)
+            val_metrics = get_detailed_metrics(self.eval_env, "Validation Set", val)
             
             if self.log_path is not None:
                 self.eval_results.append({
                     'timesteps': self.num_timesteps,
-                    'combined': {
-                        'balance': float(combined['balance']),
-                        'return': float(combined['return']),
-                        'max_drawdown': float(combined['max_drawdown']),
-                        'win_rate': float(combined['win_rate'])
-                    },
-                    'validation': {
-                        'balance': float(val['balance']),
-                        'return': float(val['return']),
-                        'max_drawdown': float(val['max_drawdown']),
-                        'win_rate': float(val['win_rate'])
-                    }
+                    'combined': combined_metrics,
+                    'validation': val_metrics
                 })
                 
                 iteration_file = os.path.join(self.log_path, f"eval_results_iter_{self.iteration}.json")
