@@ -402,36 +402,38 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         end_fraction=0.95
     )
     
-    # Configure optimized policy for 6-feature input
+    # Update the policy_kwargs to add dropout
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 128,           # Increased for better memory
+        "lstm_hidden_size": 128,          # Keep effective LSTM size
         "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
         "shared_lstm": True,              # Share LSTM to reduce parameters
-        "enable_critic_lstm": False,      # Disable separate critic LSTM for better value estimation
+        "enable_critic_lstm": False,      # Disable separate critic LSTM
         "net_arch": {
             "pi": [64, 32],               # Wider networks for better feature representation
             "vf": [64, 32]                # Symmetric critic network
         },
+        "activation_fn": th.nn.ReLU,      # Explicitly define activation
+        "dropout": 0.15,                  # Add dropout for regularization
         "optimizer_kwargs": {
             "eps": 1e-5,
-            "weight_decay": 1e-7          # Further reduced weight decay
+            "weight_decay": 1e-7          # Keep reduced weight decay
         }
     }
-    
+
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=1e-3,           # Higher learning rate for faster learning
-        n_steps=256,                  # Longer sequences for better context
-        batch_size=32,                # Start with smaller batches for more exploration
-        gamma=0.99,                   # Maintain shorter-term rewards
-        gae_lambda=0.95,              # Keep lower lambda for immediate advantages
-        clip_range=0.3,               # Even wider clipping for more exploration
-        clip_range_vf=0.3,            # Match policy clipping
-        ent_coef=0.03,                # Increased entropy for more exploration
-        vf_coef=0.5,                  # Lower value coefficient
-        max_grad_norm=0.5,            # Higher gradient norm for faster learning
+        learning_rate=5e-4,           # Reduced learning rate for stability
+        n_steps=256,                  # Keep longer sequences for context
+        batch_size=64,                # Increased batch size to reduce variance
+        gamma=0.99,                   # Keep discount factor
+        gae_lambda=0.95,              # Keep lambda value
+        clip_range=0.2,               # Reduced clipping for more stability
+        clip_range_vf=0.2,            # Match policy clipping
+        ent_coef=0.02,                # Slightly reduced entropy for more exploitation
+        vf_coef=0.5,                  # Keep value coefficient
+        max_grad_norm=0.3,            # Lower gradient norm for more stability
         use_sde=False,                
         policy_kwargs=policy_kwargs,
         verbose=0,
@@ -569,12 +571,12 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             
             callbacks = []
             
-            # Adjust exploration based on iteration progress
-            start_eps = 0.3 if iteration < 3 else 0.1  # Higher exploration in early iterations
+            # Adjust exploration based on iteration progress with better decay
+            start_eps = 0.25 if iteration < 3 else 0.1  # Slightly lower exploration
             epsilon_callback = CustomEpsilonCallback(
                 start_eps=start_eps,
-                end_eps=0.02,    # Keep same final exploration
-                decay_timesteps=int(period_timesteps * 0.7),  # Slower decay
+                end_eps=0.01,    # Lower end exploration for better exploitation
+                decay_timesteps=int(period_timesteps * 0.75),  # Extended decay period
                 iteration=iteration
             )
             callbacks.append(epsilon_callback)            
