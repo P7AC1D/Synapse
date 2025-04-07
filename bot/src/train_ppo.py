@@ -185,18 +185,33 @@ class UnifiedEvalCallback(BaseCallback):
         if validation['return'] < 0:
             return False
         
+        # Properly handle consistency for different scenarios
+        consistency = scores.get('consistency', 0)
+        if combined['return'] < 0 and validation['return'] > 0:
+            # Model improved on validation data - this is good!
+            adjusted_consistency = 1.0  # Reward this case
+        else:
+            # Normal case - use bounded consistency
+            adjusted_consistency = max(-0.5, min(consistency, 1.0))
+        
         # Calculate validation-focused score
         score = (
-            validation['return'] * 0.4 +                  # Strong weight on validation return
+            validation['return'] * 0.6 +                  # Higher weight on validation
             -validation.get('max_drawdown', 0) * 0.3 +    # Penalize drawdown
-            min(scores.get('consistency', 0), 0.5) * 0.2 + # Reward consistency (capped)
-            combined['return'] * 0.1                      # Small weight on combined return
+            adjusted_consistency * 0.1                    # Small reward for consistency
         )
         
-        # For debugging, print score details
-        print(f"Model score: {score:.4f} (Validation: {validation['return']*100:.2f}%, "
-              f"Drawdown: {validation.get('max_drawdown', 0)*100:.2f}%, " 
-              f"Consistency: {scores.get('consistency', 0):.2f})")
+        # Add profit factor bonus if available
+        if 'performance' in validation and 'profit_factor' in validation['performance']:
+            pf = validation['performance']['profit_factor']
+            if pf > 1.0:  # Only reward profit factors above 1.0
+                profit_factor_bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
+                score += profit_factor_bonus
+        
+        # Debug output
+        print(f"Model score: {score:.4f} (Val Return: {validation['return']*100:.2f}%, "
+              f"Drawdown: {validation.get('max_drawdown', 0)*100:.2f}%, "
+              f"Adj Consistency: {adjusted_consistency:.2f})")
         
         if score > self.best_score:
             self.best_score = score
