@@ -10,6 +10,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import Dict, Any
 from trade_model import TradeModel
+import time
+import sys
 
 # Configure logging
 logging.basicConfig(
@@ -204,7 +206,13 @@ def plot_results(results: dict, save_path: str = None):
         plt.savefig(save_path, bbox_inches='tight')
     plt.show()
 
-
+def show_progress(message="Running backtest"):
+    """Simple progress indicator for long-running processes."""
+    chars = "|/-\\"
+    for char in chars:
+        sys.stdout.write(f'\r{message}... {char}')
+        sys.stdout.flush()
+        time.sleep(0.1)
 
 def main():
     parser = argparse.ArgumentParser(description='Backtest trained trading model')
@@ -223,6 +231,12 @@ def main():
                       help='End date for backtest (YYYY-MM-DD)')
     parser.add_argument('--plot', action='store_true',
                       help='Generate plots')
+    parser.add_argument('--quiet', action='store_true',
+                      help='Run backtesting without verbose logging')
+    parser.add_argument('--output_json', type=str, default=None,
+                      help='Path to save backtest results in JSON format')
+    parser.add_argument('--output_plot', type=str, default=None,
+                      help='Path to save backtest plot')
     
     args = parser.parse_args()
     
@@ -247,24 +261,66 @@ def main():
         
         print(f"Loaded {len(df):,d} bars from {df.index[0]} to {df.index[-1]}")
         
+        # Validate data
+        missing_columns = [col for col in ['open', 'close', 'high', 'low', 'spread'] 
+                          if col not in df.columns]
+        if missing_columns:
+            print(f"WARNING: Dataset missing columns: {missing_columns}")
+            print("These columns are required for backtesting. Will attempt to continue.")
+        
         # Initialize model
         print(f"\nInitializing model from: {args.model_path}")
-        model = TradeModel(model_path=args.model_path)
+        model = TradeModel(
+            model_path=args.model_path,
+            balance_per_lot=args.balance_per_lot  # Pass the parameter consistently
+        )
         
         # Run backtest
-        results = model.backtest(
-            data=df,
-            initial_balance=args.initial_balance,
-            balance_per_lot=args.balance_per_lot
-        )
+        if args.quiet:
+            print("Running quiet backtest...")
+            progress_thread = None
+            if len(df) > 5000:  # Only for large datasets
+                import threading
+                progress_thread = threading.Thread(target=lambda: [show_progress() for _ in range(100)])
+                progress_thread.daemon = True
+                progress_thread.start()
+                
+            results = model.evaluate(
+                data=df,
+                initial_balance=args.initial_balance,
+                balance_per_lot=args.balance_per_lot
+            )
+            
+            if progress_thread and progress_thread.is_alive():
+                sys.stdout.write('\r' + ' ' * 30 + '\r')  # Clear the progress indicator
+                sys.stdout.flush()
+        else:
+            print("Running detailed backtest...")
+            results = model.backtest(
+                data=df,
+                initial_balance=args.initial_balance,
+                balance_per_lot=args.balance_per_lot
+            )
         
         # Print metrics
         print("\nBacktest Results:")
         print_metrics(results)
         
+        # Save results to JSON if requested
+        if args.output_json:
+            import json
+            try:
+                with open(args.output_json, 'w') as f:
+                    json.dump(convert_to_serializable(results), f, indent=4)
+                print(f"Results saved to {args.output_json}")
+            except Exception as e:
+                print(f"Error saving results to JSON: {e}")
+
         # Plot results if requested
-        if args.plot:
-            plot_results(results)
+        if args.plot or args.output_plot:
+            plot_results(results, save_path=args.output_plot)
+            if args.output_plot:
+                print(f"Plot saved to {args.output_plot}")
         
     except Exception as e:
         print(f"\nError during backtesting: {str(e)}")

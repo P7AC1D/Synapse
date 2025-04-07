@@ -13,16 +13,18 @@ from trade_environment import TradingEnv
 class TradeModel:
     """Class for loading and making predictions with a trained PPO-LSTM model."""
     
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: str, balance_per_lot: float = 1000.0):
         """
         Initialize the trade model.
         
         Args:
             model_path: Path to the saved model file
+            balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
         """
         self.logger = logging.getLogger(__name__)
         self.model_path = Path(model_path)
         self.model = None
+        self.balance_per_lot = balance_per_lot
         self.required_columns = [
             'open',   # Required for price action features
             'close',  # Price data
@@ -71,7 +73,7 @@ class TradeModel:
         # Check if all required columns are present
         missing_columns = [col for col in self.required_columns if col not in data.columns]
         
-        if missing_columns:
+        if (missing_columns):
             error_msg = f"Data is missing required columns: {missing_columns}"
             self.logger.error(error_msg)
             raise ValueError(error_msg)
@@ -83,10 +85,11 @@ class TradeModel:
         Make a prediction for the latest data point.
         
         Args:
-            data_frame: DataFrame with market data
+            data_frame: DataFrame with market data containing at minimum:
+                       'open', 'close', 'high', 'low', 'spread' columns
             
         Returns:
-            Dictionary with prediction details
+            Dictionary with prediction details including 'action' (0-3) and 'description'
         
         Raises:
             ValueError: If model not loaded or data preparation fails
@@ -106,7 +109,7 @@ class TradeModel:
         env = TradingEnv(
             data=data,
             random_start=False,
-            balance_per_lot=1000.0  # Match training environment
+            balance_per_lot=self.balance_per_lot  # Use configured parameter
         )
         
         # Get normalized observation
@@ -119,7 +122,7 @@ class TradeModel:
             deterministic=True     # Use deterministic for backtesting
         )
         
-        # Process action (0=hold, 1=buy, 2=sell, 3=close)
+        # Process action (0=hold, 1=buy, 2=sell, 3=close) with better error handling
         discrete_action = int(action) % 4
         
         # Create prediction result
@@ -137,10 +140,14 @@ class TradeModel:
         
     def preload_states(self, historical_data: pd.DataFrame) -> None:
         """
-        Preload LSTM states with historical data.
+        Preload LSTM states with historical data to build context.
+        
+        This is critical for LSTM models as they need sequential context.
+        Call this before making predictions on new data to ensure proper context.
         
         Args:
-            historical_data: DataFrame with past market data
+            historical_data: DataFrame with past market data containing at minimum:
+                             'open', 'close', 'high', 'low', 'spread' columns
             
         Raises:
             ValueError: If model not loaded or data preparation fails
@@ -158,7 +165,7 @@ class TradeModel:
         env = TradingEnv(
             data=data,
             random_start=False,
-            balance_per_lot=1000.0  # Match training environment
+            balance_per_lot=self.balance_per_lot  # Use configured parameter
         )
         
         # Step through historical data to build up LSTM state
@@ -276,7 +283,17 @@ class TradeModel:
         return self._calculate_backtest_metrics(env, step, total_reward)
 
     def _calculate_backtest_metrics(self, env: TradingEnv, total_steps: int, total_reward: float) -> Dict[str, Any]:
-        """Calculate metrics from backtest results."""
+        """
+        Calculate metrics from backtest results.
+        
+        Args:
+            env: Trading environment after backtest completion
+            total_steps: Number of steps taken in backtest
+            total_reward: Total cumulative reward from backtest
+            
+        Returns:
+            Dictionary with performance metrics
+        """
         metrics = {
             'final_balance': float(env.balance),
             'initial_balance': float(env.initial_balance),
@@ -284,27 +301,52 @@ class TradeModel:
             'total_trades': len(env.trades),
             'win_count': env.win_count,
             'loss_count': env.loss_count,
-            'win_rate': (env.win_count / len(env.trades) * 100) if env.trades else 0.0,
+            'win_rate': 0.0,  # Will be updated if trades exist
             'total_steps': total_steps,
             'total_reward': total_reward,
             'active_positions': 1 if env.current_position is not None else 0,
-            'trades': env.trades
         }
         
+        # Safely add win rate
+        if metrics['total_trades'] > 0:
+            metrics['win_rate'] = (env.win_count / metrics['total_trades'] * 100)
+        
+        # Initialize optional metrics with default values
+        metrics.update({
+            'long_trades': 0,
+            'short_trades': 0,
+            'long_win_rate': 0.0,
+            'short_win_rate': 0.0,
+            'total_profit': 0.0,
+            'total_loss': 0.0,
+            'profit_factor': 0.0,
+            'expected_value': 0.0,
+            'max_drawdown_pct': 0.0,
+            'sharpe_ratio': 0.0,
+            'avg_hold_time': 0.0,
+            'win_hold_time': 0.0,
+            'loss_hold_time': 0.0
+        })
+        
+        # Only calculate detailed metrics if trades exist
         if env.trades:
             trades_df = pd.DataFrame(env.trades)
             
             # Split trades by direction
             long_trades = trades_df[trades_df['direction'] == 1]
             short_trades = trades_df[trades_df['direction'] == -1]
-            long_wins = long_trades[long_trades['pnl'] > 0]
-            short_wins = short_trades[short_trades['pnl'] > 0]
             
-            # Calculate directional metrics
+            # Calculate directional metrics - safely handle empty cases
             metrics['long_trades'] = len(long_trades)
             metrics['short_trades'] = len(short_trades)
-            metrics['long_win_rate'] = (len(long_wins) / len(long_trades) * 100) if len(long_trades) > 0 else 0.0
-            metrics['short_win_rate'] = (len(short_wins) / len(short_trades) * 100) if len(short_trades) > 0 else 0.0
+            
+            if len(long_trades) > 0:
+                long_wins = long_trades[long_trades['pnl'] > 0]
+                metrics['long_win_rate'] = (len(long_wins) / len(long_trades) * 100)
+            
+            if len(short_trades) > 0:
+                short_wins = short_trades[short_trades['pnl'] > 0]
+                metrics['short_win_rate'] = (len(short_wins) / len(short_trades) * 100)
             
             # Overall win/loss metrics
             winning_trades = trades_df[trades_df['pnl'] > 0]
@@ -313,37 +355,111 @@ class TradeModel:
             # Calculate PnL metrics
             metrics['total_profit'] = float(winning_trades['pnl'].sum()) if not winning_trades.empty else 0.0
             metrics['total_loss'] = float(abs(losing_trades['pnl'].sum())) if not losing_trades.empty else 0.0
-            metrics['profit_factor'] = metrics['total_profit'] / metrics['total_loss'] if metrics['total_loss'] > 0 else float('inf')
-            metrics['expected_value'] = float(trades_df['pnl'].mean()) if not trades_df.empty else 0.0
             
-            # Initialize default metrics for zero-trade case
-            metrics['max_drawdown_pct'] = 0.0
-            metrics['current_drawdown_pct'] = 0.0
-            metrics['historical_max_drawdown_pct'] = 0.0
-
+            # Safe profit factor calculation
+            if metrics['total_loss'] > 0:
+                metrics['profit_factor'] = metrics['total_profit'] / metrics['total_loss']
+            else:
+                metrics['profit_factor'] = float('inf') if metrics['total_profit'] > 0 else 0.0
+                
+            # Expected value
+            if not trades_df.empty:
+                metrics['expected_value'] = float(trades_df['pnl'].mean())
+            
             # Calculate drawdown only if there are trades
-            if env.trades:
-                balance_history = []
-                current_balance = env.initial_balance
-                peak_balance = current_balance
-                max_drawdown = 0.0
-                
-                for trade in env.trades:
-                    current_balance += trade['pnl']
-                    balance_history.append(current_balance)
-                    peak_balance = max(peak_balance, current_balance)
-                    drawdown = (peak_balance - current_balance) / peak_balance if peak_balance > 0 else 0
-                    max_drawdown = max(max_drawdown, drawdown)
-                
-                metrics['max_drawdown_pct'] = float(max_drawdown * 100)
+            balance_history = []
+            current_balance = env.initial_balance
+            peak_balance = current_balance
+            max_drawdown = 0.0
             
-            # Calculate Sharpe ratio
+            for trade in env.trades:
+                current_balance += trade['pnl']
+                balance_history.append(current_balance)
+                peak_balance = max(peak_balance, current_balance)
+                if peak_balance > 0:  # Prevent division by zero
+                    drawdown = (peak_balance - current_balance) / peak_balance
+                    max_drawdown = max(max_drawdown, drawdown)
+            
+            metrics['max_drawdown_pct'] = float(max_drawdown * 100)
+            
+            # Calculate Sharpe ratio safely
             returns = pd.Series(trades_df['pnl']) / env.initial_balance
-            metrics['sharpe_ratio'] = float((returns.mean() / returns.std()) * np.sqrt(252)) if len(returns) > 1 else 0.0
+            if len(returns) > 1 and returns.std() > 0:
+                metrics['sharpe_ratio'] = float((returns.mean() / returns.std()) * np.sqrt(252))
             
             # Hold time analysis
-            metrics['avg_hold_time'] = float(trades_df['hold_time'].mean())
-            metrics['win_hold_time'] = float(winning_trades['hold_time'].mean()) if not winning_trades.empty else 0.0
-            metrics['loss_hold_time'] = float(losing_trades['hold_time'].mean()) if not losing_trades.empty else 0.0
+            if 'hold_time' in trades_df.columns:
+                metrics['avg_hold_time'] = float(trades_df['hold_time'].mean())
+                
+                if not winning_trades.empty and 'hold_time' in winning_trades.columns:
+                    metrics['win_hold_time'] = float(winning_trades['hold_time'].mean())
+                    
+                if not losing_trades.empty and 'hold_time' in losing_trades.columns:
+                    metrics['loss_hold_time'] = float(losing_trades['hold_time'].mean())
+        
+        # Include trade history
+        metrics['trades'] = env.trades
         
         return metrics
+
+    def evaluate(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Evaluate model performance without verbose logging.
+        
+        Args:
+            data: DataFrame with market data
+            initial_balance: Starting account balance
+            balance_per_lot: Account balance required per 0.01 lot (if None, uses instance default)
+                
+        Returns:
+            Dictionary with backtest metrics and trade summary
+        """
+        if self.model is None:
+            raise ValueError("Model not loaded. Call load_model() first.")
+        
+        # Use provided balance_per_lot or fall back to instance default
+        balance_per_lot = balance_per_lot if balance_per_lot is not None else self.balance_per_lot
+        
+        # Prepare data
+        data = self.prepare_data(data)
+        
+        # Create environment for evaluation
+        env = TradingEnv(
+            data=data,
+            initial_balance=initial_balance,
+            balance_per_lot=balance_per_lot,
+            random_start=False
+        )
+        
+        # Initialize LSTM states
+        lstm_states = None
+        obs, _ = env.reset()
+        
+        done = False
+        step = 0
+        total_reward = 0.0
+        
+        while not done:
+            # Make prediction
+            raw_action, lstm_states = self.model.predict(
+                obs,
+                state=lstm_states,
+                deterministic=True
+            )
+            
+            # Process action with improved error handling
+            try:
+                if isinstance(raw_action, np.ndarray):
+                    discrete_action = int(raw_action.item()) % 4
+                else:
+                    discrete_action = int(raw_action) % 4
+            except (ValueError, TypeError):
+                discrete_action = 0
+            
+            # Execute step
+            obs, reward, done, _, _ = env.step(discrete_action)
+            total_reward += reward
+            step += 1
+        
+        # Calculate metrics with additional error handling
+        return self._calculate_backtest_metrics(env, step, total_reward)
