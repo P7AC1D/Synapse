@@ -288,10 +288,11 @@ class TradingEnv(gym.Env, EzPickle):
             )
         )
         
-        # Create position
+        # Create position - store entry spread but don't adjust entry price
         self.current_position = {
             "direction": 1 if direction == 1 else -1,  # 1 for buy, -1 for sell
-            "entry_price": current_price + (raw_spread if direction == 1 else -raw_spread),
+            "entry_price": current_price,  # Use raw price without spread
+            "entry_spread": raw_spread,  # Store spread for exit calculations
             "lot_size": lot_size,
             "entry_time": str(self.original_index[self.current_step]),
             "entry_step": self.current_step,
@@ -318,18 +319,24 @@ class TradingEnv(gym.Env, EzPickle):
         lot_size = self.current_position["lot_size"]
         entry_step = self.current_position["entry_step"]  # Store before clearing position
         
-        # Calculate profit or loss
+        # Get current spread for exit price adjustment
+        current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
+        
+        # Calculate profit or loss with spread at exit
         if direction == 1:  # Long position
-            profit_points = current_price - entry_price
+            exit_price = current_price - current_spread  # Worse exit price for longs
+            profit_points = exit_price - entry_price
         else:  # Short position
-            profit_points = entry_price - current_price
+            exit_price = current_price + current_spread  # Worse exit price for shorts
+            profit_points = entry_price - exit_price
             
         pnl = profit_points * lot_size
         profit_pips = profit_points / self.PIP_VALUE
         
         # Record trade details
         self.current_position.update({
-            "exit_price": current_price,
+            "exit_price": exit_price,
+            "exit_spread": current_spread,
             "exit_step": self.current_step,
             "exit_time": str(self.original_index[self.current_step]),
             "profit_pips": profit_pips,
@@ -394,11 +401,16 @@ class TradingEnv(gym.Env, EzPickle):
         entry_price = self.current_position["entry_price"]
         lot_size = self.current_position["lot_size"]
         
-        # Calculate unrealized P/L
+        # Get current spread for unrealized P&L calculation
+        current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
+        
+        # Calculate unrealized P/L including spread impact
         if direction == 1:  # Long position
-            profit_points = current_price - entry_price
+            current_exit_price = current_price - current_spread  # Worse exit price for longs
+            profit_points = current_exit_price - entry_price
         else:  # Short position
-            profit_points = entry_price - current_price
+            current_exit_price = current_price + current_spread  # Worse exit price for shorts
+            profit_points = entry_price - current_exit_price
             
         unrealized_pnl = profit_points * lot_size
         profit_pips = profit_points / self.PIP_VALUE
@@ -570,15 +582,21 @@ class TradingEnv(gym.Env, EzPickle):
         print(f"Current Position: {'None' if not self.current_position else ('Long' if self.current_position['direction'] == 1 else 'Short')}")
         
         if self.current_position:
-            unrealized_pnl = 0
+            current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
+            current_price = self.prices['close'][self.current_step]
+            
             if self.current_position["direction"] == 1:  # Long
-                unrealized_pnl = (self.prices['close'][self.current_step] - self.current_position["entry_price"]) * self.current_position["lot_size"]
+                current_exit_price = current_price - current_spread  # Worse exit price for longs
+                unrealized_pnl = (current_exit_price - self.current_position["entry_price"]) * self.current_position["lot_size"]
             else:  # Short
-                unrealized_pnl = (self.current_position["entry_price"] - self.prices['close'][self.current_step]) * self.current_position["lot_size"]
+                current_exit_price = current_price + current_spread  # Worse exit price for shorts
+                unrealized_pnl = (self.current_position["entry_price"] - current_exit_price) * self.current_position["lot_size"]
                 
             print(f"Position Details:")
             print(f"  Entry Price: {self.current_position['entry_price']:.5f}")
-            print(f"  Current Price: {self.prices['close'][self.current_step]:.5f}")
+            print(f"  Current Price: {current_price:.5f}")
+            print(f"  Current Spread: {current_spread:.5f}")
+            print(f"  Potential Exit Price: {current_exit_price:.5f}")
             print(f"  Lot Size: {self.current_position['lot_size']:.2f}")
             print(f"  Unrealized P/L: {unrealized_pnl:.2f}")
             print(f"  Hold Time: {self.current_step - self.current_position['entry_step']} bars")
