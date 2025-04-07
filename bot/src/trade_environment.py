@@ -345,8 +345,16 @@ class TradingEnv(gym.Env, EzPickle):
             
         self.trades.append(self.current_position)
         
-        # Update balance and clear position
+        # Update balance and check for bankruptcy
         self.balance += pnl
+        if self.balance <= 0:
+            self.balance = 0  # Prevent negative balance
+            # Calculate reward before clearing position
+            normalized_pnl = pnl / self.initial_balance * 100
+            # Clear position before returning
+            self.current_position = None
+            self.trade_metrics['current_direction'] = 0
+            return normalized_pnl * -0.5  # Reduced negative reward for bankruptcy
         
         # Calculate hold time before clearing position
         hold_time = self.current_step - entry_step
@@ -443,12 +451,30 @@ class TradingEnv(gym.Env, EzPickle):
         elif action == 3:  # Close
             self._close_position()
             
-        # Manage current position
+        # Get current observation first
+        obs = self.get_history()
+        
+        # Manage current position and check bankruptcy
         unrealized_pnl = self._manage_position()
+        if self.current_position:
+            potential_balance = self.balance + unrealized_pnl
+            if potential_balance <= 0:
+                # Force close position if unrealized loss would cause bankruptcy
+                self._close_position()
+                done = True
+                truncated = False
+                return obs, -1.0, done, truncated, {
+                    "balance": self.balance,
+                    "total_pnl": self.balance - self.initial_balance,
+                    "drawdown": 100.0,  # Maximum drawdown
+                    "position": {},
+                    "trade_metrics": self.trade_metrics,
+                    "total_trades": len(self.trades)
+                }
         
         # Calculate terminal conditions
         end_of_data = (self.current_step >= self.data_length - 1)
-        max_drawdown = (self.max_balance - self.balance) / self.max_balance
+        max_drawdown = (self.max_balance - self.balance) / self.max_balance if self.max_balance > 0 else 1.0
         done = end_of_data or self.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
         
         # Auto-close position at end of episode
