@@ -17,6 +17,13 @@ class TradingEnv(gym.Env, EzPickle):
     
     metadata = {"render_modes": ["human"], "render_fps": 30}
     
+    @property
+    def balance(self) -> float:
+        """Get current account balance."""
+        if hasattr(self, 'metrics'):
+            return self.metrics.balance
+        return self.initial_balance  # Fallback before metrics initialization
+        
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
                  balance_per_lot: float = 1000.0, random_start: bool = False,
                  max_hold_bars: int = 64):

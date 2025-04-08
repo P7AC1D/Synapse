@@ -42,7 +42,12 @@ class FeatureProcessor:
                      np.maximum(np.abs(high - np.roll(close, 1)),
                               np.abs(low - np.roll(close, 1))))
         tr[0] = high[0] - low[0]  
-        return pd.Series(tr).rolling(self.atr_period).mean().values
+        
+        # Calculate ATR with proper NaN handling
+        atr = pd.Series(tr).rolling(self.atr_period, min_periods=1).mean()
+        # Fill any remaining NaNs with first valid value
+        atr = atr.bfill().fillna(atr.mean())
+        return atr.values
 
     def _calculate_rsi(self, close: np.ndarray) -> np.ndarray:
         """Calculate Relative Strength Index.
@@ -53,9 +58,13 @@ class FeatureProcessor:
         Returns:
             RSI values
         """
-        delta = pd.Series(close).diff().fillna(0).values
-        gain = pd.Series(np.where(delta > 0, delta, 0)).rolling(window=self.rsi_period).mean().values
-        loss = pd.Series(np.where(delta < 0, -delta, 0)).rolling(window=self.rsi_period).mean().values
+        delta = pd.Series(close).diff().fillna(0)
+        gain = pd.Series(np.where(delta > 0, delta, 0)).rolling(window=self.rsi_period, min_periods=1).mean()
+        loss = pd.Series(np.where(delta < 0, -delta, 0)).rolling(window=self.rsi_period, min_periods=1).mean()
+        
+        # Fill any initial NaN values
+        gain = gain.bfill().fillna(0)
+        loss = loss.bfill().fillna(0)
         
         rs = np.zeros_like(gain)
         mask = loss != 0
@@ -71,10 +80,16 @@ class FeatureProcessor:
         Returns:
             Tuple of (upper band, lower band)
         """
-        boll_std = pd.Series(close).rolling(self.boll_period).std().fillna(0).values
-        ma20 = pd.Series(close).rolling(self.boll_period).mean().fillna(close[0]).values
-        upper_band = ma20 + (boll_std * 2)
-        lower_band = ma20 - (boll_std * 2)
+        price_series = pd.Series(close)
+        ma20 = price_series.rolling(self.boll_period, min_periods=1).mean()
+        boll_std = price_series.rolling(self.boll_period, min_periods=1).std()
+        
+        # Handle NaN values
+        ma20 = ma20.bfill().fillna(price_series.iloc[0])
+        boll_std = boll_std.bfill().fillna(boll_std.mean())
+        
+        upper_band = (ma20 + (boll_std * 2)).values
+        lower_band = (ma20 - (boll_std * 2)).values
         return upper_band, lower_band
 
     def _calculate_trend_strength(self, high: np.ndarray, low: np.ndarray, atr: np.ndarray) -> np.ndarray:
@@ -115,6 +130,7 @@ class FeatureProcessor:
         Returns:
             Tuple of (features DataFrame, ATR values)
         """
+        
         features_df = pd.DataFrame(index=data.index)
         
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -156,25 +172,79 @@ class FeatureProcessor:
             volatility_breakout = np.divide(position, band_range, out=np.zeros_like(position), where=band_range!=0)
             volatility_breakout = np.clip(volatility_breakout, 0, 1)
             
-            # Store features
-            features_df['returns'] = returns
-            features_df['rsi'] = rsi / 50 - 1  # Normalize to [-1, 1]
-            features_df['atr'] = 2 * (atr / close - np.nanmin(atr / close)) / \
-                              (np.nanmax(atr / close) - np.nanmin(atr / close) + 1e-8) - 1
-            features_df['volatility_breakout'] = volatility_breakout
-            features_df['trend_strength'] = trend_strength
-            features_df['candle_pattern'] = candle_pattern
-            features_df['sin_time'] = sin_time
-            features_df['cos_time'] = cos_time
+            # Create features with preserved index
+            features = {
+                'returns': returns,
+                'rsi': rsi / 50 - 1,  # Normalize to [-1, 1]
+                'atr': 2 * (atr / close - np.nanmin(atr / close)) / 
+                      (np.nanmax(atr / close) - np.nanmin(atr / close) + 1e-8) - 1,
+                'volatility_breakout': volatility_breakout,
+                'trend_strength': trend_strength,
+                'candle_pattern': candle_pattern,
+                'sin_time': sin_time,
+                'cos_time': cos_time
+            }
+            
+            # Convert all features to DataFrame at once
+            features_df = pd.DataFrame(features, index=data.index)
             
             # Clean up features
+            orig_len = len(features_df)
+            orig_index = features_df.index
+            
             features_df = features_df.dropna()
+            post_dropna_len = len(features_df)
+            dropped_index = orig_index.difference(features_df.index)
+            # Validate lookback size
+            if self.lookback > len(features_df) * 0.3:  # Don't allow more than 30% data loss
+                raise ValueError(f"Lookback window ({self.lookback}) is too large for data length ({len(features_df)})")
+                
+            if len(dropped_index) > 0:
+                print(f"\nDropped rows due to NaN at indices:")
+                print(dropped_index.to_list()[:5], "..." if len(dropped_index) > 5 else "")
+            
             features_df = features_df.iloc[self.lookback:]
+            post_lookback_len = len(features_df)
+            lookback_removed = features_df.index[0] - orig_index[0]
+            
+            # Validate remaining data
+            if len(features_df) < max(100, len(orig_index) * 0.5):
+                raise ValueError(f"Too much data lost in preprocessing: {len(features_df)} rows remaining from {len(orig_index)}")
+            
+            # Check for any remaining NaN values in features
+            nan_counts = features_df.isna().sum()
+            if nan_counts.any():
+                print("\nWarning: NaN values in features:")
+                for col in features_df.columns[nan_counts > 0]:
+                    print(f"  {col}: {nan_counts[col]} NaN values")
             
             if len(features_df) < 100:
-                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
+                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")            
             
-            return features_df, atr[features_df.index]
+            # Convert ATR to DataFrame for proper index alignment
+            atr_df = pd.DataFrame({'atr': atr}, index=data.index)
+            
+            # Align ATR with features using index
+            atr_aligned = atr_df.loc[features_df.index].values
+            
+            # Validate alignment
+            if len(atr_aligned) != len(features_df):
+                raise ValueError(f"Feature and ATR lengths don't match after preprocessing: features={len(features_df)}, atr={len(atr_aligned)}")
+            
+            # Final validation
+            if np.isnan(atr_aligned).any():
+                raise ValueError(f"Found {np.isnan(atr_aligned).sum()} NaN values in aligned ATR data")
+            
+            # Validate feature ranges
+            for col, values in features_df.items():
+                if col in ['volatility_breakout']:
+                    if (values < 0).any() or (values > 1).any():
+                        raise ValueError(f"Feature {col} contains values outside [0, 1] range")
+                elif col not in ['returns']:  # Returns has special range [-0.1, 0.1]
+                    if (values < -1).any() or (values > 1).any():
+                        raise ValueError(f"Feature {col} contains values outside [-1, 1] range")                        
+                
+            return features_df, atr_aligned.reshape(-1)  # Ensure 1D array
 
     def get_feature_names(self) -> list:
         """Get list of feature names."""
