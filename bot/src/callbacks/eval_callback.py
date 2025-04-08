@@ -81,6 +81,14 @@ class UnifiedEvalCallback(BaseCallback):
         # Use environment's built-in trade metrics
         trade_metrics = env.env.trade_metrics
         
+        if 'win_rate' not in trade_metrics:
+            # No trades were made during evaluation
+            trade_metrics['win_rate'] = 0.0
+            trade_metrics['avg_profit'] = 0.0
+            trade_metrics['avg_loss'] = 0.0
+            trade_metrics['profit_factor'] = 0.0
+            trade_metrics['trade_count'] = 0
+        
         return {
             'return': total_return,
             'max_drawdown': max_drawdown,
@@ -345,8 +353,8 @@ class UnifiedEvalCallback(BaseCallback):
 
                 # Calculate basic metrics
                 active_position = 1 if eval_env.current_position else 0
-                num_winning_trades = eval_env.win_count
-                num_losing_trades = eval_env.loss_count
+                num_winning_trades = len([t for t in eval_env.trades if t['pnl'] > 0])
+                num_losing_trades = len([t for t in eval_env.trades if t['pnl'] <= 0])
                 
                 try:
                     period_start = str(eval_env.original_index[0])
