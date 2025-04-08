@@ -20,9 +20,11 @@ class TradingEnv(gym.Env, EzPickle):
     
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000, 
                  balance_per_lot: float = 1000.0, random_start: bool = False,
-                 bar_count: int = 10):  # bar_count is deprecated and no longer used
+                 bar_count: int = 10, max_hold_bars: int = 64):  # bar_count is deprecated
         super().__init__()
         EzPickle.__init__(self)
+        
+        self.MAX_HOLD_BARS = max_hold_bars  # Maximum bars to hold a position
         
         # Save original datetime index
         self.original_index = data.index.copy() if isinstance(data.index, pd.DatetimeIndex) else pd.to_datetime(data.index)
@@ -238,9 +240,9 @@ class TradingEnv(gym.Env, EzPickle):
         """Configure discrete action space: 0=hold, 1=buy, 2=sell, 3=close."""
         self.action_space = spaces.Discrete(4)
 
-    def _setup_observation_space(self, _: int = 10) -> None:
+    def _setup_observation_space(self, _: int = 11) -> None:
         """Setup observation space with proper feature bounds."""
-        # Optimized feature set (10 features):
+        # Optimized feature set (11 features):
         # 1. returns [-0.1, 0.1] - Price momentum
         # 2. rsi [-1, 1] - Momentum oscillator
         # 3. atr [-1, 1] - Volatility indicator
@@ -250,8 +252,9 @@ class TradingEnv(gym.Env, EzPickle):
         # 7. sin_time [-1, 1] - Sine encoding of time of day
         # 8. cos_time [-1, 1] - Cosine encoding of time of day
         # 9. position_type [-1, 0, 1] - Current position (short/none/long)
-        # 10. unrealized_pnl [-1, 1] - Current position P&L
-        feature_count = 10  # Added position type and unrealized P&L
+        # 10. hold_time [0, 1] - Normalized position hold time
+        # 11. unrealized_pnl [-1, 1] - Current position P&L
+        feature_count = 11  # Added hold time and unrealized P&L
         self.observation_space = spaces.Box(
             low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
@@ -569,13 +572,17 @@ class TradingEnv(gym.Env, EzPickle):
         }
         
     def get_history(self) -> np.ndarray:
-        """Get current bar features including position type and unrealized P&L."""
+        """Get current bar features including position type, hold time and unrealized P&L."""
         features = self.raw_data.values[self.current_step]
         
         # Add position type (-1: short, 0: no position, 1: long)
         position_type = 0
+        normalized_hold_time = 0.0
+        
         if self.current_position:
             position_type = self.current_position["direction"]  # Will be -1 for short or 1 for long
+            hold_time = self.current_step - self.current_position["entry_step"]
+            normalized_hold_time = min(hold_time / self.MAX_HOLD_BARS, 1.0)
         
         # Calculate normalized unrealized P&L
         if self.current_position:
@@ -585,8 +592,8 @@ class TradingEnv(gym.Env, EzPickle):
         else:
             normalized_pnl = 0.0  # No position
         
-        # Add position type and normalized P&L to features
-        return np.append(features, [position_type, normalized_pnl])
+        # Add position type, normalized hold time, and normalized P&L to features
+        return np.append(features, [position_type, normalized_hold_time, normalized_pnl])
 
     def render(self) -> None:
         """Print environment state and trade statistics."""
