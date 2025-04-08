@@ -569,9 +569,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     while training_start + initial_window <= total_periods:
         iteration = training_start // step_size
         
-        # Calculate window boundaries
-        train_size = int(initial_window * 0.8)  # 80% for training
-        val_size = initial_window - train_size   # 20% for validation
+        # Calculate window boundaries using validation size parameter
+        val_size = int(initial_window * args.validation_size)
+        train_size = initial_window - val_size
         
         train_start = training_start
         train_end = train_start + train_size
@@ -680,16 +680,18 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=21,
-                      help='Initial training window in days')
-    parser.add_argument('--step_size', type=int, default=7,
-                      help='Walk-forward step size in days')
+    parser.add_argument('--initial_window', type=int, default=2016,
+                      help='Initial training window size in bars (default: 2016 bars, ~21 days for 15-min data)')
+    parser.add_argument('--validation_size', type=float, default=0.2,
+                      help='Fraction of window to use for validation (default: 0.2)')
+    parser.add_argument('--step_size', type=int, default=672,
+                      help='Walk-forward step size in bars (default: 672 bars, ~7 days for 15-min data)')
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     parser.add_argument('--random_start', action='store_true',
                       help='Start training from random positions in the dataset')
     
-    parser.add_argument('--total_timesteps', type=int, default=280000,
+    parser.add_argument('--total_timesteps', type=int, default=100000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
@@ -715,18 +717,25 @@ def main():
     if not isinstance(data.index, pd.DatetimeIndex):
         data.index = pd.to_datetime(data.index)
     
-    # Calculate window sizes in bars (15-minute data)
-    bars_per_day = 24 * 4  # 96 bars per day
-    initial_window_bars = args.initial_window * bars_per_day
+    # Calculate window sizes - using bars directly
+    initial_window = args.initial_window
     
-    # Calculate default step size as 10% of window size, with minimum from args
-    step_size_bars = max(int(initial_window_bars * 0.1), args.step_size * bars_per_day)
+    # Calculate step size as 10% of window size if using default
+    step_size = args.step_size
+    if step_size == 672:  # If using default value
+        step_size = max(int(initial_window * 0.1), step_size)
+    
+    # Display window configuration with approximate days
+    bars_per_day = 24 * 4  # For displaying approximate days
+    val_size = int(initial_window * args.validation_size)
+    train_size = initial_window - val_size
     
     print(f"\nWindow Configuration:")
-    print(f"Initial Window: {initial_window_bars} bars ({args.initial_window} days)")
-    print(f"Step Size: {step_size_bars} bars ({step_size_bars/bars_per_day:.1f} days)")
-    print(f"Training Window: {int(initial_window_bars * 0.8)} bars")
-    print(f"Validation Window: {int(initial_window_bars * 0.2)} bars\n")
+    print(f"Initial Window: {initial_window} bars (~{initial_window/bars_per_day:.1f} days)")
+    print(f"Step Size: {step_size} bars (~{step_size/bars_per_day:.1f} days)")
+    print(f"Training Window: {train_size} bars (~{train_size/bars_per_day:.1f} days)")
+    print(f"Validation Window: {val_size} bars (~{val_size/bars_per_day:.1f} days)")
+    print(f"Training/Validation Split: {(1-args.validation_size):.0%}/{args.validation_size:.0%}\n")
     
     if args.resume:
         state_path = f"../results/{args.seed}/training_state.json"
@@ -738,7 +747,7 @@ def main():
         print("\nStarting new walk-forward optimization...")
     
     try:
-        model = train_walk_forward(data, initial_window_bars, step_size_bars, args)
+        model = train_walk_forward(data, initial_window, step_size, args)
     except KeyboardInterrupt:
         print("\nTraining interrupted. Progress has been saved.")
         return
