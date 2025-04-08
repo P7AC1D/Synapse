@@ -332,7 +332,7 @@ class TradingEnv(gym.Env, EzPickle):
         
         self.trade_metrics['current_direction'] = self.current_position["direction"]
         
-        return 0  # No immediate reward for opening
+        return 0.05 # Small incentive to explore
     
     def _close_position(self) -> float:
         """Close current position and calculate P/L.
@@ -480,9 +480,21 @@ class TradingEnv(gym.Env, EzPickle):
             reward += self._execute_trade(2, current_spread)
         elif action == 3:  # Close
             reward += self._close_position()
+        elif action == 0:  # Hold
+            # Add small penalty for holding too long to encourage decision-making
+            if self.current_position:  # Only apply hold penalty if a position exists
+                hold_time = self.current_step - self.current_position["entry_step"]
+                if hold_time > self.MAX_HOLD_BARS / 2:
+                    reward -= 0.01  # Small time decay penalty
             
-        # Manage current position and check bankruptcy
         unrealized_pnl = self._manage_position()
+        # Add intermediate reward based on unrealized P&L
+        # Smaller scale than closing rewards to prioritize actual realized gains
+        normalized_unrealized = unrealized_pnl / self.initial_balance * 100
+        # Use a smaller scale (e.g., 0.1) to keep focus on actual closes
+        reward += normalized_unrealized * 0.1
+
+        # Manage current position and check bankruptcy
         if self.current_position:
             potential_balance = self.balance + unrealized_pnl
             if potential_balance <= 0:
