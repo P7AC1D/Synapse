@@ -558,16 +558,33 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         training_start = 0
         model = None
     
-    while training_start + initial_window + step_size <= total_periods:
+    # Validate window and step sizes
+    if initial_window < step_size * 5:
+        raise ValueError("Initial window should be at least 5x step size for stable training")
+    
+    min_window_overlap = 0.5  # 50% minimum overlap between windows
+    if step_size > initial_window * (1 - min_window_overlap):
+        raise ValueError(f"Step size too large. Should be <= {initial_window * (1 - min_window_overlap)} for sufficient overlap")
+
+    while training_start + initial_window <= total_periods:
         iteration = training_start // step_size
         
-        train_end = training_start + initial_window
-        val_end = min(train_end + step_size, total_periods)
+        # Calculate window boundaries
+        train_size = int(initial_window * 0.8)  # 80% for training
+        val_size = initial_window - train_size   # 20% for validation
         
-        train_data = data.iloc[training_start:train_end].copy()
+        train_start = training_start
+        train_end = train_start + train_size
+        val_end = min(train_end + val_size, total_periods)
+        
+        # Ensure we have enough validation data
+        if val_end - train_end < val_size * 0.5:  # Require at least half the validation window
+            break
+            
+        train_data = data.iloc[train_start:train_end].copy()
         val_data = data.iloc[train_end:val_end].copy()
         
-        train_data.index = data.index[training_start:train_end]
+        train_data.index = data.index[train_start:train_end]
         val_data.index = data.index[train_end:val_end]
         
         print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
@@ -698,9 +715,18 @@ def main():
     if not isinstance(data.index, pd.DatetimeIndex):
         data.index = pd.to_datetime(data.index)
     
-    bars_per_day = 24 * 4
+    # Calculate window sizes in bars (15-minute data)
+    bars_per_day = 24 * 4  # 96 bars per day
     initial_window_bars = args.initial_window * bars_per_day
-    step_size_bars = args.step_size * bars_per_day
+    
+    # Calculate default step size as 10% of window size, with minimum from args
+    step_size_bars = max(int(initial_window_bars * 0.1), args.step_size * bars_per_day)
+    
+    print(f"\nWindow Configuration:")
+    print(f"Initial Window: {initial_window_bars} bars ({args.initial_window} days)")
+    print(f"Step Size: {step_size_bars} bars ({step_size_bars/bars_per_day:.1f} days)")
+    print(f"Training Window: {int(initial_window_bars * 0.8)} bars")
+    print(f"Validation Window: {int(initial_window_bars * 0.2)} bars\n")
     
     if args.resume:
         state_path = f"../results/{args.seed}/training_state.json"
