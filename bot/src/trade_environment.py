@@ -238,9 +238,9 @@ class TradingEnv(gym.Env, EzPickle):
         """Configure discrete action space: 0=hold, 1=buy, 2=sell, 3=close."""
         self.action_space = spaces.Discrete(4)
 
-    def _setup_observation_space(self, _: int = 9) -> None:
+    def _setup_observation_space(self, _: int = 10) -> None:
         """Setup observation space with proper feature bounds."""
-        # Optimized feature set (9 features):
+        # Optimized feature set (10 features):
         # 1. returns [-0.1, 0.1] - Price momentum
         # 2. rsi [-1, 1] - Momentum oscillator
         # 3. atr [-1, 1] - Volatility indicator
@@ -249,8 +249,9 @@ class TradingEnv(gym.Env, EzPickle):
         # 6. candle_pattern [-1, 1] - Combined price action signal
         # 7. sin_time [-1, 1] - Sine encoding of time of day
         # 8. cos_time [-1, 1] - Cosine encoding of time of day
-        # 9. unrealized_pnl [-1, 1] - Current position P&L
-        feature_count = 9  # Added time encoding features and unrealized P&L
+        # 9. position_type [-1, 0, 1] - Current position (short/none/long)
+        # 10. unrealized_pnl [-1, 1] - Current position P&L
+        feature_count = 10  # Added position type and unrealized P&L
         self.observation_space = spaces.Box(
             low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
@@ -568,8 +569,13 @@ class TradingEnv(gym.Env, EzPickle):
         }
         
     def get_history(self) -> np.ndarray:
-        """Get current bar features including unrealized P&L."""
+        """Get current bar features including position type and unrealized P&L."""
         features = self.raw_data.values[self.current_step]
+        
+        # Add position type (-1: short, 0: no position, 1: long)
+        position_type = 0
+        if self.current_position:
+            position_type = self.current_position["direction"]  # Will be -1 for short or 1 for long
         
         # Calculate normalized unrealized P&L
         if self.current_position:
@@ -579,8 +585,8 @@ class TradingEnv(gym.Env, EzPickle):
         else:
             normalized_pnl = 0.0  # No position
         
-        # Add normalized P&L to features
-        return np.append(features, normalized_pnl)
+        # Add position type and normalized P&L to features
+        return np.append(features, [position_type, normalized_pnl])
 
     def render(self) -> None:
         """Print environment state and trade statistics."""
