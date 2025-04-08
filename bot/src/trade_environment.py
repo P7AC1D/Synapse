@@ -132,6 +132,13 @@ class TradingEnv(gym.Env, EzPickle):
             rs[mask] = gain[mask] / loss[mask]
             rsi = 100 - (100 / (1 + rs))            
             
+            # Time encoding
+            minutes_in_day = 24 * 60
+            bar_times = pd.to_datetime(data.index)
+            time_index = bar_times.hour * 60 + bar_times.minute
+            sin_time = np.sin(2 * np.pi * time_index / minutes_in_day)
+            cos_time = np.cos(2 * np.pi * time_index / minutes_in_day)
+            
             # Returns Calculation
             returns = np.diff(close) / close[:-1]
             returns = np.insert(returns, 0, 0)
@@ -192,6 +199,8 @@ class TradingEnv(gym.Env, EzPickle):
             features_df['volatility_breakout'] = volatility_breakout
             features_df['trend_strength'] = trend_strength
             features_df['candle_pattern'] = candle_pattern
+            features_df['sin_time'] = sin_time  # Already in [-1, 1] range
+            features_df['cos_time'] = cos_time  # Already in [-1, 1] range
             
             # Calculate lookback period based on the longest indicator window
             lookback = max(20, atr_period)  # Use max of Bollinger (20) and ATR period
@@ -229,17 +238,19 @@ class TradingEnv(gym.Env, EzPickle):
         """Configure discrete action space: 0=hold, 1=buy, 2=sell, 3=close."""
         self.action_space = spaces.Discrete(4)
 
-    def _setup_observation_space(self, _: int = 7) -> None:
+    def _setup_observation_space(self, _: int = 9) -> None:
         """Setup observation space with proper feature bounds."""
-        # Optimized feature set (7 features):
+        # Optimized feature set (9 features):
         # 1. returns [-0.1, 0.1] - Price momentum
         # 2. rsi [-1, 1] - Momentum oscillator
         # 3. atr [-1, 1] - Volatility indicator
         # 4. volatility_breakout [0, 1] - Trend with volatility context
         # 5. trend_strength [-1, 1] - ADX-based trend quality
         # 6. candle_pattern [-1, 1] - Combined price action signal
-        # 7. unrealized_pnl [-1, 1] - Current position P&L
-        feature_count = 7  # Added unrealized P&L
+        # 7. sin_time [-1, 1] - Sine encoding of time of day
+        # 8. cos_time [-1, 1] - Cosine encoding of time of day
+        # 9. unrealized_pnl [-1, 1] - Current position P&L
+        feature_count = 9  # Added time encoding features and unrealized P&L
         self.observation_space = spaces.Box(
             low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
