@@ -26,20 +26,22 @@ class RewardCalculator:
                 reward = pnl + 0.2  # Extra bonus for successful trades
             else:
                 # Reduce penalty for losses to encourage more exploration
-                reward = pnl * 0.5  # Cut losses in half for reward calculation
+                reward = pnl * 0.6  # Slightly less reduction to make losses matter
 
         elif action == Action.HOLD and position_type != 0:
-            # Small holding reward/penalty based on unrealized P&L
+            # Make holding penalty proportional to unrealized P&L
             if pnl > 0:
-                reward = min(0.01, pnl * 0.01)  # Tiny reward for holding winners
+                # Reward for holding winners proportional to profit
+                reward = min(0.05, pnl * 0.05)  # Increased incentive for winners
             else:
-                # Increasing penalty for holding losing positions
-                hold_penalty = 0.001 * (bars_held / 10)
-                reward = -min(0.01, hold_penalty)  # Cap the penalty
+                # Significant penalty for holding losers proportional to loss
+                # Scale the penalty based on actual unrealized loss
+                loss_penalty = abs(pnl) * 0.03  # 3% of the unrealized loss
+                reward = -min(0.1, loss_penalty)  # Cap at -0.1 instead of -0.01
 
         elif action in [Action.BUY, Action.SELL] and position_type == 0:
-            # CRITICAL: Clear positive reward for opening positions
-            reward = 0.1  # Significant incentive to explore trading
+            # Keep exploration incentive for opening positions
+            reward = 0.1
 
         # Reduce per-step cost to be less punishing
         reward -= 0.0005  # Small time decay
