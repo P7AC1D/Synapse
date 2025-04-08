@@ -26,23 +26,19 @@ class RewardCalculator:
 
         if action == Action.CLOSE and position_type != 0:
             if pnl > 0:
-                # Scale reward by percentage gain
+                # Keep positive rewards scaled normally
                 reward = normalized_pnl + 0.2
             else:
-                # Scale penalty by percentage loss
-                reward = normalized_pnl * 0.6
+                # Make losses 2x more impactful
+                reward = normalized_pnl * 2.0
 
         elif action == Action.HOLD and position_type != 0:
             if pnl > 0:
                 # Scale holding reward by percentage gain
                 reward = normalized_pnl * 0.05
             else:
-                # Scale holding penalty by percentage loss
-                reward = normalized_pnl * 0.03
-
-        elif action in [Action.BUY, Action.SELL] and position_type == 0:
-            # Keep exploration incentive for opening positions
-            reward = 0.1
+                # Make holding losses more painful
+                reward = normalized_pnl * 0.1
 
         # Reduce per-step cost to be less punishing
         reward -= 0.0005  # Small time decay
