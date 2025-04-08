@@ -680,12 +680,12 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=2016,
-                      help='Initial training window size in bars (default: 2016 bars, ~21 days for 15-min data)')
+    parser.add_argument('--initial_window', type=int, default=2500,
+                      help='Initial training window size in bars')
     parser.add_argument('--validation_size', type=float, default=0.2,
                       help='Fraction of window to use for validation (default: 0.2)')
-    parser.add_argument('--step_size', type=int, default=672,
-                      help='Walk-forward step size in bars (default: 672 bars, ~7 days for 15-min data)')
+    parser.add_argument('--step_size', type=int, default=500,
+                      help='Walk-forward step size in bars')
     parser.add_argument('--balance_per_lot', type=float, default=1000.0,
                       help='Account balance required per 0.01 lot')
     parser.add_argument('--random_start', action='store_true',
