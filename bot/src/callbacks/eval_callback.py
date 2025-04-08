@@ -242,6 +242,16 @@ class UnifiedEvalCallback(BaseCallback):
                 
                 print("\n  Performance Metrics:")
                 print(f"    Total Trades: {total_trades}")
+                # Add directional metrics right after total trades
+                if total_trades > 0:
+                    long_trades = [t for t in env.env.trades if t['direction'] == 1]
+                    short_trades = [t for t in env.env.trades if t['direction'] == -1]
+                    long_wins = [t for t in long_trades if t['pnl'] > 0]
+                    short_wins = [t for t in short_trades if t['pnl'] > 0]
+                    
+                    print(f"    Long Trades: {len(long_trades)} ({(len(long_wins)/len(long_trades)*100):.1f}% win)" if long_trades else "    Long Trades: 0 (N/A)")
+                    print(f"    Short Trades: {len(short_trades)} ({(len(short_wins)/len(short_trades)*100):.1f}% win)" if short_trades else "    Short Trades: 0 (N/A)")
+                
                 print(f"    Average Win: {avg_win:.2f}" if winning_trades else "    Average Win: N/A")
                 print(f"    Average Loss: {avg_loss:.2f}" if losing_trades else "    Average Loss: N/A")
                 print(f"    Profit Factor: {profit_factor:.2f}")
