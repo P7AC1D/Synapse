@@ -43,17 +43,17 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=3e-4,           # Reduced learning rate for stability
-        n_steps=256,                  # Keep longer sequences for context
-        batch_size=64,                # Increased batch size to reduce variance
-        gamma=0.99,                   # Keep discount factor
-        gae_lambda=0.95,              # Keep lambda value
-        clip_range=0.2,               # Reduced clipping for more stability
-        clip_range_vf=0.2,            # Match policy clipping
-        ent_coef=0.03,                # Slightly reduced entropy for more exploitation
-        vf_coef=0.5,                  # Keep value coefficient
-        max_grad_norm=0.3,            # Lower gradient norm for more stability
-        use_sde=False,                
+        learning_rate=5e-4,           # Increased for faster adaptation
+        n_steps=256,                  # Keep as is
+        batch_size=64,                # Keep as is
+        gamma=0.99,                   # Keep as is
+        gae_lambda=0.95,              # Keep as is
+        clip_range=0.2,               # Keep as is
+        clip_range_vf=0.3,            # Increased to allow more value function adaptation
+        ent_coef=0.2,                 # Increased from 0.1 to encourage exploration
+        vf_coef=0.5,                  # Keep as is
+        max_grad_norm=0.5,            # Increased to allow larger updates
+        sde_sample_freq=4,            # Sample noise frequently
         policy_kwargs=policy_kwargs,
         verbose=0,
         device=args.device,
@@ -65,9 +65,9 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     # Configure epsilon exploration tuned for 6 features
     # Configure enhanced exploration with iteration awareness
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.5,     # Higher initial exploration
-        end_eps=0.02,      # Keep same final exploration
-        decay_timesteps=int(args.total_timesteps * 0.8),  # Extended decay period
+        start_eps=0.9,     # Much higher initial exploration (was 0.8)
+        end_eps=0.1,      # Higher final exploration (was 0.05)
+        decay_timesteps=int(args.total_timesteps * 0.7),  # Slower decay
         iteration=iteration  # Pass iteration number for adaptive decay
     )
     callbacks.append(epsilon_callback)

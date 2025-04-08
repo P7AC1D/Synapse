@@ -16,37 +16,48 @@ class RewardCalculator:
 
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, bars_held: int) -> float:
-        """Calculate reward based on action and position state.
-        
-        Args:
-            action: The action taken (HOLD, BUY, SELL, CLOSE)
-            position_type: Current position type (-1=short, 0=none, 1=long)
-            pnl: Current unrealized or realized PnL
-            atr: Current ATR value
-            bars_held: Number of bars position has been held
-            
-        Returns:
-            float: Calculated reward
-        """
+        """Calculate reward based on action and position state."""
         reward = 0.0
 
         if action == Action.CLOSE and position_type != 0:
-            # Normalize pnl by ATR and clip
-            reward = np.clip(pnl / atr, -2.0, 2.0)
-            
-            # Optional shaping
-            reward = np.sign(reward) * (abs(reward) ** 0.5)
+            # Close position reward based on normalized P&L
+            if pnl > 0:
+                # Bonus for taking profit
+                reward = pnl + 0.2  # Extra bonus for successful trades
+            else:
+                # Reduce penalty for losses to encourage more exploration
+                reward = pnl * 0.5  # Cut losses in half for reward calculation
 
         elif action == Action.HOLD and position_type != 0:
-            reward = pnl * 0.001  # light shaping
-            if bars_held > self.max_hold_bars:
-                reward -= 0.1  # discourage overstaying
+            # Small holding reward/penalty based on unrealized P&L
+            if pnl > 0:
+                reward = min(0.01, pnl * 0.01)  # Tiny reward for holding winners
+            else:
+                # Increasing penalty for holding losing positions
+                hold_penalty = 0.001 * (bars_held / 10)
+                reward = -min(0.01, hold_penalty)  # Cap the penalty
 
         elif action in [Action.BUY, Action.SELL] and position_type == 0:
-            reward = 0  # Neutral, or small penalty to reduce randomness
+            # CRITICAL: Clear positive reward for opening positions
+            reward = 0.1  # Significant incentive to explore trading
 
-        # Optional time penalty
-        reward -= 0.001  # per step cost
+        # Reduce per-step cost to be less punishing
+        reward -= 0.0005  # Small time decay
+
+        # Add inactivity penalty to prevent extended periods without trading
+        if hasattr(self, 'bars_since_trade'):
+            self.bars_since_trade += 1
+        else:
+            self.bars_since_trade = 0
+            
+        # Reset counter when trade is opened
+        if action in [Action.BUY, Action.SELL]:
+            self.bars_since_trade = 0
+            
+        # Apply increasing penalty for prolonged inactivity
+        if self.bars_since_trade > 100:  # After 100 bars of no trading
+            inactivity_penalty = min(0.005, (self.bars_since_trade - 100) * 0.0001)
+            reward -= inactivity_penalty
 
         return float(reward)
 
