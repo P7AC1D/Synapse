@@ -448,39 +448,12 @@ class TradingEnv(gym.Env, EzPickle):
         return unrealized_pnl
         
     def calculate_reward(self, action: int, position_type: int, pnl: float, atr: float, bars_held: int) -> float:
-        """Calculate reward with risk-adjusted returns and behavioral shaping.
-        
-        Args:
-            action: Current action taken (from Action enum)
-            position_type: Current position (-1: short, 0: none, 1: long)
-            pnl: Current realized or unrealized P&L
-            atr: Current ATR value
-            bars_held: Number of bars position has been held
-            
-        Returns:
-            float: Shaped reward value
-        """
-        reward = 0.0
-
+        """Calculate reward based only on realized PnL."""
         if action == Action.CLOSE and position_type != 0:
-            # Normalize pnl by ATR and clip
-            reward = np.clip(pnl / atr, -2.0, 2.0)
-            
-            # Optional shaping to reduce large rewards
-            reward = np.sign(reward) * (abs(reward) ** 0.5)
-
-        elif action == Action.HOLD and position_type != 0:
-            reward = pnl * 0.001  # light shaping for position management
-            if bars_held > self.MAX_HOLD_BARS:
-                reward -= 0.1  # discourage holding too long
-
-        elif action in [Action.BUY, Action.SELL] and position_type == 0:
-            reward = 0.0  # Neutral for opening positions
-
-        # Time penalty to encourage efficient trading
-        reward -= 0.001  # per step cost
-
-        return float(reward)
+            # Use normalized PnL as the reward - simple and direct
+            return float(pnl / self.initial_balance)
+        else:
+            return 0.0  # No reward for other actions
         
     def get_action_penalty(self) -> float:
         """Calculate penalties for undesirable actions."""
