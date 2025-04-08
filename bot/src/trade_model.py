@@ -302,8 +302,8 @@ class TradeModel:
             'initial_balance': float(env.initial_balance),
             'return_pct': ((env.balance / env.initial_balance) - 1) * 100,
             'total_trades': len(env.trades),
-            'win_count': env.metrics.win_count,
-            'loss_count': env.metrics.loss_count,
+            'win_count': env.win_count,
+            'loss_count': env.loss_count,
             'win_rate': 0.0,  # Will be updated if trades exist
             'total_steps': total_steps,
             'total_reward': total_reward,
@@ -312,7 +312,7 @@ class TradeModel:
         
         # Safely add win rate
         if metrics['total_trades'] > 0:
-            metrics['win_rate'] = (env.metrics.win_count / metrics['total_trades'] * 100)
+            metrics['win_rate'] = (env.win_count / metrics['total_trades'] * 100)
         
         # Initialize optional metrics with default values
         metrics.update({
