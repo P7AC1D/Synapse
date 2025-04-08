@@ -8,7 +8,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.utils import get_linear_fn
 from sb3_contrib.ppo_recurrent import RecurrentPPO
-from trade_environment import TradingEnv
+from trading.environment import TradingEnv
 import torch as th
 
 from callbacks.epsilon_callback import CustomEpsilonCallback

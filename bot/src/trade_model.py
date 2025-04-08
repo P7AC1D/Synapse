@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from sb3_contrib.ppo_recurrent import RecurrentPPO
 
-from trade_environment import TradingEnv
+from trading.environment import TradingEnv
 
 class TradeModel:
     """Class for loading and making predictions with a trained PPO-LSTM model."""
