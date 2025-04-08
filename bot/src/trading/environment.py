@@ -18,6 +18,16 @@ class TradingEnv(gym.Env, EzPickle):
     metadata = {"render_modes": ["human"], "render_fps": 30}
     
     @property
+    def win_count(self) -> int:
+        """Get win count from metrics."""
+        return self.metrics.win_count if hasattr(self, 'metrics') else 0
+        
+    @property
+    def loss_count(self) -> int:
+        """Get loss count from metrics."""
+        return self.metrics.loss_count if hasattr(self, 'metrics') else 0
+    
+    @property
     def balance(self) -> float:
         """Get current account balance."""
         if hasattr(self, 'metrics'):

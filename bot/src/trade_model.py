@@ -450,12 +450,13 @@ class TradeModel:
                 deterministic=True
             )
             
-            # Process action with improved error handling
+            # Process action with improved error handling and string conversion
             try:
                 if isinstance(raw_action, np.ndarray):
-                    discrete_action = int(raw_action.item()) % 4
+                    discrete_action = str(int(raw_action.item()) % 4)
                 else:
-                    discrete_action = int(raw_action) % 4
+                    discrete_action = str(int(raw_action) % 4)
+                discrete_action = int(discrete_action)  # Convert back to int after string conversion
             except (ValueError, TypeError):
                 discrete_action = 0
             
