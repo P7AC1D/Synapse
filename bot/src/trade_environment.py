@@ -311,11 +311,18 @@ class TradingEnv(gym.Env, EzPickle):
             )
         )
         
-        # Create position - store entry spread but don't adjust entry price
+        # Calculate adjusted entry price based on direction and spread
+        if direction == 1:  # Long position
+            # For long positions, we buy at the ask price (close + spread)
+            adjusted_entry_price = current_price + raw_spread
+        else:  # Short position
+            # For short positions, we sell at the bid price (close)
+            adjusted_entry_price = current_price
+
         self.current_position = {
-            "direction": 1 if direction == 1 else -1,  # 1 for buy, -1 for sell
-            "entry_price": current_price,  # Use raw price without spread
-            "entry_spread": raw_spread,  # Store spread for exit calculations
+            "direction": 1 if direction == 1 else -1,
+            "entry_price": adjusted_entry_price,  # Use spread-adjusted price
+            "entry_spread": raw_spread,
             "lot_size": lot_size,
             "entry_time": str(self.original_index[self.current_step]),
             "entry_step": self.current_step,
@@ -347,10 +354,12 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Calculate profit or loss with spread at exit
         if direction == 1:  # Long position
-            exit_price = current_price - current_spread  # Worse exit price for longs
+            # For long exits, we sell at bid price
+            exit_price = current_price
             profit_points = exit_price - entry_price
         else:  # Short position
-            exit_price = current_price + current_spread  # Worse exit price for shorts
+            # For short exits, we buy back at ask price
+            exit_price = current_price + current_spread
             profit_points = entry_price - exit_price
             
         pnl = profit_points * lot_size * self.CONTRACT_SIZE  # Account for 100oz contract size
