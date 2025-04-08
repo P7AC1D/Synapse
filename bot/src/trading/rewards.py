@@ -6,12 +6,14 @@ from .actions import Action
 class RewardCalculator:
     """Handles reward calculation for trading actions."""
     
-    def __init__(self, max_hold_bars: int = 64):
+    def __init__(self, env, max_hold_bars: int = 64):
         """Initialize reward calculator.
         
         Args:
+            env: Trading environment instance
             max_hold_bars: Maximum bars to hold a position
         """
+        self.env = env
         self.max_hold_bars = max_hold_bars
 
     def calculate_reward(self, action: int, position_type: int, 
@@ -19,25 +21,24 @@ class RewardCalculator:
         """Calculate reward based on action and position state."""
         reward = 0.0
 
+        # Scale rewards by percentage of current balance
+        normalized_pnl = pnl / self.env.balance if self.env.balance > 0 else 0
+
         if action == Action.CLOSE and position_type != 0:
-            # Close position reward based on normalized P&L
             if pnl > 0:
-                # Bonus for taking profit
-                reward = pnl + 0.2  # Extra bonus for successful trades
+                # Scale reward by percentage gain
+                reward = normalized_pnl + 0.2
             else:
-                # Reduce penalty for losses to encourage more exploration
-                reward = pnl * 0.6  # Slightly less reduction to make losses matter
+                # Scale penalty by percentage loss
+                reward = normalized_pnl * 0.6
 
         elif action == Action.HOLD and position_type != 0:
-            # Make holding penalty proportional to unrealized P&L
             if pnl > 0:
-                # Reward for holding winners proportional to profit
-                reward = min(0.05, pnl * 0.05)  # Increased incentive for winners
+                # Scale holding reward by percentage gain
+                reward = normalized_pnl * 0.05
             else:
-                # Significant penalty for holding losers proportional to loss
-                # Scale the penalty based on actual unrealized loss
-                loss_penalty = abs(pnl) * 0.03  # 3% of the unrealized loss
-                reward = -min(0.1, loss_penalty)  # Cap at -0.1 instead of -0.01
+                # Scale holding penalty by percentage loss
+                reward = normalized_pnl * 0.03
 
         elif action in [Action.BUY, Action.SELL] and position_type == 0:
             # Keep exploration incentive for opening positions

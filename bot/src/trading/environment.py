@@ -64,7 +64,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.metrics = MetricsTracker(initial_balance)
         self.action_handler = ActionHandler(self)
         self.renderer = Renderer()
-        self.reward_calculator = RewardCalculator(max_hold_bars)
+        self.reward_calculator = RewardCalculator(self, max_hold_bars)
         
         # Verify required columns
         required_columns = ['open', 'close', 'high', 'low', 'spread']
