@@ -99,7 +99,9 @@ def print_metrics(results: dict):
     hold_time_metrics = [
         ('Avg Hold Time', results.get('avg_hold_time', 0.0), '.1f'),
         ('Winners Hold Time', results.get('win_hold_time', 0.0), '.1f'),
-        ('Losers Hold Time', results.get('loss_hold_time', 0.0), '.1f')
+        ('Losers Hold Time', results.get('loss_hold_time', 0.0), '.1f'),
+        ('Max Hold Time', results.get('max_hold_bars', 64), '.1f'),  # Use default if not available
+        ('Avg Hold Time %', results.get('avg_hold_time', 0.0) / results.get('max_hold_bars', 64) * 100, '.1f%')
     ]
     
     # Print all metrics sections

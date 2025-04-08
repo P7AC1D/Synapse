@@ -430,13 +430,13 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     # Update the policy_kwargs by removing the unsupported dropout parameter
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 128,          # Keep effective LSTM size
+        "lstm_hidden_size": 256,          # Increased for 11 features
         "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
         "shared_lstm": True,              # Share LSTM to reduce parameters
         "enable_critic_lstm": False,      # Disable separate critic LSTM
         "net_arch": {
-            "pi": [64, 32],               # Wider networks for better feature representation
-            "vf": [64, 32]                # Symmetric critic network
+            "pi": [128, 64],              # Wider networks for 11 features
+            "vf": [128, 64]               # Symmetric critic network
         },
         "activation_fn": th.nn.ReLU,      # Explicitly define activation
         "optimizer_kwargs": {

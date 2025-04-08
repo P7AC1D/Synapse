@@ -240,7 +240,10 @@ class TradeModel:
             discrete_action = discrete_action % 4  # Ensure in range 0-3
             # Log pre-step information
             # Format features with better readability
-            feature_dict = dict(zip(['returns', 'rsi', 'atr', 'volatility', 'trend', 'pattern', 'pnl'], obs))
+            feature_names = ['returns', 'rsi', 'atr', 'volatility_breakout', 'trend_strength', 
+                           'candle_pattern', 'sin_time', 'cos_time', 'position_type', 
+                           'normalized_hold_time', 'normalized_pnl']
+            feature_dict = dict(zip(feature_names, obs))
             feature_str = "\n    ".join([f"{k}: {v:.4f}" for k, v in feature_dict.items()])
             
             self.logger.info(f"\n=== Step {step} ===")
