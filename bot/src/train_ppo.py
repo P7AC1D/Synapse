@@ -40,7 +40,7 @@ def main():
     parser.add_argument('--random_start', action='store_true',
                       help='Start training from random positions in the dataset')
     
-    parser.add_argument('--total_timesteps', type=int, default=100000,
+    parser.add_argument('--total_timesteps', type=int, default=200000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')

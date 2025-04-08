@@ -82,7 +82,8 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         eval_freq=args.eval_freq,
         deterministic=True,
         verbose=1,
-        iteration=iteration
+        iteration=iteration,
+        training_timesteps=args.total_timesteps
     )
     callbacks.append(unified_callback)
     
@@ -227,7 +228,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 eval_freq=args.eval_freq,
                 deterministic=True,
                 verbose=1,
-                iteration=iteration
+                iteration=iteration,
+                training_timesteps=period_timesteps
             )
             callbacks.append(unified_callback)
             

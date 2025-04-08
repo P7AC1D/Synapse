@@ -7,12 +7,12 @@ from datetime import datetime
 from typing import Dict
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback
-from trade_environment import TradingEnv
+from trading.environment import TradingEnv
 
 class UnifiedEvalCallback(BaseCallback):
     """Optimized evaluation callback with enhanced progress tracking and comprehensive evaluation."""
     def __init__(self, eval_env, train_data, val_data, eval_freq=100000, best_model_save_path=None, 
-                 log_path=None, deterministic=True, verbose=1, iteration=0):
+                 log_path=None, deterministic=True, verbose=1, iteration=0, training_timesteps=200000):
         super(UnifiedEvalCallback, self).__init__(verbose=verbose)
         self.eval_env = eval_env
         self.eval_freq = eval_freq
@@ -41,6 +41,7 @@ class UnifiedEvalCallback(BaseCallback):
         self.best_score = -float("inf")
         self.best_metrics = {}
         self.max_drawdown = 0.0
+        self.training_timesteps = training_timesteps
         
         # Back up raw data for reference
         if hasattr(self.eval_env, 'env'):
@@ -207,12 +208,13 @@ class UnifiedEvalCallback(BaseCallback):
                     "total_reward": metrics['reward']
                 }
 
-                print(f"\n===== {name} Metrics =====")
+                print(f"\n===== {name} Metrics (Timestep {self.num_timesteps:,d}) =====")
                 print(f"  Balance: {basic_metrics['balance']:.2f}")
                 print(f"  Return: {basic_metrics['return']:.2f}%")
                 print(f"  Max Drawdown: {basic_metrics['max_drawdown']:.2f}%")
                 print(f"  Win Rate: {basic_metrics['win_rate']:.2f}%")
                 print(f"  Total Reward: {basic_metrics['total_reward']:.2f}")
+                print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
                 
                 # Performance Metrics
                 total_trades = len(env.env.trades)
@@ -379,11 +381,12 @@ class UnifiedEvalCallback(BaseCallback):
                 model_path = os.path.join(self.best_model_save_path, "best_model")
                 self.model.save(model_path)
                 
-                print(f"\n=== New Best Model Saved ===")
+                print(f"\n=== New Best Model Saved at Timestep {self.num_timesteps:,d} ===")
                 print(f"Combined Return: {metrics['combined']['return']*100:.2f}%")
                 print(f"Validation Return: {metrics['validation']['return']*100:.2f}%")
                 print(f"Consistency Score: {metrics['scores']['consistency']:.2f}")
                 print(f"Trade Quality: {metrics['scores']['combined_quality']:.2f}")
+                print(f"Training Progress: {self.num_timesteps/self.training_timesteps*100:.1f}% complete")
 
             self.last_time_trigger = self.n_calls
         
