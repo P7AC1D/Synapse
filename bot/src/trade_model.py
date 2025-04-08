@@ -9,6 +9,7 @@ import pandas as pd
 from sb3_contrib.ppo_recurrent import RecurrentPPO
 
 from trading.environment import TradingEnv
+from trading.actions import Action
 
 class TradeModel:
     """Class for loading and making predictions with a trained PPO-LSTM model."""
@@ -450,13 +451,17 @@ class TradeModel:
                 deterministic=True
             )
             
-            # Process action with improved error handling and string conversion
+            # Process action with improved error handling
             try:
                 if isinstance(raw_action, np.ndarray):
-                    discrete_action = str(int(raw_action.item()) % 4)
+                    action_value = int(raw_action.item())
                 else:
-                    discrete_action = str(int(raw_action) % 4)
-                discrete_action = int(discrete_action)  # Convert back to int after string conversion
+                    action_value = int(raw_action)
+                discrete_action = action_value % 4
+                
+                # Add explicit position check and force close if needed
+                if env.current_position is not None and discrete_action in [Action.BUY, Action.SELL]:
+                    discrete_action = Action.CLOSE  # Force close before new position
             except (ValueError, TypeError):
                 discrete_action = 0
             

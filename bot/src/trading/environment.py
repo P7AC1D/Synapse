@@ -137,6 +137,7 @@ class TradingEnv(gym.Env, EzPickle):
                 self.trades.append(trade_info)
                 self.metrics.add_trade(trade_info)
                 self.metrics.update_balance(pnl)
+            self.current_position = None  # Ensure position is cleared after closing
             reward = self.reward_calculator.calculate_reward(action, position_type, pnl, current_atr, bars_held)
         elif action == Action.HOLD:
             unrealized_pnl, profit_pips = self.action_handler.manage_position()
