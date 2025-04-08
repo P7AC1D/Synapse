@@ -46,10 +46,6 @@ class ActionHandler:
             direction: Direction of the trade (1: buy, 2: sell)
             raw_spread: Current spread to adjust entry price
         """
-        # Check if we already have a position and force close it first
-        if self.env.current_position is not None:
-            self.close_position()
-            self.env.current_position = None  # Ensure it's cleared
             
         current_price = self.env.prices['close'][self.env.current_step]
         current_atr = self.env.prices['atr'][self.env.current_step]

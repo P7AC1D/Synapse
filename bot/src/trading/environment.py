@@ -125,12 +125,16 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Execute action and calculate reward
         reward = 0.0
-        if action == Action.BUY:
-            self.action_handler.execute_trade(1, current_spread)
-            reward = self.reward_calculator.calculate_reward(action, position_type, 0, current_atr, bars_held)
-        elif action == Action.SELL:
-            self.action_handler.execute_trade(2, current_spread)
-            reward = self.reward_calculator.calculate_reward(action, position_type, 0, current_atr, bars_held)
+        if action in [Action.BUY, Action.SELL]:
+            # Check if position already exists
+            if self.current_position is not None:
+                # Return negative reward for trying to open position when one exists
+                reward = -0.5  # Strong penalty to discourage this behavior
+            else:
+                # Execute trade since no position exists
+                direction = 1 if action == Action.BUY else 2
+                self.action_handler.execute_trade(direction, current_spread)
+                reward = self.reward_calculator.calculate_reward(action, position_type, 0, current_atr, bars_held)
         elif action == Action.CLOSE:
             pnl, trade_info = self.action_handler.close_position()
             if pnl != 0:

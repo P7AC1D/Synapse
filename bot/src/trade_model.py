@@ -461,7 +461,7 @@ class TradeModel:
                 
                 # Add explicit position check and force close if needed
                 if env.current_position is not None and discrete_action in [Action.BUY, Action.SELL]:
-                    discrete_action = Action.CLOSE  # Force close before new position
+                    discrete_action = Action.HOLD 
             except (ValueError, TypeError):
                 discrete_action = 0
             
