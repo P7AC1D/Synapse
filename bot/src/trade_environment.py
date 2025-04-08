@@ -488,11 +488,6 @@ class TradingEnv(gym.Env, EzPickle):
                     reward -= 0.01  # Small time decay penalty
             
         unrealized_pnl = self._manage_position()
-        # Add intermediate reward based on unrealized P&L
-        # Smaller scale than closing rewards to prioritize actual realized gains
-        normalized_unrealized = unrealized_pnl / self.initial_balance * 100
-        # Use a smaller scale (e.g., 0.1) to keep focus on actual closes
-        reward += normalized_unrealized * 0.1
 
         # Manage current position and check bankruptcy
         if self.current_position:
