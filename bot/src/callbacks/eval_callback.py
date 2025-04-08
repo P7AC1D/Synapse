@@ -375,18 +375,18 @@ class UnifiedEvalCallback(BaseCallback):
 
                 period_info = {
                     'results': self.eval_results,
-                    'iteration': self.iteration,
-                    'balance': float(eval_env.balance),
-                    'total_trades': len(eval_env.trades),
-                    'active_position': active_position,
-                    'win_count': num_winning_trades,
-                    'loss_count': num_losing_trades,
-                    'win_rate': eval_env.trade_metrics['win_rate'] * 100,
+                    'iteration': str(self.iteration),
+                    'balance': str(float(eval_env.balance)),
+                    'total_trades': str(len(eval_env.trades)),
+                    'active_position': str(active_position),
+                    'win_count': str(num_winning_trades),
+                    'loss_count': str(num_losing_trades),
+                    'win_rate': str(eval_env.trade_metrics['win_rate'] * 100),
                     'period_start': period_start,
                     'period_end': period_end,
                     'trade_metrics': eval_env.trade_metrics,
-                    'max_drawdown': period_max_drawdown * 100,
-                    'historical_max_drawdown': self.max_drawdown * 100
+                    'max_drawdown': str(period_max_drawdown * 100),
+                    'historical_max_drawdown': str(self.max_drawdown * 100)
                 }
 
                 all_results[f"iteration_{self.iteration}"] = period_info

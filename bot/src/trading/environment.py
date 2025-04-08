@@ -222,5 +222,7 @@ class TradingEnv(gym.Env, EzPickle):
             "drawdown": self.metrics.get_drawdown() * 100,
             "position": position_info,
             "trade_metrics": self.metrics.metrics,
-            "total_trades": len(self.trades)
+            "total_trades": len(self.trades),
+            "win_count": self.metrics.win_count,
+            "loss_count": self.metrics.loss_count
         }
