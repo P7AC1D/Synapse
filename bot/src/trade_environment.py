@@ -37,14 +37,14 @@ class TradingEnv(gym.Env, EzPickle):
         # Save original datetime index
         self.original_index = data.index.copy() if isinstance(data.index, pd.DatetimeIndex) else pd.to_datetime(data.index)
         
-        # Trading constants
-        self.POINT_VALUE = 0.01
-        self.PIP_VALUE = 0.0001
-        self.MIN_LOTS = 0.01
-        self.MAX_LOTS = 100.0
-        self.CONTRACT_SIZE = 1.0
-        self.BALANCE_PER_LOT = balance_per_lot
-        self.MAX_DRAWDOWN = 0.5
+        # Trading constants adjusted for XAUUSD
+        self.POINT_VALUE = 0.1       # Gold moves in 0.1 increments
+        self.PIP_VALUE = 1.0         # A full point in gold
+        self.MIN_LOTS = 0.01         # Minimum 0.01 lots (standard for gold)
+        self.MAX_LOTS = 50.0         # Reduced max lots due to gold's higher pip value
+        self.CONTRACT_SIZE = 100.0    # Standard gold contract = 100 oz
+        self.BALANCE_PER_LOT = balance_per_lot  # Will be higher for gold
+        self.MAX_DRAWDOWN = 0.4      # More conservative drawdown for gold
         
         # Verify required columns
         required_columns = ['open', 'close', 'high', 'low', 'spread']
@@ -353,7 +353,7 @@ class TradingEnv(gym.Env, EzPickle):
             exit_price = current_price + current_spread  # Worse exit price for shorts
             profit_points = entry_price - exit_price
             
-        pnl = profit_points * lot_size
+        pnl = profit_points * lot_size * self.CONTRACT_SIZE  # Account for 100oz contract size
         profit_pips = profit_points / self.PIP_VALUE
         
         # Record trade details
@@ -431,7 +431,7 @@ class TradingEnv(gym.Env, EzPickle):
             current_exit_price = current_price + current_spread  # Worse exit price for shorts
             profit_points = entry_price - current_exit_price
             
-        unrealized_pnl = profit_points * lot_size
+        unrealized_pnl = profit_points * lot_size * self.CONTRACT_SIZE  # Account for 100oz contract size
         profit_pips = profit_points / self.PIP_VALUE
         
         self.current_position["current_profit_pips"] = profit_pips
@@ -647,10 +647,10 @@ class TradingEnv(gym.Env, EzPickle):
             
             if self.current_position["direction"] == 1:  # Long
                 current_exit_price = current_price - current_spread  # Worse exit price for longs
-                unrealized_pnl = (current_exit_price - self.current_position["entry_price"]) * self.current_position["lot_size"]
+                unrealized_pnl = (current_exit_price - self.current_position["entry_price"]) * self.current_position["lot_size"] * self.CONTRACT_SIZE
             else:  # Short
                 current_exit_price = current_price + current_spread  # Worse exit price for shorts
-                unrealized_pnl = (self.current_position["entry_price"] - current_exit_price) * self.current_position["lot_size"]
+                unrealized_pnl = (self.current_position["entry_price"] - current_exit_price) * self.current_position["lot_size"] * self.CONTRACT_SIZE
                 
             print(f"Position Details:")
             print(f"  Entry Price: {self.current_position['entry_price']:.5f}")
