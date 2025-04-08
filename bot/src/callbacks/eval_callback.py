@@ -359,12 +359,12 @@ class UnifiedEvalCallback(BaseCallback):
                         period_max_drawdown = max(period_max_drawdown, current_drawdown)
 
                 # Update historical max drawdown
-                self.max_drawdown = max(self.max_drawdown, period_max_drawdown)
+            self.max_drawdown = str(max(float(self.max_drawdown), period_max_drawdown))
 
-                # Calculate basic metrics
-                active_position = 1 if eval_env.current_position else 0
-                num_winning_trades = len([t for t in eval_env.trades if t['pnl'] > 0])
-                num_losing_trades = len([t for t in eval_env.trades if t['pnl'] <= 0])
+            # Calculate basic metrics
+            active_position = str(1 if eval_env.current_position else 0)
+            num_winning_trades = str(len([t for t in eval_env.trades if t['pnl'] > 0]))
+            num_losing_trades = str(len([t for t in eval_env.trades if t['pnl'] <= 0]))
                 
                 try:
                     period_start = str(eval_env.original_index[0])
