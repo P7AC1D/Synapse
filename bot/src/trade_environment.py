@@ -331,8 +331,6 @@ class TradingEnv(gym.Env, EzPickle):
         }
         
         self.trade_metrics['current_direction'] = self.current_position["direction"]
-        
-        return 0.05 # Small incentive to explore
     
     def _close_position(self) -> float:
         """Close current position and calculate P/L.
@@ -341,7 +339,7 @@ class TradingEnv(gym.Env, EzPickle):
             float: Reward for closing the position
         """
         if not self.current_position:
-            return -0.1  # Penalty for trying to close when no position exists
+            return 0  # No reward when no position exists
         
         current_price = self.prices['close'][self.current_step]
         direction = self.current_position["direction"]
@@ -388,12 +386,9 @@ class TradingEnv(gym.Env, EzPickle):
         self.balance += pnl
         if self.balance <= 0:
             self.balance = 0  # Prevent negative balance
-            # Calculate reward before clearing position
-            normalized_pnl = pnl / self.initial_balance * 100
-            # Clear position before returning
             self.current_position = None
             self.trade_metrics['current_direction'] = 0
-            return normalized_pnl * -0.5  # Reduced negative reward for bankruptcy
+            return pnl
         
         # Calculate hold time before clearing position
         hold_time = self.current_step - entry_step
@@ -411,9 +406,7 @@ class TradingEnv(gym.Env, EzPickle):
             self.trade_metrics['avg_profit'] = sum(t["pnl"] for t in winning_trades) / len(winning_trades) if winning_trades else 0.0
             self.trade_metrics['avg_loss'] = sum(t["pnl"] for t in losing_trades) / len(losing_trades) if losing_trades else 0.0
         
-        # Base reward on P/L relative to account size only
-        normalized_pnl = pnl / self.initial_balance * 100
-        return normalized_pnl
+        return pnl
 
     def _manage_position(self) -> float:
         """Calculate current position's unrealized P/L.
@@ -447,13 +440,40 @@ class TradingEnv(gym.Env, EzPickle):
         
         return unrealized_pnl        
         
-    def get_action_penalty(self) -> float:
-        """Calculate penalties for undesirable actions."""
-        return 0.0  # No penalties in simplified reward structure
+    def calculate_reward(self, action: int, position_type: int, pnl: float, atr: float, bars_held: int) -> float:
+        """Calculate reward based on action and position state.
         
-    def get_terminal_reward(self) -> float:
-        """Calculate terminal state rewards/penalties."""
-        return 0.0  # No terminal rewards in simplified structure
+        Args:
+            action: The action taken (HOLD, BUY, SELL, CLOSE)
+            position_type: Current position type (-1=short, 0=none, 1=long)
+            pnl: Current unrealized or realized PnL
+            atr: Current ATR value
+            bars_held: Number of bars position has been held
+            
+        Returns:
+            float: Calculated reward
+        """
+        reward = 0.0
+
+        if action == Action.CLOSE and position_type != 0:
+            # Normalize pnl by ATR and clip
+            reward = np.clip(pnl / atr, -2.0, 2.0)
+            
+            # Optional shaping
+            reward = np.sign(reward) * (abs(reward) ** 0.5)
+
+        elif action == Action.HOLD and position_type != 0:
+            reward = pnl * 0.001  # light shaping
+            if bars_held > self.MAX_HOLD_BARS:
+                reward -= 0.1  # discourage overstaying
+
+        elif action in [Action.BUY, Action.SELL] and position_type == 0:
+            reward = 0  # Neutral, or small penalty to reduce randomness
+
+        # Optional time penalty
+        reward -= 0.001  # per step cost
+
+        return float(reward)
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Take an environment step."""
@@ -470,24 +490,28 @@ class TradingEnv(gym.Env, EzPickle):
         # Update timesteps
         self.episode_steps += 1
         self.current_step += 1
-        
+
+        # Get current position info before action
+        position_type = self.current_position["direction"] if self.current_position else 0
+        bars_held = self.current_step - self.current_position["entry_step"] if self.current_position else 0
+        current_atr = self.prices['atr'][self.current_step]
+
         reward = 0.0
+        unrealized_pnl = 0.0
 
         # Execute trade actions
-        if action == 1:  # Buy
-            reward += self._execute_trade(1, current_spread)
-        elif action == 2:  # Sell
-            reward += self._execute_trade(2, current_spread)
-        elif action == 3:  # Close
-            reward += self._close_position()
-        elif action == 0:  # Hold
-            # Add small penalty for holding too long to encourage decision-making
-            if self.current_position:  # Only apply hold penalty if a position exists
-                hold_time = self.current_step - self.current_position["entry_step"]
-                if hold_time > self.MAX_HOLD_BARS / 2:
-                    reward -= 0.01  # Small time decay penalty
-            
-        unrealized_pnl = self._manage_position()
+        if action == Action.BUY:  # Buy
+            self._execute_trade(1, current_spread)
+            reward = self.calculate_reward(action, position_type, 0, current_atr, bars_held)
+        elif action == Action.SELL:  # Sell
+            self._execute_trade(2, current_spread)
+            reward = self.calculate_reward(action, position_type, 0, current_atr, bars_held)
+        elif action == Action.CLOSE:  # Close
+            pnl = self._close_position()
+            reward = self.calculate_reward(action, position_type, pnl, current_atr, bars_held)
+        elif action == Action.HOLD:  # Hold
+            unrealized_pnl = self._manage_position()
+            reward = self.calculate_reward(action, position_type, unrealized_pnl, current_atr, bars_held)
 
         # Manage current position and check bankruptcy
         if self.current_position:
