@@ -37,12 +37,12 @@ class TradingEnv(gym.Env, EzPickle):
         # Save original datetime index
         self.original_index = data.index.copy() if isinstance(data.index, pd.DatetimeIndex) else pd.to_datetime(data.index)
         
-        # Trading constants adjusted for XAUUSD
-        self.POINT_VALUE = 0.1       # Gold moves in 0.1 increments
-        self.PIP_VALUE = 1.0         # A full point in gold
+        # Trading constants adjusted for XAUUSD - UPDATED VALUES
+        self.POINT_VALUE = 0.01      # Gold moves in 0.01 increments
+        self.PIP_VALUE = 0.01        # Gold pip and point values are the same
         self.MIN_LOTS = 0.01         # Minimum 0.01 lots (standard for gold)
         self.MAX_LOTS = 50.0         # Reduced max lots due to gold's higher pip value
-        self.CONTRACT_SIZE = 100.0    # Standard gold contract = 100 oz
+        self.CONTRACT_SIZE = 100.0   # Standard gold contract = 100 oz
         self.BALANCE_PER_LOT = balance_per_lot  # Will be higher for gold
         self.MAX_DRAWDOWN = 0.4      # More conservative drawdown for gold
         
