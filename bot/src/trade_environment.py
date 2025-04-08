@@ -445,15 +445,7 @@ class TradingEnv(gym.Env, EzPickle):
         
         self.current_position["current_profit_pips"] = profit_pips
         
-        return unrealized_pnl
-        
-    def calculate_reward(self, action: int, position_type: int, pnl: float, atr: float, bars_held: int) -> float:
-        """Calculate reward based only on realized PnL."""
-        if action == Action.CLOSE and position_type != 0:
-            # Use normalized PnL as the reward - simple and direct
-            return float(pnl / self.initial_balance)
-        else:
-            return 0.0  # No reward for other actions
+        return unrealized_pnl        
         
     def get_action_penalty(self) -> float:
         """Calculate penalties for undesirable actions."""
@@ -479,13 +471,15 @@ class TradingEnv(gym.Env, EzPickle):
         self.episode_steps += 1
         self.current_step += 1
         
+        reward = 0.0
+
         # Execute trade actions
         if action == 1:  # Buy
-            self._execute_trade(1, current_spread)
+            reward += self._execute_trade(1, current_spread)
         elif action == 2:  # Sell
-            self._execute_trade(2, current_spread)
+            reward += self._execute_trade(2, current_spread)
         elif action == 3:  # Close
-            self._close_position()
+            reward += self._close_position()
             
         # Manage current position and check bankruptcy
         unrealized_pnl = self._manage_position()
@@ -523,15 +517,7 @@ class TradingEnv(gym.Env, EzPickle):
         # Calculate ATR-adjusted reward
         current_atr = self.prices['atr'][self.current_step]
         hold_time = self.current_step - self.current_position["entry_step"] if self.current_position else 0
-        position_type = self.current_position["direction"] if self.current_position else 0
-        
-        reward = self.calculate_reward(
-            action=action,
-            position_type=position_type,
-            pnl=unrealized_pnl,  # Pass unrealized for holds, will be realized for closes
-            atr=current_atr,
-            bars_held=hold_time
-        )
+        position_type = self.current_position["direction"] if self.current_position else 0        
         
         self.reward = reward
         
