@@ -14,6 +14,7 @@ class RewardCalculator:
         """
         self.env = env
         self.previous_balance_high = env.initial_balance
+        self.trade_entry_balance = env.initial_balance  # Track balance at trade entry
         self.last_direction = None  # Track trade direction for reversals
         self.bars_since_consolidation = 0
         self.min_hold_bars = 20  # Minimum bars for long hold reward
@@ -42,36 +43,44 @@ class RewardCalculator:
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, current_hold: int,
                         optimal_hold: int) -> float:
-        """Calculate sparse rewards based on significant events."""
+        """Calculate rewards combining sparse and scaled components."""
         reward = 0.0
         
-        # 1. Correct Trade Direction
+        # Update trade entry balance when opening new position
+        if action in [Action.BUY, Action.SELL] and position_type == 0:
+            self.trade_entry_balance = self.env.balance
+            
+        # Trade closure rewards
         if action == Action.CLOSE and position_type != 0:
+            # Sparse direction reward
             reward += 1.0 if pnl > 0 else -1.0
+            
+            # Scaled PnL component
+            reward += pnl / self.trade_entry_balance
+            
+            # Track direction for reversals
             self.last_direction = position_type
             
-        # 2. New Balance High
+            # Long hold bonus
+            if current_hold >= self.min_hold_bars and pnl > 0:
+                reward += 0.5
+            
+            # Reversal bonus
+            if self._is_successful_reversal(position_type, pnl):
+                reward += 1.0
+                
+        # New Balance High
         if self.env.balance > self.previous_balance_high:
             reward += 1.0
             self.previous_balance_high = self.env.balance
             
-        # 3. Correct Non-Action (Discipline)
+        # Correct Non-Action (Discipline)
         if action == Action.HOLD and position_type == 0:
             if self._is_market_flat():
                 reward += 1.0
                 self.bars_since_consolidation = 0
             else:
                 self.bars_since_consolidation += 1
-                
-        # 4. Successful Reversal
-        if action == Action.CLOSE:
-            if self._is_successful_reversal(position_type, pnl):
-                reward += 1.0
-                
-        # 5. Long Hold Success
-        if action == Action.CLOSE and position_type != 0:
-            if current_hold >= self.min_hold_bars and pnl > 0:
-                reward += 1.0
         
         return float(reward)
 
