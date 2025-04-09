@@ -26,9 +26,9 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
         "lstm_hidden_size": 512,          # Increased LSTM capacity
-        "n_lstm_layers": 2,               # Keep 2 layers
-        "shared_lstm": True,              # Share LSTM
-        "enable_critic_lstm": True,       # Enable separate critic LSTM for better value estimation
+        "n_lstm_layers": 2,               # Deep LSTM
+        "shared_lstm": False,             # Use separate LSTMs for actor and critic
+        "enable_critic_lstm": True,       # Enable critic LSTM for better value estimation
         "net_arch": {
             "pi": [256, 128],            # Deeper policy network
             "vf": [256, 128]             # Deeper value network
