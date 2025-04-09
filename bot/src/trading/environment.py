@@ -36,7 +36,7 @@ class TradingEnv(gym.Env, EzPickle):
         
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
                  balance_per_lot: float = 1000.0, random_start: bool = False,
-                 max_hold_bars: int = 64):
+                 max_hold_bars: int = 64, min_hold_bars: int = 3, model = None):
         """Initialize trading environment.
         
         Args:
@@ -45,6 +45,7 @@ class TradingEnv(gym.Env, EzPickle):
             balance_per_lot: Account balance required per 0.01 lot
             random_start: Whether to start from random positions
             max_hold_bars: Maximum bars to hold a position
+            model: PPO model reference for state persistence
         """
         super().__init__()
         EzPickle.__init__(self)
@@ -82,6 +83,10 @@ class TradingEnv(gym.Env, EzPickle):
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.feature_processor.setup_observation_space()
         
+        # Store model reference for state persistence
+        self.model = model
+        self._last_lstm_state = None
+        
         # Save datetime index and data length
         self.original_index = data.index
         self.data_length = len(self.raw_data)
@@ -105,6 +110,10 @@ class TradingEnv(gym.Env, EzPickle):
         self.trades = []
         self.trade_metrics = {'current_direction': 0}
         
+        # Trading constraints
+        self.min_hold_bars = min_hold_bars
+        self.current_hold_time = 0
+        
         # Initialize metrics
         self.metrics.reset()
         
@@ -125,6 +134,11 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Execute action and calculate reward
         reward = 0.0
+        
+        # Update hold time
+        if self.current_position:
+            self.current_hold_time += 1
+        
         if action in [Action.BUY, Action.SELL]:
             # Check if position already exists
             if self.current_position is not None:
@@ -134,15 +148,22 @@ class TradingEnv(gym.Env, EzPickle):
                 # Execute trade since no position exists
                 direction = 1 if action == Action.BUY else 2
                 self.action_handler.execute_trade(direction, current_spread)
+                self.current_hold_time = 0  # Reset hold time for new position
                 reward = self.reward_calculator.calculate_reward(action, position_type, 0, current_atr, bars_held)
         elif action == Action.CLOSE:
-            pnl, trade_info = self.action_handler.close_position()
-            if pnl != 0:
-                self.trades.append(trade_info)
-                self.metrics.add_trade(trade_info)
-                self.metrics.update_balance(pnl)
-            self.current_position = None  # Ensure position is cleared after closing
-            reward = self.reward_calculator.calculate_reward(action, position_type, pnl, current_atr, bars_held)
+            # Block close action if minimum hold time not met
+            if self.current_position and self.current_hold_time < self.min_hold_bars:
+                reward = -0.1  # Small penalty for trying to close too early
+                action = Action.HOLD  # Force hold
+            else:
+                pnl, trade_info = self.action_handler.close_position()
+                if pnl != 0:
+                    self.trades.append(trade_info)
+                    self.metrics.add_trade(trade_info)
+                    self.metrics.update_balance(pnl)
+                self.current_position = None  # Ensure position is cleared after closing
+                self.current_hold_time = 0  # Reset hold time
+                reward = self.reward_calculator.calculate_reward(action, position_type, pnl, current_atr, bars_held)
         elif action == Action.HOLD:
             unrealized_pnl, profit_pips = self.action_handler.manage_position()
             if self.current_position:
@@ -161,12 +182,14 @@ class TradingEnv(gym.Env, EzPickle):
         done = end_of_data or self.metrics.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
         
         # Auto-close position at end of episode
-        if done and self.current_position:
-            pnl, trade_info = self.action_handler.close_position()
-            if pnl != 0:
-                self.trades.append(trade_info)
-                self.metrics.add_trade(trade_info)
-                self.metrics.update_balance(pnl)
+        if done:
+            if self.current_position and self.current_hold_time >= self.min_hold_bars:
+                pnl, trade_info = self.action_handler.close_position()
+                if pnl != 0:
+                    self.trades.append(trade_info)
+                    self.metrics.add_trade(trade_info)
+                    self.metrics.update_balance(pnl)
+            self.current_hold_time = 0  # Reset hold time at end of episode
         
         # Get observation and check truncation
         obs = self.get_observation()
@@ -178,6 +201,10 @@ class TradingEnv(gym.Env, EzPickle):
         """Reset the environment to initial state."""
         if seed is not None:
             np.random.seed(seed)
+            
+        # Store LSTM state before reset if available
+        if self.model is not None and hasattr(self.model.policy, 'lstm_states'):
+            self._last_lstm_state = self.model.policy.lstm_states
             
         if self.random_start:
             max_start = max(0, self.data_length - 100)
@@ -192,6 +219,10 @@ class TradingEnv(gym.Env, EzPickle):
         self.trade_metrics = {'current_direction': 0}
         
         self.metrics.reset()
+        
+        # Restore LSTM state if available
+        if self._last_lstm_state is not None and self.model is not None:
+            self.model.policy.lstm_states = self._last_lstm_state
         
         return self.get_observation(), self._get_info()
         

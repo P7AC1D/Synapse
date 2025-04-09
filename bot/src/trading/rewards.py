@@ -6,15 +6,21 @@ from .actions import Action
 class RewardCalculator:
     """Handles reward calculation for trading actions."""
     
-    def __init__(self, env, max_hold_bars: int = 64):
+    def __init__(self, env, max_hold_bars: int = 64, ema_alpha: float = 0.05):
         """Initialize reward calculator.
         
         Args:
             env: Trading environment instance
             max_hold_bars: Maximum bars to hold a position
+            ema_alpha: Exponential moving average factor for direction tracking
         """
         self.env = env
         self.max_hold_bars = max_hold_bars
+        self.ema_alpha = ema_alpha
+        
+        # Initialize direction tracking
+        self.long_ratio = 0.5  # Start with balanced ratio
+        self.trade_count = 0  # Track total trades for ratio calculation
 
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, bars_held: int) -> float:
@@ -50,9 +56,20 @@ class RewardCalculator:
                 # Reduced penalty for holding losers
                 reward = risk_adjusted_pnl * 0.1
                 
-        # Small reward for taking valid trades to encourage exploration
+        # Add direction balance incentive and exploration reward
         elif action in [Action.BUY, Action.SELL] and position_type == 0:
+            # Update long/short ratio
+            is_long = (action == Action.BUY)
+            self.trade_count += 1
+            self.long_ratio = (1 - self.ema_alpha) * self.long_ratio + self.ema_alpha * (1.0 if is_long else 0.0)
+            
+            # Base exploration reward
             reward += 0.1
+            
+            # Additional reward for balancing
+            if (action == Action.BUY and self.long_ratio < 0.4) or \
+               (action == Action.SELL and self.long_ratio > 0.6):
+                reward += 0.1  # Extra reward for improving balance
                 
         # Track inactivity with milder penalty
         if hasattr(self, 'bars_since_trade'):
