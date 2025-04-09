@@ -190,12 +190,11 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         env_params = {
             'initial_balance': args.initial_balance,
             'balance_per_lot': args.balance_per_lot,
-            'random_start': args.random_start,
-            'model': model  # Pass model reference for LSTM state persistence
+            'random_start': args.random_start
         }
         
         train_env = Monitor(TradingEnv(train_data, **env_params))
-        val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False, 'model': model}))
+        val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
         
         period_timesteps = base_timesteps
         

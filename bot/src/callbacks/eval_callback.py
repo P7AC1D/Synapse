@@ -30,9 +30,13 @@ class UnifiedEvalCallback(BaseCallback):
         # Create combined evaluation environment
         self.combined_data = pd.concat([train_data, val_data])
 
+        base_env = eval_env
+        while hasattr(base_env, 'env'):
+            base_env = base_env.env
+
         env_params = {
-            'initial_balance': eval_env.env.initial_balance,
-            'balance_per_lot': eval_env.env.BALANCE_PER_LOT,
+            'initial_balance': base_env.initial_balance,
+            'balance_per_lot': base_env.BALANCE_PER_LOT,
             'random_start': False
         }
         self.combined_env = Monitor(TradingEnv(self.combined_data, **env_params))

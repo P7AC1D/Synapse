@@ -36,7 +36,7 @@ class TradingEnv(gym.Env, EzPickle):
         
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
                  balance_per_lot: float = 1000.0, random_start: bool = False,
-                 max_hold_bars: int = 64, min_hold_bars: int = 3, model = None):
+                 max_hold_bars: int = 64, min_hold_bars: int = 3):
         """Initialize trading environment.
         
         Args:
@@ -83,10 +83,6 @@ class TradingEnv(gym.Env, EzPickle):
         self.raw_data, self.atr_values = self.feature_processor.preprocess_data(data)
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.feature_processor.setup_observation_space()
-        
-        # Store model reference for state persistence
-        self.model = model
-        self._last_lstm_state = None
         
         # Save datetime index and data length
         self.original_index = data.index
@@ -234,10 +230,6 @@ class TradingEnv(gym.Env, EzPickle):
         if seed is not None:
             np.random.seed(seed)
             
-        # Store LSTM state before reset if available
-        if self.model is not None and hasattr(self.model.policy, 'lstm_states'):
-            self._last_lstm_state = self.model.policy.lstm_states
-            
         if self.random_start:
             max_start = max(0, self.data_length - 100)
             self.current_step = np.random.randint(0, max_start)
@@ -255,10 +247,6 @@ class TradingEnv(gym.Env, EzPickle):
         self.reward_calculator.previous_balance_high = self.initial_balance
         self.reward_calculator.last_direction = None
         self.reward_calculator.bars_since_consolidation = 0
-        
-        # Restore LSTM state if available
-        if self._last_lstm_state is not None and self.model is not None:
-            self.model.policy.lstm_states = self._last_lstm_state
         
         return self.get_observation(), self._get_info()
         
