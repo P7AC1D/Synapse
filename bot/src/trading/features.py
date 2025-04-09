@@ -1,6 +1,7 @@
 """Feature calculation and preprocessing for trading environment."""
 import numpy as np
 import pandas as pd
+import talib as ta
 from typing import Tuple, Dict, Any
 from gymnasium import spaces
 
@@ -27,8 +28,8 @@ class FeatureProcessor:
             low=-1, high=1, shape=(feature_count,), dtype=np.float32
         )
 
-    def _calculate_atr(self, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
-        """Calculate Average True Range.
+    def _calculate_indicators(self, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Tuple[np.ndarray, np.ndarray], np.ndarray]:
+        """Calculate technical indicators using TA-Lib.
         
         Args:
             high: High prices
@@ -36,90 +37,27 @@ class FeatureProcessor:
             close: Close prices
             
         Returns:
-            ATR values
+            Tuple of (ATR, RSI, (upper band, lower band), trend strength)
         """
-        tr = np.maximum(high - low,
-                     np.maximum(np.abs(high - np.roll(close, 1)),
-                              np.abs(low - np.roll(close, 1))))
-        tr[0] = high[0] - low[0]  
+        # Calculate ATR
+        atr = ta.ATR(high, low, close, timeperiod=self.atr_period)
+        atr = pd.Series(atr).bfill().fillna(pd.Series(atr).mean()).values
         
-        # Calculate ATR with proper NaN handling
-        atr = pd.Series(tr).rolling(self.atr_period, min_periods=1).mean()
-        # Fill any remaining NaNs with first valid value
-        atr = atr.bfill().fillna(atr.mean())
-        return atr.values
-
-    def _calculate_rsi(self, close: np.ndarray) -> np.ndarray:
-        """Calculate Relative Strength Index.
+        # Calculate RSI
+        rsi = ta.RSI(close, timeperiod=self.rsi_period)
+        rsi = pd.Series(rsi).bfill().fillna(50).values  # Default to neutral RSI
         
-        Args:
-            close: Close prices
-            
-        Returns:
-            RSI values
-        """
-        delta = pd.Series(close).diff().fillna(0)
-        gain = pd.Series(np.where(delta > 0, delta, 0)).rolling(window=self.rsi_period, min_periods=1).mean()
-        loss = pd.Series(np.where(delta < 0, -delta, 0)).rolling(window=self.rsi_period, min_periods=1).mean()
+        # Calculate Bollinger Bands
+        upper, middle, lower = ta.BBANDS(close, timeperiod=self.boll_period)
+        upper = pd.Series(upper).bfill().fillna(pd.Series(close).iloc[0]).values
+        lower = pd.Series(lower).bfill().fillna(pd.Series(close).iloc[0]).values
         
-        # Fill any initial NaN values
-        gain = gain.bfill().fillna(0)
-        loss = loss.bfill().fillna(0)
+        # Calculate ADX for trend strength
+        adx = ta.ADX(high, low, close, timeperiod=self.atr_period)
+        adx = pd.Series(adx).bfill().fillna(0).values
+        trend_strength = np.clip(adx/25 - 1, -1, 1)  # Same normalization as before
         
-        rs = np.zeros_like(gain)
-        mask = loss != 0
-        rs[mask] = gain[mask] / loss[mask]
-        return 100 - (100 / (1 + rs))
-
-    def _calculate_bollinger_bands(self, close: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Calculate Bollinger Bands.
-        
-        Args:
-            close: Close prices
-            
-        Returns:
-            Tuple of (upper band, lower band)
-        """
-        price_series = pd.Series(close)
-        ma20 = price_series.rolling(self.boll_period, min_periods=1).mean()
-        boll_std = price_series.rolling(self.boll_period, min_periods=1).std()
-        
-        # Handle NaN values
-        ma20 = ma20.bfill().fillna(price_series.iloc[0])
-        boll_std = boll_std.bfill().fillna(boll_std.mean())
-        
-        upper_band = (ma20 + (boll_std * 2)).values
-        lower_band = (ma20 - (boll_std * 2)).values
-        return upper_band, lower_band
-
-    def _calculate_trend_strength(self, high: np.ndarray, low: np.ndarray, atr: np.ndarray) -> np.ndarray:
-        """Calculate trend strength using ADX.
-        
-        Args:
-            high: High prices
-            low: Low prices
-            atr: ATR values
-            
-        Returns:
-            Trend strength values
-        """
-        pdm = np.maximum(high[1:] - high[:-1], 0)
-        ndm = np.maximum(low[:-1] - low[1:], 0)
-        pdm = np.insert(pdm, 0, 0)
-        ndm = np.insert(ndm, 0, 0)
-        
-        pdm_smooth = pd.Series(pdm).rolling(self.atr_period, min_periods=1).mean().fillna(0)
-        ndm_smooth = pd.Series(ndm).rolling(self.atr_period, min_periods=1).mean().fillna(0)
-        
-        atr_safe = np.where(atr < 1e-8, 1e-8, atr)
-        pdi = (pdm_smooth.values / atr_safe) * 100
-        ndi = (ndm_smooth.values / atr_safe) * 100
-        
-        sum_di = pdi + ndi
-        sum_di = np.where(sum_di < 1e-8, 1e-8, sum_di)
-        dx = np.abs(pdi - ndi) / sum_di * 100
-        adx = pd.Series(dx).rolling(self.atr_period, min_periods=1).mean().fillna(0).values
-        return np.clip(adx/25 - 1, -1, 1)
+        return atr, rsi, (upper, lower), trend_strength
 
     def preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray]:
         """Preprocess market data and calculate features.
@@ -139,11 +77,8 @@ class FeatureProcessor:
             low = data['low'].values
             opens = data['open'].values
             
-            # Calculate technical indicators
-            atr = self._calculate_atr(high, low, close)
-            rsi = self._calculate_rsi(close)
-            upper_band, lower_band = self._calculate_bollinger_bands(close)
-            trend_strength = self._calculate_trend_strength(high, low, atr)
+            # Calculate technical indicators using TA-Lib
+            atr, rsi, (upper_band, lower_band), trend_strength = self._calculate_indicators(high, low, close)
             
             # Returns and time features
             returns = np.diff(close) / close[:-1]
