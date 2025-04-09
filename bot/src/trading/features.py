@@ -142,11 +142,9 @@ class FeatureProcessor:
             features_df = pd.DataFrame(features, index=data.index)
             
             # Clean up features
-            orig_len = len(features_df)
             orig_index = features_df.index
             
             features_df = features_df.dropna()
-            post_dropna_len = len(features_df)
             dropped_index = orig_index.difference(features_df.index)
             # Validate lookback size
             if self.lookback > len(features_df) * 0.3:  # Don't allow more than 30% data loss
@@ -157,8 +155,6 @@ class FeatureProcessor:
                 print(dropped_index.to_list()[:5], "..." if len(dropped_index) > 5 else "")
             
             features_df = features_df.iloc[self.lookback:]
-            post_lookback_len = len(features_df)
-            lookback_removed = features_df.index[0] - orig_index[0]
             
             # Validate remaining data
             if len(features_df) < max(100, len(orig_index) * 0.5):
