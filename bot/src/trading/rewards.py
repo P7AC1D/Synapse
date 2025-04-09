@@ -29,7 +29,8 @@ class RewardCalculator:
         self.last_drawdown = 0.0  # Track drawdown changes
 
     def calculate_reward(self, action: int, position_type: int, 
-                        pnl: float, atr: float, bars_held: int) -> float:
+                        pnl: float, atr: float, current_hold: int,
+                        optimal_hold: int) -> float:
         """Calculate reward based on action and position state."""
         reward = 0.0
         
@@ -42,25 +43,38 @@ class RewardCalculator:
             if pnl > 0:
                 # Reward profitable trades based on risk-adjusted return
                 reward = risk_adjusted_pnl * 2.0  # Double the reward for good trades
-                # Extra reward for quick profitable trades
-                if bars_held < self.max_hold_bars * 0.5:
-                    reward *= 1.5
+                # Extra reward for optimal hold time
+                hold_efficiency = min(1.0, optimal_hold / current_hold)
+                reward *= (1.0 + hold_efficiency)
             else:
-                # More balanced loss penalty
-                reward = risk_adjusted_pnl * 2.0  # Double (not triple) the penalty for losses
+                # Penalty proportional to holding time deviation
+                hold_deviation = abs(current_hold - optimal_hold) / optimal_hold
+                penalty_factor = 1.0 + min(0.5, hold_deviation)  # Cap penalty increase at 50%
+                reward = risk_adjusted_pnl * 2.0 * penalty_factor
                 
         # Penalize invalid actions, but less severely
         elif action in [Action.BUY, Action.SELL] and position_type != 0:
             reward = -0.5  # Reduced penalty for invalid actions
             
-        # HOLD rewards based on position performance
+        # HOLD rewards based on position performance and hold time
         elif action == Action.HOLD and position_type != 0:
+            # Calculate hold time efficiency
+            hold_efficiency = min(1.0, optimal_hold / max(current_hold, 1))
+            
             if pnl > 0:
-                # Increased reward for holding winners
-                reward = risk_adjusted_pnl * 0.2
+                if current_hold <= optimal_hold:
+                    # Full reward for holding winners within optimal time
+                    reward = risk_adjusted_pnl * 0.2
+                else:
+                    # Reduced reward for holding too long
+                    reward = risk_adjusted_pnl * 0.2 * hold_efficiency
             else:
-                # Reduced penalty for holding losers
-                reward = risk_adjusted_pnl * 0.1
+                if current_hold <= optimal_hold:
+                    # Reduced penalty for holding losers within optimal time
+                    reward = risk_adjusted_pnl * 0.1
+                else:
+                    # Increased penalty for holding too long
+                    reward = risk_adjusted_pnl * 0.1 * (2.0 - hold_efficiency)
                 
         # Add direction balance incentive and exploration reward
         elif action in [Action.BUY, Action.SELL] and position_type == 0:
@@ -69,18 +83,20 @@ class RewardCalculator:
             self.trade_count += 1
             self.long_ratio = (1 - self.ema_alpha) * self.long_ratio + self.ema_alpha * (1.0 if is_long else 0.0)
             
-            # Stronger base exploration reward
-            base_reward = 0.2  # Fixed base reward to encourage trading
+            # Dynamic base reward scaled by ATR
+            atr_scale = atr / self.env.balance
+            volatility_factor = min(1.5, 1.0 / max(atr_scale, 0.0001))
+            base_reward = 0.2 * volatility_factor
             reward += base_reward
             
-            # Enhanced direction balance reward
+            # Enhanced direction balance reward with trend consideration
             if (is_long and self.long_ratio < 0.4) or (not is_long and self.long_ratio > 0.6):
-                reward += self.direction_reward
+                reward += self.direction_reward * volatility_factor
             
-            # Scale by ATR only for ratio comparison
-            atr_scale = atr / self.env.balance
-            if atr_scale < 0.0002:  # Encourage trading in low volatility
-                reward *= 1.5
+            # Add trend alignment consideration
+            trend_strength = self.env.raw_data['trend_strength'].iloc[self.env.current_step]
+            if (is_long and trend_strength > 0.3) or (not is_long and trend_strength < -0.3):
+                reward += 0.1  # Additional reward for trend-aligned trades
                 
         # Track inactivity with milder penalty
         if hasattr(self, 'bars_since_trade'):

@@ -22,38 +22,38 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         end_fraction=0.95
     )
     
-    # Update the policy_kwargs by removing the unsupported dropout parameter
+    # Configure network architecture for better feature processing
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 128,          # Keep effective LSTM size
-        "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
-        "shared_lstm": True,              # Share LSTM to reduce parameters
-        "enable_critic_lstm": False,      # Disable separate critic LSTM
+        "lstm_hidden_size": 256,          # Larger LSTM for more temporal context
+        "n_lstm_layers": 2,               # Keep 2 layers
+        "shared_lstm": False,             # Separate LSTM architectures
+        "enable_critic_lstm": True,       # Enable LSTM for value estimation
         "net_arch": {
-            "pi": [64, 32],               # Wider networks for better feature representation
-            "vf": [64, 32]                # Symmetric critic network
+            "pi": [128, 64],              # Deeper policy network
+            "vf": [128, 64]               # Matching value network
         },
-        "activation_fn": th.nn.ReLU,      # Explicitly define activation
+        "activation_fn": th.nn.Mish,      # Better activation function
         "optimizer_kwargs": {
             "eps": 1e-5,
-            "weight_decay": 5e-7          # Increased weight decay acts as regularization
+            "weight_decay": 1e-6          # Slightly reduced regularization
         }
     }
 
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=1e-3,           # Back to higher learning rate
-        n_steps=128,                  # Shorter sequences for faster updates
-        batch_size=64,                # Smaller batch size for more exploration
-        gamma=0.95,                   # Lower gamma to focus on immediate rewards
+        learning_rate=8e-4,           # Slightly lower learning rate for stability
+        n_steps=256,                  # Longer sequences for better temporal learning
+        batch_size=128,               # Larger batch for more stable updates
+        gamma=0.97,                   # Higher gamma for longer-term rewards
         gae_lambda=0.95,              # Keep lambda value
-        clip_range=0.3,               # Higher clipping for more aggressive updates
-        clip_range_vf=0.3,            # Match policy clipping
-        ent_coef=0.1,                 # Back to higher entropy for exploration
-        vf_coef=0.5,                  # Reduced value importance
-        max_grad_norm=1.0,            # Allow larger gradients
-        n_epochs=5,                   # Fewer epochs to prevent over-optimization
+        clip_range=0.2,               # Standard clipping for stability
+        clip_range_vf=0.2,            # Match policy clipping
+        ent_coef=0.01,               # Lower entropy to exploit learned patterns
+        vf_coef=0.7,                 # Higher value importance for better estimates
+        max_grad_norm=0.7,           # More conservative gradient clipping
+        n_epochs=8,                  # More epochs for better optimization
         use_sde=False,                
         policy_kwargs=policy_kwargs,
         verbose=0,

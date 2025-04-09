@@ -113,9 +113,19 @@ class TradingEnv(gym.Env, EzPickle):
         # Trading constraints
         self.min_hold_bars = min_hold_bars
         self.current_hold_time = 0
+        self._optimal_hold = min_hold_bars  # Initialize optimal hold time
         
-        # Initialize metrics
-        self.metrics.reset()
+    def calculate_optimal_hold_time(self) -> int:
+        """Calculate optimal hold time based on current market conditions."""
+        current_atr = self.prices['atr'][self.current_step]
+        base_hold = self.min_hold_bars
+        
+        # Scale hold time by ATR volatility
+        volatility_factor = current_atr / np.mean(self.prices['atr'])
+        optimal_hold = int(base_hold * (1/volatility_factor))
+        
+        # Ensure within bounds
+        return max(self.min_hold_bars, min(optimal_hold, self.MAX_HOLD_BARS))
         
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Execute one environment step."""
@@ -132,43 +142,64 @@ class TradingEnv(gym.Env, EzPickle):
         self.episode_steps += 1
         self.current_step += 1
         
-        # Execute action and calculate reward
+        # Update optimal hold time and initialize reward
+        self._optimal_hold = self.calculate_optimal_hold_time()
         reward = 0.0
         
-        # Update hold time
+        # Update hold time for existing positions
         if self.current_position:
             self.current_hold_time += 1
-        
+
+        # Handle different actions
         if action in [Action.BUY, Action.SELL]:
-            # Check if position already exists
             if self.current_position is not None:
-                # Return negative reward for trying to open position when one exists
-                reward = -0.5  # Strong penalty to discourage this behavior
+                reward = -0.5  # Penalty for invalid action
             else:
-                # Execute trade since no position exists
                 direction = 1 if action == Action.BUY else 2
                 self.action_handler.execute_trade(direction, current_spread)
-                self.current_hold_time = 0  # Reset hold time for new position
-                reward = self.reward_calculator.calculate_reward(action, position_type, 0, current_atr, bars_held)
+                self.current_hold_time = 0
+                reward = self.reward_calculator.calculate_reward(
+                    action, position_type, 0, current_atr,
+                    self.current_hold_time, self._optimal_hold)
+                
         elif action == Action.CLOSE:
-            # Block close action if minimum hold time not met
-            if self.current_position and self.current_hold_time < self.min_hold_bars:
-                reward = -0.1  # Small penalty for trying to close too early
-                action = Action.HOLD  # Force hold
-            else:
+            if not self.current_position:
+                reward = -0.1  # Penalty for closing without position
+            elif self.current_hold_time < self.min_hold_bars:
+                reward = -0.1  # Penalty for early close
+                action = Action.HOLD
+            elif self.current_hold_time > self._optimal_hold * 1.5:
+                # Close position with holding penalty
                 pnl, trade_info = self.action_handler.close_position()
                 if pnl != 0:
                     self.trades.append(trade_info)
                     self.metrics.add_trade(trade_info)
                     self.metrics.update_balance(pnl)
-                self.current_position = None  # Ensure position is cleared after closing
-                self.current_hold_time = 0  # Reset hold time
-                reward = self.reward_calculator.calculate_reward(action, position_type, pnl, current_atr, bars_held)
+                reward = self.reward_calculator.calculate_reward(
+                    action, position_type, pnl, current_atr,
+                    self.current_hold_time, self._optimal_hold) - 0.05
+                self.current_position = None
+                self.current_hold_time = 0
+            else:
+                # Normal close
+                pnl, trade_info = self.action_handler.close_position()
+                if pnl != 0:
+                    self.trades.append(trade_info)
+                    self.metrics.add_trade(trade_info)
+                    self.metrics.update_balance(pnl)
+                reward = self.reward_calculator.calculate_reward(
+                    action, position_type, pnl, current_atr,
+                    self.current_hold_time, self._optimal_hold)
+                self.current_position = None
+                self.current_hold_time = 0
+                
         elif action == Action.HOLD:
             unrealized_pnl, profit_pips = self.action_handler.manage_position()
             if self.current_position:
                 self.current_position["current_profit_pips"] = profit_pips
-            reward = self.reward_calculator.calculate_reward(action, position_type, unrealized_pnl, current_atr, bars_held)
+                reward = self.reward_calculator.calculate_reward(
+                    action, position_type, unrealized_pnl, current_atr,
+                    self.current_hold_time, self._optimal_hold)
         
         # Check for bankruptcy
         if self.metrics.balance <= 0:
