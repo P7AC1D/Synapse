@@ -8,14 +8,15 @@ import torch as th
 class CustomEpsilonCallback(BaseCallback):
     """Custom callback for epsilon-greedy exploration during training"""
     
-    def __init__(self, start_eps=1.0, end_eps=0.02, decay_timesteps=60000, iteration=0):
+    def __init__(self, start_eps=1.0, end_eps=0.05, decay_timesteps=40000, iteration=0):
         super().__init__()
         self.start_eps = start_eps
         self.end_eps = end_eps
-        self.decay_timesteps = min(decay_timesteps, 60000)
+        self.decay_timesteps = min(decay_timesteps, 40000)  # Faster decay
         self.iteration = iteration
         self.original_forward = None
         self.setup_done = False
+        self.min_exploration_rate = 0.2  # Minimum exploration rate early on
         
     def _setup_exploration(self) -> None:
         """Setup exploration by modifying the policy's forward pass"""
@@ -26,12 +27,16 @@ class CustomEpsilonCallback(BaseCallback):
                 # Get the original action distribution
                 dist = self.original_forward(*args, **kwargs)
                 
-                # Calculate current epsilon
+                # Calculate current epsilon with minimum exploration rate
                 if self.iteration <= 1:
-                    progress = min(1.0, (self.num_timesteps / self.decay_timesteps) ** 1.5)
+                    progress = min(1.0, (self.num_timesteps / self.decay_timesteps) ** 1.2)
+                    current_eps = max(
+                        self.start_eps + progress * (self.end_eps - self.start_eps),
+                        self.min_exploration_rate
+                    )
                 else:
                     progress = min(1.0, self.num_timesteps / self.decay_timesteps)
-                current_eps = self.start_eps + progress * (self.end_eps - self.start_eps)
+                    current_eps = self.start_eps + progress * (self.end_eps - self.start_eps)
                 
                 # Random exploration
                 if np.random.random() < current_eps:

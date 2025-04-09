@@ -7,7 +7,7 @@ class RewardCalculator:
     """Handles reward calculation for trading actions."""
     
     def __init__(self, env, max_hold_bars: int = 64, ema_alpha: float = 0.05,
-                 direction_reward: float = 0.2, drawdown_penalty: float = 0.5):
+                 direction_reward: float = 0.3, drawdown_penalty: float = 0.1):
         """Initialize reward calculator.
         
         Args:
@@ -69,13 +69,18 @@ class RewardCalculator:
             self.trade_count += 1
             self.long_ratio = (1 - self.ema_alpha) * self.long_ratio + self.ema_alpha * (1.0 if is_long else 0.0)
             
-            # Base exploration reward scaled by ATR
-            base_reward = 0.1 * (atr / self.env.balance)
+            # Stronger base exploration reward
+            base_reward = 0.2  # Fixed base reward to encourage trading
             reward += base_reward
             
             # Enhanced direction balance reward
             if (is_long and self.long_ratio < 0.4) or (not is_long and self.long_ratio > 0.6):
-                reward += self.direction_reward * base_reward
+                reward += self.direction_reward
+            
+            # Scale by ATR only for ratio comparison
+            atr_scale = atr / self.env.balance
+            if atr_scale < 0.0002:  # Encourage trading in low volatility
+                reward *= 1.5
                 
         # Track inactivity with milder penalty
         if hasattr(self, 'bars_since_trade'):
@@ -94,11 +99,12 @@ class RewardCalculator:
                 scaled_penalty = 0.05 * np.log1p(excess_bars / 200)
                 reward -= min(0.5, scaled_penalty)  # Reduced cap
 
-        # Apply drawdown penalty
+        # Lighter drawdown penalty only for severe drawdowns
         current_drawdown = self.env.metrics.get_drawdown()
-        drawdown_increase = max(0, current_drawdown - self.last_drawdown)
+        if current_drawdown > 0.1:  # Only penalize >10% drawdowns
+            drawdown_increase = max(0, current_drawdown - self.last_drawdown)
+            reward -= drawdown_increase * self.drawdown_penalty
         self.last_drawdown = current_drawdown
-        reward -= drawdown_increase * self.drawdown_penalty
         
         return float(reward)
 

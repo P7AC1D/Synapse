@@ -43,17 +43,17 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=5e-4,           # Lower learning rate for stability
-        n_steps=256,                  # Keep longer sequences for context
-        batch_size=128,               # Larger batch size for better gradients
-        gamma=0.99,                   # Keep discount factor
+        learning_rate=1e-3,           # Back to higher learning rate
+        n_steps=128,                  # Shorter sequences for faster updates
+        batch_size=64,                # Smaller batch size for more exploration
+        gamma=0.95,                   # Lower gamma to focus on immediate rewards
         gae_lambda=0.95,              # Keep lambda value
-        clip_range=0.2,               # Keep clipping range
-        clip_range_vf=0.2,            # Match policy clipping
-        ent_coef=0.05,                # Reduced entropy now that exploration works
-        vf_coef=0.75,                 # Increased value importance for stability
-        max_grad_norm=0.5,            # Increased for faster learning
-        n_epochs=10,                  # More gradient steps per batch
+        clip_range=0.3,               # Higher clipping for more aggressive updates
+        clip_range_vf=0.3,            # Match policy clipping
+        ent_coef=0.1,                 # Back to higher entropy for exploration
+        vf_coef=0.5,                  # Reduced value importance
+        max_grad_norm=1.0,            # Allow larger gradients
+        n_epochs=5,                   # Fewer epochs to prevent over-optimization
         use_sde=False,                
         policy_kwargs=policy_kwargs,
         verbose=0,
