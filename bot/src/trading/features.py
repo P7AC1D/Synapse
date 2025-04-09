@@ -15,7 +15,7 @@ class FeatureProcessor:
         self.boll_period = 20
         self.lookback = max(self.boll_period, self.atr_period)
 
-    def setup_observation_space(self, feature_count: int = 11) -> spaces.Box:
+    def setup_observation_space(self, feature_count: int = 10) -> spaces.Box:
         """Setup observation space with proper feature bounds.
         
         Args:
@@ -207,6 +207,5 @@ class FeatureProcessor:
             'sin_time',        # [-1, 1] Sine encoding of time
             'cos_time',        # [-1, 1] Cosine encoding of time
             'position_type',    # [-1, 0, 1] Current position
-            'hold_time',       # [0, 1] Normalized hold time
             'unrealized_pnl'   # [-1, 1] Current position P&L
         ]

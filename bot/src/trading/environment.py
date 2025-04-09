@@ -222,17 +222,14 @@ class TradingEnv(gym.Env, EzPickle):
         features = self.raw_data.values[self.current_step]
         
         position_type = self.current_position["direction"] if self.current_position else 0
-        normalized_hold_time = 0.0
         
         if self.current_position:
-            hold_time = self.current_step - self.current_position["entry_step"]
-            normalized_hold_time = min(hold_time / 64.0, 1.0)  # Using fixed 64-bar normalization
             unrealized_pnl, _ = self.action_handler.manage_position()
             normalized_pnl = np.clip(unrealized_pnl / self.initial_balance, -1, 1)
         else:
             normalized_pnl = 0.0
             
-        return np.append(features, [position_type, normalized_hold_time, normalized_pnl])
+        return np.append(features, [position_type, normalized_pnl])
         
     def _get_info(self) -> Dict[str, Any]:
         """Get current environment information."""
