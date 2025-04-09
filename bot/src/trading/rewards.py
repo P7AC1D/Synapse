@@ -34,23 +34,27 @@ class RewardCalculator:
                 if bars_held < self.max_hold_bars * 0.5:
                     reward *= 1.5
             else:
-                # Penalize losses more heavily
-                reward = risk_adjusted_pnl * 3.0  # Triple the penalty for losses
+                # More balanced loss penalty
+                reward = risk_adjusted_pnl * 2.0  # Double (not triple) the penalty for losses
                 
-        # Penalize invalid actions
+        # Penalize invalid actions, but less severely
         elif action in [Action.BUY, Action.SELL] and position_type != 0:
-            reward = -1.0  # Stronger penalty for invalid actions
+            reward = -0.5  # Reduced penalty for invalid actions
             
         # HOLD rewards based on position performance
         elif action == Action.HOLD and position_type != 0:
             if pnl > 0:
-                # Small reward for holding winners
-                reward = risk_adjusted_pnl * 0.1
-            else:
-                # Larger penalty for holding losers
+                # Increased reward for holding winners
                 reward = risk_adjusted_pnl * 0.2
+            else:
+                # Reduced penalty for holding losers
+                reward = risk_adjusted_pnl * 0.1
                 
-        # Track and penalize inactivity
+        # Small reward for taking valid trades to encourage exploration
+        elif action in [Action.BUY, Action.SELL] and position_type == 0:
+            reward += 0.1
+                
+        # Track inactivity with milder penalty
         if hasattr(self, 'bars_since_trade'):
             self.bars_since_trade += 1
         else:
@@ -59,13 +63,13 @@ class RewardCalculator:
         if action in [Action.BUY, Action.SELL]:
             self.bars_since_trade = 0
             
-        # Logarithmic inactivity penalty
-        if self.bars_since_trade > 100:
-            excess_bars = min(self.bars_since_trade - 100, 1000)  # Cap at 1000 bars
+        # Milder inactivity penalty
+        if self.bars_since_trade > 200:  # Increased threshold
+            excess_bars = min(self.bars_since_trade - 200, 1000)  # Cap at 1000 bars
             if excess_bars > 0:
-                # Use log scaling for smoother, bounded growth
-                scaled_penalty = 0.1 * np.log1p(excess_bars / 100)  # Normalize by 100 for gradual scaling
-                reward -= min(1.0, scaled_penalty)  # Still cap at -1.0
+                # Reduced penalty scaling
+                scaled_penalty = 0.05 * np.log1p(excess_bars / 200)
+                reward -= min(0.5, scaled_penalty)  # Reduced cap
 
         return float(reward)
 
@@ -81,5 +85,5 @@ class RewardCalculator:
             # Bonus for finishing with profit
             return return_pct * 2.0  # Double the positive return as reward
         else:
-            # Penalty for finishing with loss
-            return return_pct * 3.0  # Triple the negative return as penalty
+            # More balanced loss penalty
+            return return_pct * 2.0  # Double (not triple) the negative return as penalty
