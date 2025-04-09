@@ -59,6 +59,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.BALANCE_PER_LOT = balance_per_lot
         self.MAX_DRAWDOWN = 0.4      # Maximum drawdown
         self.MAX_HOLD_BARS = max_hold_bars
+        self.initial_balance = initial_balance
         
         # Initialize components
         self.feature_processor = FeatureProcessor()
@@ -249,7 +250,11 @@ class TradingEnv(gym.Env, EzPickle):
         self.trades = []
         self.trade_metrics = {'current_direction': 0}
         
+        # Reset metrics and reward state
         self.metrics.reset()
+        self.reward_calculator.previous_balance_high = self.initial_balance
+        self.reward_calculator.last_direction = None
+        self.reward_calculator.bars_since_consolidation = 0
         
         # Restore LSTM state if available
         if self._last_lstm_state is not None and self.model is not None:

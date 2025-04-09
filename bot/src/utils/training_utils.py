@@ -43,17 +43,17 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=1e-3,           # Higher learning rate for initial learning
-        n_steps=128,                  # Shorter sequences for faster updates
-        batch_size=64,                # Smaller batches for more frequent updates
-        gamma=0.99,                   # Higher gamma for better credit assignment
-        gae_lambda=0.95,              # Keep lambda value
-        clip_range=0.2,               # Standard clipping
-        clip_range_vf=0.2,            # Match policy clipping
-        ent_coef=0.05,               # Higher entropy for better exploration
-        vf_coef=0.5,                 # Balanced value importance
-        max_grad_norm=1.0,           # Allow larger gradients
-        n_epochs=10,                 # More epochs for thorough optimization
+        learning_rate=5e-4,           # Lower learning rate for sparse rewards
+        n_steps=512,                  # Longer sequences for better reward propagation
+        batch_size=256,               # Larger batch for stable sparse reward learning
+        gamma=0.99,                   # High gamma for sparse rewards
+        gae_lambda=0.98,              # Higher lambda for better advantage estimation
+        clip_range=0.1,               # Smaller clipping for stability
+        clip_range_vf=0.1,            # Match policy clipping
+        ent_coef=0.01,               # Lower entropy to focus on sparse signals
+        vf_coef=1.0,                 # Higher value importance for sparse rewards
+        max_grad_norm=0.5,           # Conservative gradient clipping
+        n_epochs=12,                 # More epochs for thorough learning
         use_sde=False,                
         policy_kwargs=policy_kwargs,
         verbose=0,
@@ -63,11 +63,11 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     
     callbacks = []
     
-    # Configure epsilon exploration with slower decay
+    # Configure epsilon exploration for sparse rewards
     epsilon_callback = CustomEpsilonCallback(
         start_eps=1.0,     # Start with full exploration
-        end_eps=0.1,       # Higher minimum exploration
-        decay_timesteps=int(args.total_timesteps * 0.9),  # Slower decay for thorough exploration
+        end_eps=0.05,      # Lower final exploration
+        decay_timesteps=int(args.total_timesteps * 0.7),  # Moderate decay for exploration
         iteration=iteration
     )
     callbacks.append(epsilon_callback)
