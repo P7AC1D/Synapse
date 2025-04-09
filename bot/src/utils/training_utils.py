@@ -43,14 +43,14 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=3e-4,           # Reduced learning rate for stability
+        learning_rate=1e-3,           # Higher initial learning rate for faster learning
         n_steps=256,                  # Keep longer sequences for context
         batch_size=64,                # Increased batch size to reduce variance
         gamma=0.99,                   # Keep discount factor
         gae_lambda=0.95,              # Keep lambda value
         clip_range=0.2,               # Reduced clipping for more stability
         clip_range_vf=0.2,            # Match policy clipping
-        ent_coef=0.03,                # Slightly reduced entropy for more exploitation
+        ent_coef=0.1,                 # Increased entropy for more exploration
         vf_coef=0.5,                  # Keep value coefficient
         max_grad_norm=0.3,            # Lower gradient norm for more stability
         use_sde=False,                
@@ -62,11 +62,11 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     
     callbacks = []
     
-    # Configure epsilon exploration for more conservative trading
+    # Configure epsilon exploration for aggressive initial exploration
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.5,     # Higher initial exploration
+        start_eps=1.0,     # Maximum initial exploration
         end_eps=0.02,      # Keep same final exploration
-        decay_timesteps=int(args.total_timesteps * 0.8),  # Extended decay period
+        decay_timesteps=int(args.total_timesteps * 0.6),  # Faster decay to exploit learned policy
         iteration=iteration  # Pass iteration number for adaptive decay
     )
     callbacks.append(epsilon_callback)
