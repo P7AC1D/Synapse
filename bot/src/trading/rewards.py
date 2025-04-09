@@ -20,43 +20,30 @@ class RewardCalculator:
                         pnl: float, atr: float, bars_held: int) -> float:
         """Calculate reward based on action and position state."""
         reward = 0.0
-
-        # Scale rewards by percentage of current balance
-        normalized_pnl = pnl / self.env.balance if self.env.balance > 0 else 0
-
+        
+        # Only reward/penalize on position close
         if action == Action.CLOSE and position_type != 0:
-            if pnl > 0:
-                # Keep positive rewards scaled normally
-                reward = normalized_pnl + 0.2
-            else:
-                # Make losses 2x more impactful
-                reward = normalized_pnl * 2.0
-
-        elif action == Action.HOLD and position_type != 0:
-            if pnl > 0:
-                # Scale holding reward by percentage gain
-                reward = normalized_pnl * 0.05
-            else:
-                # Make holding losses more painful
-                reward = normalized_pnl * 0.1
-
-        # Reduce per-step cost to be less punishing
-        reward -= 0.0005  # Small time decay
-
-        # Add inactivity penalty to prevent extended periods without trading
+            normalized_pnl = pnl / self.env.balance if self.env.balance > 0 else 0
+            reward = normalized_pnl  # Direct PnL scaled by balance
+            
+        # Penalize trying to open position when one exists
+        elif action in [Action.BUY, Action.SELL] and position_type != 0:
+            reward = -0.5  # Fixed penalty for invalid action
+            
+        # Track inactivity
         if hasattr(self, 'bars_since_trade'):
             self.bars_since_trade += 1
         else:
             self.bars_since_trade = 0
             
-        # Reset counter when trade is opened
         if action in [Action.BUY, Action.SELL]:
             self.bars_since_trade = 0
             
-        # Apply increasing penalty for prolonged inactivity
-        if self.bars_since_trade > 100:  # After 100 bars of no trading
-            inactivity_penalty = min(0.005, (self.bars_since_trade - 100) * 0.0001)
-            reward -= inactivity_penalty
+        # Exponential inactivity penalty
+        if self.bars_since_trade > 100:
+            penalty_base = 1.05  # 5% exponential growth
+            scaled_penalty = penalty_base ** (self.bars_since_trade - 100) - 1
+            reward -= min(0.5, scaled_penalty * 0.01)  # Cap at -0.5
 
         return float(reward)
 
