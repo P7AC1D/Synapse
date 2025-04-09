@@ -59,11 +59,13 @@ class RewardCalculator:
         if action in [Action.BUY, Action.SELL]:
             self.bars_since_trade = 0
             
-        # Stronger inactivity penalty
+        # Logarithmic inactivity penalty
         if self.bars_since_trade > 100:
-            penalty_base = 1.1  # 10% exponential growth
-            scaled_penalty = penalty_base ** (self.bars_since_trade - 100) - 1
-            reward -= min(1.0, scaled_penalty * 0.02)  # Cap at -1.0 but grow faster
+            excess_bars = min(self.bars_since_trade - 100, 1000)  # Cap at 1000 bars
+            if excess_bars > 0:
+                # Use log scaling for smoother, bounded growth
+                scaled_penalty = 0.1 * np.log1p(excess_bars / 100)  # Normalize by 100 for gradual scaling
+                reward -= min(1.0, scaled_penalty)  # Still cap at -1.0
 
         return float(reward)
 
