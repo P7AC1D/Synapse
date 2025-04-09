@@ -25,35 +25,35 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     # Update the policy_kwargs by removing the unsupported dropout parameter
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 256,          # Increased for 11 features
-        "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
-        "shared_lstm": True,              # Share LSTM to reduce parameters
-        "enable_critic_lstm": False,      # Disable separate critic LSTM
+        "lstm_hidden_size": 512,          # Increased LSTM capacity
+        "n_lstm_layers": 2,               # Keep 2 layers
+        "shared_lstm": True,              # Share LSTM
+        "enable_critic_lstm": True,       # Enable separate critic LSTM for better value estimation
         "net_arch": {
-            "pi": [128, 64],              # Wider networks for 11 features
-            "vf": [128, 64]               # Symmetric critic network
+            "pi": [256, 128],            # Deeper policy network
+            "vf": [256, 128]             # Deeper value network
         },
-        "activation_fn": th.nn.ReLU,      # Explicitly define activation
+        "activation_fn": th.nn.ReLU,
         "optimizer_kwargs": {
             "eps": 1e-5,
-            "weight_decay": 5e-7          # Increased weight decay acts as regularization
+            "weight_decay": 1e-6          # Reduced weight decay for deeper network
         }
     }
 
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=5e-4,           # Increased for faster adaptation
-        n_steps=256,                  # Keep as is
-        batch_size=64,                # Keep as is
-        gamma=0.99,                   # Keep as is
-        gae_lambda=0.95,              # Keep as is
-        clip_range=0.2,               # Keep as is
-        clip_range_vf=0.3,            # Increased to allow more value function adaptation
-        ent_coef=0.2,                 # Increased from 0.1 to encourage exploration
-        vf_coef=0.5,                  # Keep as is
-        max_grad_norm=0.5,            # Increased to allow larger updates
-        sde_sample_freq=4,            # Sample noise frequently
+        learning_rate=1e-4,           # Lower learning rate for stability
+        n_steps=512,                  # Longer sequences for better pattern learning
+        batch_size=128,               # Larger batches for better gradient estimates
+        gamma=0.95,                   # Lower discount factor for more immediate focus
+        gae_lambda=0.95,              # Keep GAE lambda
+        clip_range=0.2,               # Keep PPO clip range
+        clip_range_vf=0.2,            # Reduced VF clip for stability
+        ent_coef=0.05,               # Lower entropy for more focused exploration
+        vf_coef=1.0,                 # Increased value function importance
+        max_grad_norm=0.3,           # Lower grad norm for stability
+        sde_sample_freq=8,           # Less frequent noise sampling
         policy_kwargs=policy_kwargs,
         verbose=0,
         device=args.device,
@@ -62,12 +62,11 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     
     callbacks = []
     
-    # Configure epsilon exploration tuned for 6 features
-    # Configure enhanced exploration with iteration awareness
+    # Configure epsilon exploration for more conservative trading
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.9,     # Much higher initial exploration (was 0.8)
-        end_eps=0.1,      # Higher final exploration (was 0.05)
-        decay_timesteps=int(args.total_timesteps * 0.7),  # Slower decay
+        start_eps=0.5,     # Lower initial exploration for more focused learning
+        end_eps=0.01,     # Lower final exploration for better exploitation
+        decay_timesteps=int(args.total_timesteps * 0.5),  # Faster decay for quicker convergence
         iteration=iteration  # Pass iteration number for adaptive decay
     )
     callbacks.append(epsilon_callback)
