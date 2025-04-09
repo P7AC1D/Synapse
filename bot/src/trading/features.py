@@ -1,7 +1,7 @@
 """Feature calculation and preprocessing for trading environment."""
 import numpy as np
 import pandas as pd
-import talib as ta
+import ta
 from typing import Tuple, Dict, Any
 from gymnasium import spaces
 
@@ -29,7 +29,7 @@ class FeatureProcessor:
         )
 
     def _calculate_indicators(self, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Tuple[np.ndarray, np.ndarray], np.ndarray]:
-        """Calculate technical indicators using TA-Lib.
+        """Calculate technical indicators using ta package.
         
         Args:
             high: High prices
@@ -39,22 +39,40 @@ class FeatureProcessor:
         Returns:
             Tuple of (ATR, RSI, (upper band, lower band), trend strength)
         """
+        # Convert to pandas Series for ta package
+        high_s = pd.Series(high)
+        low_s = pd.Series(low)
+        close_s = pd.Series(close)
+        
         # Calculate ATR
-        atr = ta.ATR(high, low, close, timeperiod=self.atr_period)
-        atr = pd.Series(atr).bfill().fillna(pd.Series(atr).mean()).values
+        atr = ta.volatility.AverageTrueRange(
+            high=high_s, low=low_s, close=close_s, 
+            window=self.atr_period
+        ).average_true_range()
+        atr = atr.bfill().fillna(atr.mean()).values
         
         # Calculate RSI
-        rsi = ta.RSI(close, timeperiod=self.rsi_period)
-        rsi = pd.Series(rsi).bfill().fillna(50).values  # Default to neutral RSI
+        rsi = ta.momentum.RSIIndicator(
+            close=close_s,
+            window=self.rsi_period
+        ).rsi()
+        rsi = rsi.bfill().fillna(50).values  # Default to neutral RSI
         
         # Calculate Bollinger Bands
-        upper, middle, lower = ta.BBANDS(close, timeperiod=self.boll_period)
-        upper = pd.Series(upper).bfill().fillna(pd.Series(close).iloc[0]).values
-        lower = pd.Series(lower).bfill().fillna(pd.Series(close).iloc[0]).values
+        bb = ta.volatility.BollingerBands(
+            close=close_s,
+            window=self.boll_period,
+            window_dev=2
+        )
+        upper = bb.bollinger_hband().bfill().fillna(close_s.iloc[0]).values
+        lower = bb.bollinger_lband().bfill().fillna(close_s.iloc[0]).values
         
         # Calculate ADX for trend strength
-        adx = ta.ADX(high, low, close, timeperiod=self.atr_period)
-        adx = pd.Series(adx).bfill().fillna(0).values
+        adx = ta.trend.ADXIndicator(
+            high=high_s, low=low_s, close=close_s,
+            window=self.atr_period
+        ).adx()
+        adx = adx.bfill().fillna(0).values
         trend_strength = np.clip(adx/25 - 1, -1, 1)  # Same normalization as before
         
         return atr, rsi, (upper, lower), trend_strength
