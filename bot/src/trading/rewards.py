@@ -6,21 +6,27 @@ from .actions import Action
 class RewardCalculator:
     """Handles reward calculation for trading actions."""
     
-    def __init__(self, env, max_hold_bars: int = 64, ema_alpha: float = 0.05):
+    def __init__(self, env, max_hold_bars: int = 64, ema_alpha: float = 0.05,
+                 direction_reward: float = 0.2, drawdown_penalty: float = 0.5):
         """Initialize reward calculator.
         
         Args:
             env: Trading environment instance
             max_hold_bars: Maximum bars to hold a position
             ema_alpha: Exponential moving average factor for direction tracking
+            direction_reward: Reward multiplier for improving direction balance
+            drawdown_penalty: Penalty multiplier for drawdown
         """
         self.env = env
         self.max_hold_bars = max_hold_bars
         self.ema_alpha = ema_alpha
+        self.direction_reward = direction_reward
+        self.drawdown_penalty = drawdown_penalty
         
         # Initialize direction tracking
         self.long_ratio = 0.5  # Start with balanced ratio
         self.trade_count = 0  # Track total trades for ratio calculation
+        self.last_drawdown = 0.0  # Track drawdown changes
 
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, bars_held: int) -> float:
@@ -63,13 +69,13 @@ class RewardCalculator:
             self.trade_count += 1
             self.long_ratio = (1 - self.ema_alpha) * self.long_ratio + self.ema_alpha * (1.0 if is_long else 0.0)
             
-            # Base exploration reward
-            reward += 0.1
+            # Base exploration reward scaled by ATR
+            base_reward = 0.1 * (atr / self.env.balance)
+            reward += base_reward
             
-            # Additional reward for balancing
-            if (action == Action.BUY and self.long_ratio < 0.4) or \
-               (action == Action.SELL and self.long_ratio > 0.6):
-                reward += 0.1  # Extra reward for improving balance
+            # Enhanced direction balance reward
+            if (is_long and self.long_ratio < 0.4) or (not is_long and self.long_ratio > 0.6):
+                reward += self.direction_reward * base_reward
                 
         # Track inactivity with milder penalty
         if hasattr(self, 'bars_since_trade'):
@@ -88,6 +94,12 @@ class RewardCalculator:
                 scaled_penalty = 0.05 * np.log1p(excess_bars / 200)
                 reward -= min(0.5, scaled_penalty)  # Reduced cap
 
+        # Apply drawdown penalty
+        current_drawdown = self.env.metrics.get_drawdown()
+        drawdown_increase = max(0, current_drawdown - self.last_drawdown)
+        self.last_drawdown = current_drawdown
+        reward -= drawdown_increase * self.drawdown_penalty
+        
         return float(reward)
 
     def calculate_terminal_reward(self, balance: float, initial_balance: float) -> float:
