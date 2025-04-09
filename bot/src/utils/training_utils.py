@@ -25,35 +25,35 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     # Update the policy_kwargs by removing the unsupported dropout parameter
     policy_kwargs = {
         "optimizer_class": th.optim.AdamW,
-        "lstm_hidden_size": 512,          # Increased LSTM capacity
-        "n_lstm_layers": 2,               # Deep LSTM
-        "shared_lstm": False,             # Use separate LSTMs for actor and critic
-        "enable_critic_lstm": True,       # Enable critic LSTM for better value estimation
+        "lstm_hidden_size": 128,          # Keep effective LSTM size
+        "n_lstm_layers": 2,               # Maintain 2 layers for temporal learning
+        "shared_lstm": True,              # Share LSTM to reduce parameters
+        "enable_critic_lstm": False,      # Disable separate critic LSTM
         "net_arch": {
-            "pi": [256, 128],            # Deeper policy network
-            "vf": [256, 128]             # Deeper value network
+            "pi": [64, 32],               # Wider networks for better feature representation
+            "vf": [64, 32]                # Symmetric critic network
         },
-        "activation_fn": th.nn.ReLU,
+        "activation_fn": th.nn.ReLU,      # Explicitly define activation
         "optimizer_kwargs": {
             "eps": 1e-5,
-            "weight_decay": 1e-6          # Reduced weight decay for deeper network
+            "weight_decay": 5e-7          # Increased weight decay acts as regularization
         }
     }
 
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=1e-4,           # Lower learning rate for stability
-        n_steps=512,                  # Longer sequences for better pattern learning
-        batch_size=128,               # Larger batches for better gradient estimates
-        gamma=0.95,                   # Lower discount factor for more immediate focus
-        gae_lambda=0.95,              # Keep GAE lambda
-        clip_range=0.2,               # Keep PPO clip range
-        clip_range_vf=0.2,            # Reduced VF clip for stability
-        ent_coef=0.05,               # Lower entropy for more focused exploration
-        vf_coef=1.0,                 # Increased value function importance
-        max_grad_norm=0.3,           # Lower grad norm for stability
-        sde_sample_freq=8,           # Less frequent noise sampling
+        learning_rate=3e-4,           # Reduced learning rate for stability
+        n_steps=256,                  # Keep longer sequences for context
+        batch_size=64,                # Increased batch size to reduce variance
+        gamma=0.99,                   # Keep discount factor
+        gae_lambda=0.95,              # Keep lambda value
+        clip_range=0.2,               # Reduced clipping for more stability
+        clip_range_vf=0.2,            # Match policy clipping
+        ent_coef=0.03,                # Slightly reduced entropy for more exploitation
+        vf_coef=0.5,                  # Keep value coefficient
+        max_grad_norm=0.3,            # Lower gradient norm for more stability
+        use_sde=False,                
         policy_kwargs=policy_kwargs,
         verbose=0,
         device=args.device,
@@ -64,9 +64,9 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     
     # Configure epsilon exploration for more conservative trading
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=0.5,     # Lower initial exploration for more focused learning
-        end_eps=0.01,     # Lower final exploration for better exploitation
-        decay_timesteps=int(args.total_timesteps * 0.5),  # Faster decay for quicker convergence
+        start_eps=0.5,     # Higher initial exploration
+        end_eps=0.02,      # Keep same final exploration
+        decay_timesteps=int(args.total_timesteps * 0.8),  # Extended decay period
         iteration=iteration  # Pass iteration number for adaptive decay
     )
     callbacks.append(epsilon_callback)
