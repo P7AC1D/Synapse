@@ -42,7 +42,7 @@ class RewardCalculator:
 
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, current_hold: int,
-                        optimal_hold: int) -> float:
+                        optimal_hold: Optional[int] = None) -> float:
         """Calculate rewards combining sparse and scaled components."""
         reward = 0.0
         
