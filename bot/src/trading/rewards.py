@@ -34,23 +34,27 @@ class RewardCalculator:
         """Calculate reward based on action and position state."""
         reward = 0.0
         
-        # Calculate position metrics
-        normalized_pnl = pnl / self.env.balance if self.env.balance > 0 else 0
-        risk_adjusted_pnl = normalized_pnl / (atr * 0.01) if atr > 0 else normalized_pnl  # Scale by volatility
+        # Base reward for taking actions (to encourage exploration)
+        if action in [Action.BUY, Action.SELL] and position_type == 0:
+            reward += 0.1
+        
+        # Calculate position metrics with safety checks
+        normalized_pnl = pnl / max(self.env.balance, 1e-8)
+        risk_adjusted_pnl = normalized_pnl / max(atr * 0.01, 1e-8)
         
         # Reward for closing positions
         if action == Action.CLOSE and position_type != 0:
             if pnl > 0:
                 # Reward profitable trades based on risk-adjusted return
                 reward = risk_adjusted_pnl * 2.0  # Double the reward for good trades
-                # Extra reward for optimal hold time
-                hold_efficiency = min(1.0, optimal_hold / current_hold)
-                reward *= (1.0 + hold_efficiency)
+                # Extra reward for profitable trades
+                hold_efficiency = min(1.0, optimal_hold / max(current_hold, 1))
+                reward = risk_adjusted_pnl * 2.0 * (1.0 + hold_efficiency)
             else:
-                # Penalty proportional to holding time deviation
-                hold_deviation = abs(current_hold - optimal_hold) / optimal_hold
-                penalty_factor = 1.0 + min(0.5, hold_deviation)  # Cap penalty increase at 50%
-                reward = risk_adjusted_pnl * 2.0 * penalty_factor
+                # More balanced loss handling
+                hold_deviation = abs(current_hold - optimal_hold) / max(optimal_hold, 1)
+                penalty_factor = 1.0 + min(0.3, hold_deviation)  # Reduced penalty cap to 30%
+                reward = risk_adjusted_pnl * 1.5 * penalty_factor  # Less punishing
                 
         # Penalize invalid actions, but less severely
         elif action in [Action.BUY, Action.SELL] and position_type != 0:
@@ -58,23 +62,14 @@ class RewardCalculator:
             
         # HOLD rewards based on position performance and hold time
         elif action == Action.HOLD and position_type != 0:
-            # Calculate hold time efficiency
             hold_efficiency = min(1.0, optimal_hold / max(current_hold, 1))
             
             if pnl > 0:
-                if current_hold <= optimal_hold:
-                    # Full reward for holding winners within optimal time
-                    reward = risk_adjusted_pnl * 0.2
-                else:
-                    # Reduced reward for holding too long
-                    reward = risk_adjusted_pnl * 0.2 * hold_efficiency
+                # Simpler reward structure for holding winners
+                reward = risk_adjusted_pnl * 0.3 * max(0.5, hold_efficiency)
             else:
-                if current_hold <= optimal_hold:
-                    # Reduced penalty for holding losers within optimal time
-                    reward = risk_adjusted_pnl * 0.1
-                else:
-                    # Increased penalty for holding too long
-                    reward = risk_adjusted_pnl * 0.1 * (2.0 - hold_efficiency)
+                # More lenient penalties for holding losers
+                reward = risk_adjusted_pnl * 0.2 * max(0.3, hold_efficiency)
                 
         # Add direction balance incentive and exploration reward
         elif action in [Action.BUY, Action.SELL] and position_type == 0:

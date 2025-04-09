@@ -43,17 +43,17 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=8e-4,           # Slightly lower learning rate for stability
-        n_steps=256,                  # Longer sequences for better temporal learning
-        batch_size=128,               # Larger batch for more stable updates
-        gamma=0.97,                   # Higher gamma for longer-term rewards
+        learning_rate=1e-3,           # Higher learning rate for initial learning
+        n_steps=128,                  # Shorter sequences for faster updates
+        batch_size=64,                # Smaller batches for more frequent updates
+        gamma=0.99,                   # Higher gamma for better credit assignment
         gae_lambda=0.95,              # Keep lambda value
-        clip_range=0.2,               # Standard clipping for stability
+        clip_range=0.2,               # Standard clipping
         clip_range_vf=0.2,            # Match policy clipping
-        ent_coef=0.01,               # Lower entropy to exploit learned patterns
-        vf_coef=0.7,                 # Higher value importance for better estimates
-        max_grad_norm=0.7,           # More conservative gradient clipping
-        n_epochs=8,                  # More epochs for better optimization
+        ent_coef=0.05,               # Higher entropy for better exploration
+        vf_coef=0.5,                 # Balanced value importance
+        max_grad_norm=1.0,           # Allow larger gradients
+        n_epochs=10,                 # More epochs for thorough optimization
         use_sde=False,                
         policy_kwargs=policy_kwargs,
         verbose=0,
@@ -63,12 +63,12 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     
     callbacks = []
     
-    # Configure epsilon exploration for aggressive initial exploration
+    # Configure epsilon exploration with slower decay
     epsilon_callback = CustomEpsilonCallback(
-        start_eps=1.0,     # Maximum initial exploration
-        end_eps=0.02,      # Keep same final exploration
-        decay_timesteps=int(args.total_timesteps * 0.6),  # Faster decay to exploit learned policy
-        iteration=iteration  # Pass iteration number for adaptive decay
+        start_eps=1.0,     # Start with full exploration
+        end_eps=0.1,       # Higher minimum exploration
+        decay_timesteps=int(args.total_timesteps * 0.9),  # Slower decay for thorough exploration
+        iteration=iteration
     )
     callbacks.append(epsilon_callback)
     
