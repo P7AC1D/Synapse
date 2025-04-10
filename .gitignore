@@ -126,3 +126,4 @@ bot/src/creds.py
 train/data/rates.csv
 bot/results/*
 bot/models/*
+bot/model/XAUUSDm_old.zip

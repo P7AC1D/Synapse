@@ -382,21 +382,19 @@ class TradeModel:
             if not trades_df.empty:
                 metrics['expected_value'] = float(trades_df['pnl'].mean())
             
-            # Calculate drawdown only if there are trades
-            balance_history = []
-            current_balance = env.initial_balance
-            peak_balance = current_balance
-            max_drawdown = 0.0
+            # Calculate drawdowns using MetricsTracker's methods
+            metrics['max_drawdown_pct'] = float(env.metrics.get_drawdown() * 100)  # Balance-based drawdown
+            metrics['max_equity_drawdown_pct'] = float(env.metrics.get_equity_drawdown() * 100)  # Equity-based drawdown
             
-            for trade in env.trades:
-                current_balance += trade['pnl']
-                balance_history.append(current_balance)
-                peak_balance = max(peak_balance, current_balance)
-                if peak_balance > 0:  # Prevent division by zero
-                    drawdown = (peak_balance - current_balance) / peak_balance
-                    max_drawdown = max(max_drawdown, drawdown)
+            # Calculate current drawdown (realized only)
+            if env.metrics.max_balance > 0:
+                current_drawdown = (env.metrics.max_balance - env.balance) / env.metrics.max_balance
+            else:
+                current_drawdown = 0.0
+            metrics['current_drawdown_pct'] = float(current_drawdown * 100)
             
-            metrics['max_drawdown_pct'] = float(max_drawdown * 100)
+            # For historical reference
+            metrics['historical_max_drawdown_pct'] = float(metrics['max_equity_drawdown_pct'])
             
             # Calculate Sharpe ratio safely
             returns = pd.Series(trades_df['pnl']) / env.initial_balance

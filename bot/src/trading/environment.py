@@ -150,6 +150,8 @@ class TradingEnv(gym.Env, EzPickle):
             if self.current_position:
                 unrealized_pnl, profit_pips = self.action_handler.manage_position()
                 self.current_position["current_profit_pips"] = profit_pips
+                # Update metrics with unrealized PnL
+                self.metrics.update_unrealized_pnl(unrealized_pnl)
 
         # Calculate reward using RewardCalculator
         reward = self.reward_calculator.calculate_reward(

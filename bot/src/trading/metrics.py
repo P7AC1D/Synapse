@@ -20,6 +20,8 @@ class MetricsTracker:
         self.trades: List[Dict[str, Any]] = []
         self.balance = self.initial_balance
         self.max_balance = self.initial_balance
+        self.max_equity = self.initial_balance
+        self.current_unrealized_pnl = 0.0
         self.win_count = 0
         self.loss_count = 0
         self.metrics = {
@@ -65,6 +67,16 @@ class MetricsTracker:
         self.balance += pnl
         self.max_balance = max(self.balance, self.max_balance)
 
+    def update_unrealized_pnl(self, unrealized_pnl: float) -> None:
+        """Update unrealized PnL and track max equity.
+        
+        Args:
+            unrealized_pnl: Current unrealized profit/loss
+        """
+        self.current_unrealized_pnl = unrealized_pnl
+        current_equity = self.balance + unrealized_pnl
+        self.max_equity = max(self.max_equity, current_equity)
+
     def get_drawdown(self) -> float:
         """Calculate current drawdown percentage.
         
@@ -93,6 +105,17 @@ class MetricsTracker:
             "profit_pips": latest_trade.get("profit_pips", 0.0),
             "hold_time": latest_trade.get("hold_time", 0)
         }
+
+    def get_equity_drawdown(self) -> float:
+        """Calculate current equity drawdown percentage including unrealized PnL.
+        
+        Returns:
+            Current equity drawdown as a percentage
+        """
+        current_equity = self.balance + self.current_unrealized_pnl
+        if self.max_equity <= 0:
+            return 1.0
+        return (self.max_equity - current_equity) / self.max_equity
 
     def get_performance_summary(self) -> Dict[str, Any]:
         """Get comprehensive performance summary.

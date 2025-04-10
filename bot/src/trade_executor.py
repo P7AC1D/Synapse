@@ -92,9 +92,7 @@ class TradeExecutor:
                 # Close all positions
                 for pos in positions:
                     success = self.mt5.close_position(pos.ticket)
-                    if success:
-                        self.logger.info(f"Closed position {pos.ticket}")
-                    else:
+                    if not success:
                         self.logger.error(f"Failed to close position {pos.ticket}")
                         return False
                 return True
