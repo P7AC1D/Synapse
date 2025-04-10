@@ -161,18 +161,12 @@ class TradingEnv(gym.Env, EzPickle):
             optimal_hold=None
         )
         
-        # Check for bankruptcy
-        if self.metrics.balance <= 0:
-            final_obs = self.get_observation()
-            terminal_reward = self.reward_calculator.calculate_terminal_reward(self.metrics.balance, self.initial_balance)
-            return final_obs, terminal_reward, True, False, self._get_info()
-        
         # Calculate terminal conditions
         end_of_data = self.current_step >= self.data_length - 1
         max_drawdown = self.metrics.get_drawdown()
         done = end_of_data or self.metrics.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
         
-        # Auto-close position at end of episode
+        # Auto-close position at end of episode and handle terminal rewards
         if done:
             if self.current_position:
                 pnl, trade_info = self.action_handler.close_position()
@@ -181,6 +175,10 @@ class TradingEnv(gym.Env, EzPickle):
                     self.metrics.add_trade(trade_info)
                     self.metrics.update_balance(pnl)
             self.current_hold_time = 0  # Reset hold time at end of episode
+            
+            # Calculate terminal reward
+            terminal_reward = self.reward_calculator.calculate_terminal_reward(self.metrics.balance, self.initial_balance)
+            reward += terminal_reward
         
         # Get observation and check truncation
         obs = self.get_observation()
