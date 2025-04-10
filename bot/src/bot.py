@@ -27,7 +27,8 @@ from config import (
     MT5_TIMEFRAME_MINUTES,
     BARS_TO_FETCH,
     MODEL_PATH,
-    BALANCE_PER_LOT
+    BALANCE_PER_LOT,
+    MT5_COMMENT
 )
 
 

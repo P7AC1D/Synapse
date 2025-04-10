@@ -1,7 +1,6 @@
 import logging
 from typing import Dict, Any, Optional
 
-import numpy as np
 import MetaTrader5 as mt5
 from mt5_connector import MT5Connector
 from config import MT5_SYMBOL, MT5_COMMENT
