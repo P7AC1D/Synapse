@@ -126,10 +126,15 @@ class FeatureProcessor:
             volatility_breakout = np.clip(volatility_breakout, 0, 1)
             
             # Calculate volume percentage change
-            volume = data['volume'].values
-            volume_pct = np.zeros_like(volume)
-            volume_pct[1:] = np.diff(volume) / (volume[:-1] + 1e-8)
-            volume_pct = np.clip(volume_pct, -1, 1)
+            volume = data['volume'].values.astype(np.float64)  # Convert to float64
+            volume_pct = np.zeros(len(volume), dtype=np.float64)  # Create float array
+            volume_pct[1:] = np.divide(
+                np.diff(volume),
+                volume[:-1],
+                out=np.zeros(len(volume)-1, dtype=np.float64),
+                where=volume[:-1] != 0
+            )
+            volume_pct = np.clip(volume_pct, -1, 1)  # Now safe to clip negative values
 
             # Create features with preserved index
             features = {
