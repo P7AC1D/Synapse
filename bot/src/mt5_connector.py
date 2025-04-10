@@ -108,24 +108,6 @@ class MT5Connector:
             bar_count
         )
     
-    def modify_stop_loss(self, ticket: int, sl: float, tp: float) -> bool:
-        """Modify stop loss and take profit for a position."""
-        if not self._ensure_connected():
-            return False
-
-        request = {
-            "action": mt5.TRADE_ACTION_SLTP,
-            "position": ticket,
-            "sl": sl,
-            "tp": tp
-        }
-        result = mt5.order_send(request)
-        
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
-            self.logger.warning(f"Failed to update SL for ticket {ticket}, error code: {result.retcode}")
-            return False
-        return True
-
     def check_filling_type(self, symbol: str, order_type: str) -> int:
         """Check appropriate filling type for the symbol."""
         if not self._ensure_connected():
@@ -150,8 +132,7 @@ class MT5Connector:
                 
         return mt5.ORDER_FILLING_IOC  # Default to IOC if no valid filling type found
     
-    def open_trade(self, symbol: str, lot: float, price: float, sl_price: float, 
-                   tp_price: float, order_type: str, filling_type: int) -> bool:
+    def open_trade(self, symbol: str, lot: float, price: float, order_type: str, filling_type: int) -> bool:
         """Open a new trade."""
         if not self._ensure_connected():
             return False
@@ -162,18 +143,17 @@ class MT5Connector:
             "volume": lot,
             "type": mt5.ORDER_TYPE_BUY if order_type == 'buy' else mt5.ORDER_TYPE_SELL,
             "price": price,
-            "sl": sl_price,
-            "tp": tp_price,
             "deviation": 20,
             "magic": 0,
             "comment": MT5_COMMENT,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling_type,
+            "sl": 0.0,  # Explicitly set no stop loss
+            "tp": 0.0,  # Explicitly set no take profit
         }
 
         self.logger.debug(
-            f"Sending order for {symbol}. Type: {order_type} | Price: {price:.2f} | "
-            f"SL: {sl_price:.2f} | TP: {tp_price:.2f} | Lot: {lot}"
+            f"Sending order for {symbol}. Type: {order_type} | Price: {price:.2f} | Lot: {lot}"
         )
         
         result = mt5.order_send(request)

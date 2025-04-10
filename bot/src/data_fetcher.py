@@ -65,7 +65,6 @@ class DataFetcher:
         
         # Log data range
         self.logger.debug(f"Data collected from {data.index[0]} to {data.index[-1]}")
-        self.logger.debug(data.head())
             
         return data
         

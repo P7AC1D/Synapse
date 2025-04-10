@@ -124,8 +124,6 @@ class TradeExecutor:
                 symbol=MT5_SYMBOL,
                 lot=lot_size,
                 price=current_price,
-                sl_price=None,  # No stop loss
-                tp_price=None,  # No take profit
                 order_type='buy' if action == 1 else 'sell',
                 filling_type=filling_type
             )
