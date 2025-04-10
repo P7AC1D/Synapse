@@ -68,6 +68,7 @@ def convert_to_serializable(obj: Any) -> Any:
 
 def print_metrics(results: dict):
     """Print formatted backtest performance metrics."""
+    # Performance Metrics
     print("\n=== Performance Metrics ===")
     performance_metrics = [
         ('Initial Balance', results.get('initial_balance', 0.0), '.2f'),
@@ -79,23 +80,48 @@ def print_metrics(results: dict):
         ('Expected Value', results.get('expected_value', 0.0), '.2f'),
         ('Sharpe Ratio', results.get('sharpe_ratio', 0.0), '.2f')
     ]
-    
-    print("\n=== Risk Metrics ===")
+    for name, value, format_spec in performance_metrics:
+        if 'd' in format_spec:
+            print(f"{name}: {value:d}")
+        elif '%' in format_spec:
+            print(f"{name}: {value:{format_spec[:-1]}}%")
+        else:
+            print(f"{name}: {value:{format_spec}}")
+    print("")
+
+    # Risk Metrics
+    print("=== Risk Metrics ===")
     risk_metrics = [
         ('Max Drawdown', results.get('max_drawdown_pct', 0.0), '.2f%'),
         ('Current Drawdown', results.get('current_drawdown_pct', 0.0), '.2f%'),
         ('Historical Max DD', results.get('historical_max_drawdown_pct', 0.0), '.2f%')
     ]
-    
-    print("\n=== Directional Analysis ===")
+    for name, value, format_spec in risk_metrics:
+        if '%' in format_spec:
+            print(f"{name}: {value:{format_spec[:-1]}}%")
+        else:
+            print(f"{name}: {value:{format_spec}}")
+    print("")
+
+    # Directional Analysis
+    print("=== Directional Analysis ===")
     directional_metrics = [
         ('Long Trades', results.get('long_trades', 0), 'd'),
         ('Long Win Rate', results.get('long_win_rate', 0.0), '.2f%'),
         ('Short Trades', results.get('short_trades', 0), 'd'),
         ('Short Win Rate', results.get('short_win_rate', 0.0), '.2f%')
     ]
-    
-    print("\n=== Hold Time Analysis ===")
+    for name, value, format_spec in directional_metrics:
+        if 'd' in format_spec:
+            print(f"{name}: {value:d}")
+        elif '%' in format_spec:
+            print(f"{name}: {value:{format_spec[:-1]}}%")
+        else:
+            print(f"{name}: {value:{format_spec}}")
+    print("")
+
+    # Hold Time Analysis
+    print("=== Hold Time Analysis ===")
     hold_time_metrics = [
         ('Avg Hold Time', results.get('avg_hold_time', 0.0), '.1f'),
         ('Winners Hold Time', results.get('win_hold_time', 0.0), '.1f'),
@@ -103,19 +129,12 @@ def print_metrics(results: dict):
         ('Max Hold Time', results.get('max_hold_bars', 64), '.1f'),  # Use default if not available
         ('Avg Hold Time %', results.get('avg_hold_time', 0.0) / results.get('max_hold_bars', 64) * 100, '.1f%')
     ]
-    
-    # Print all metrics sections
-    for metrics_list in [performance_metrics, risk_metrics, directional_metrics, 
-                        hold_time_metrics]:
-        if metrics_list:  # Only print sections with metrics
-            for name, value, format_spec in metrics_list:
-                if 'd' in format_spec:
-                    print(f"{name}: {value:d}")
-                elif '%' in format_spec:
-                    print(f"{name}: {value:{format_spec[:-1]}}%")
-                else:
-                    print(f"{name}: {value:{format_spec}}")
-            print("")  # Add blank line between sections
+    for name, value, format_spec in hold_time_metrics:
+        if '%' in format_spec:
+            print(f"{name}: {value:{format_spec[:-1]}}%")
+        else:
+            print(f"{name}: {value:{format_spec}}")
+    print("")
 
 def plot_results(results: dict, save_path: str = None):
     """Plot backtest results and performance metrics."""
