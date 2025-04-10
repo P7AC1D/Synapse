@@ -78,6 +78,11 @@ class TradeExecutor:
                 self.logger.error("Failed to get open positions")
                 return False
                 
+            # Prevent new trades if we already have a position
+            if positions and action in [1, 2]:
+                self.logger.info(f"Trade rejected: Position already exists ({len(positions)} active positions)")
+                return True
+                
             # Handle close action
             if action == 3:
                 if not positions:
