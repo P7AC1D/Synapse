@@ -50,7 +50,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
         gae_lambda=0.98,              # Higher lambda for better advantage estimation
         clip_range=0.1,               # Smaller clipping for stability
         clip_range_vf=0.1,            # Match policy clipping
-        ent_coef=0.01,               # Lower entropy to focus on sparse signals
+        ent_coef=0.05,               # Lower entropy to focus on sparse signals
         vf_coef=1.0,                 # Higher value importance for sparse rewards
         max_grad_norm=0.5,           # Conservative gradient clipping
         n_epochs=12,                 # More epochs for thorough learning
@@ -66,7 +66,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     # Configure epsilon exploration for sparse rewards
     epsilon_callback = CustomEpsilonCallback(
         start_eps=1.0,     # Start with full exploration
-        end_eps=0.05,      # Lower final exploration
+        end_eps=0.1,      # Lower final exploration
         decay_timesteps=int(args.total_timesteps * 0.7),  # Moderate decay for exploration
         iteration=iteration
     )

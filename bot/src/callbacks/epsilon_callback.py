@@ -12,11 +12,11 @@ class CustomEpsilonCallback(BaseCallback):
         super().__init__()
         self.start_eps = start_eps
         self.end_eps = end_eps
-        self.decay_timesteps = min(decay_timesteps, 40000)  # Faster decay
+        self.decay_timesteps = decay_timesteps
         self.iteration = iteration
         self.original_forward = None
         self.setup_done = False
-        self.min_exploration_rate = 0.2  # Minimum exploration rate early on
+        self.min_exploration_rate = 0.3  # Minimum exploration rate early on
         
     def _setup_exploration(self) -> None:
         """Setup exploration by modifying the policy's forward pass"""
