@@ -62,6 +62,10 @@ class DataFetcher:
         if len(data) < self.num_bars:
             self.logger.error(f"Insufficient data after formatting: {len(data)} bars (need {self.num_bars})")
             return None
+        
+        # Log data range
+        self.logger.debug(f"Data collected from {data.index[0]} to {data.index[-1]}")
+        self.logger.debug(data.head())
             
         return data
         
@@ -137,9 +141,6 @@ class DataFetcher:
             if len(df) == 0:
                 self.logger.error("No data available after cleaning")
                 return None
-
-            # Log data range
-            # self.logger.debug(f"Data collected from {df.index[0]} to {df.index[-1]}")
 
             # Return only the required number of bars
             return df.tail(self.num_bars)
