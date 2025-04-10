@@ -76,9 +76,8 @@ class DataFetcher:
             DataFrame with bar data or None if failed
         """
         try:
-            # Always fetch enough bars for environment features
             min_bars = 100 if include_history else 1
-            extra_bars = 70  # Additional bars for feature calculation
+            extra_bars = 70 if include_history else 0  # Only add buffer for history mode
             total_bars = min_bars + extra_bars
             
             rates = self.mt5_connector.fetch_data(
@@ -91,7 +90,7 @@ class DataFetcher:
                 self.logger.warning(f"No bar data returned. Error: {mt5.last_error()}")
                 return None
 
-            if len(rates) < min_bars:
+            if include_history and len(rates) < min_bars:
                 self.logger.error(f"Insufficient bars: got {len(rates)}, need {min_bars}")
                 return None
 

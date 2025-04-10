@@ -123,14 +123,21 @@ class TradingBot:
     def process_trading_cycle(self) -> None:
         """Execute a single trading cycle."""
         try:
-            current_bar = self.data_fetcher.fetch_current_bar()
+            # Get current bar first to check for updates
+            current_bar = self.data_fetcher.fetch_current_bar(include_history=False)  # Just get latest bar
+            
+            # Skip if no new data or error
+            if current_bar is None:
+                return
             
             # Check if we have a new bar
-            if current_bar is None or self.last_bar_index == current_bar.index[-1]:
+            current_time = current_bar.index[-1]
+            if self.last_bar_index is not None and current_time <= self.last_bar_index:
+                time.sleep(1)  # Avoid excessive CPU usage
                 return
                 
-            self.logger.info(f"New bar detected at {current_bar.index[-1]}")
-            self.last_bar_index = current_bar.index[-1]
+            self.logger.info(f"New bar detected at {current_time}")
+            self.last_bar_index = current_time
             
             # Get and preprocess the data for prediction
             data = self.data_fetcher.fetch_data()
