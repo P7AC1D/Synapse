@@ -20,6 +20,7 @@ class TradeExecutor:
         self.logger = logging.getLogger(__name__)
         self.mt5 = mt5
         self.balance_per_lot = balance_per_lot
+        self.last_lot_size = None  # Track last used lot size for position info
         
     def calculate_position_size(self, account_balance: float) -> float:
         """
@@ -131,6 +132,7 @@ class TradeExecutor:
             )
             
             if success:
+                self.last_lot_size = lot_size  # Store last used lot size
                 self.logger.info(
                     f"Trade executed: {'BUY' if action == 1 else 'SELL'} "
                     f"{lot_size:.2f} lots @ {current_price:.5f} "

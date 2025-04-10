@@ -44,6 +44,7 @@ class TradingBot:
         self.trade_executor = None
         self.last_bar_index = None
         self.lstm_states = None  # Store LSTM states between predictions
+        self.current_position = None  # Track current position info
         
     def setup_logging(self) -> None:
         """Configure logging with both console and file output."""
@@ -92,6 +93,23 @@ class TradingBot:
             if current_bar is None or len(current_bar.index) == 0:
                 self.logger.error("Failed to fetch initial bar data")
                 return False
+
+            # Check for existing positions
+            positions = self.mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
+            if positions:
+                position = positions[0]  # Get first position if multiple exist
+                self.current_position = {
+                    "direction": 1 if position.type == 0 else -1,  # 0=buy, 1=sell in MT5
+                    "entry_price": position.price_open,
+                    "lot_size": position.volume,
+                    "entry_step": 0,  # Will be updated in first trading cycle
+                    "entry_time": str(position.time)
+                }
+                self.logger.info(
+                    f"Recovered existing position: "
+                    f"{'LONG' if self.current_position['direction'] == 1 else 'SHORT'} "
+                    f"{self.current_position['lot_size']:.2f} lots @ {self.current_position['entry_price']:.5f}"
+                )
                 
             self.last_bar_index = current_bar.index[-1]
             self.logger.info("Trading bot initialized successfully")
@@ -128,8 +146,16 @@ class TradingBot:
                     self.logger.info(f"Significant data gap detected ({time_diff/60:.1f} minutes), resetting LSTM states")
                     self.lstm_states = None
 
-            # Make prediction using trade model
-            prediction = self.model.predict_single(data)
+            # Update position info for prediction
+            if self.current_position:
+                # Update entry step relative to current data window
+                self.current_position["entry_step"] = len(data) - 1
+
+            # Make prediction with position context
+            prediction = self.model.predict_single(
+                data,
+                current_position=self.current_position
+            )
             self.lstm_states = self.model.lstm_states  # Update LSTM states
             
             # Convert prediction to trade action
@@ -138,11 +164,25 @@ class TradingBot:
             
             self.logger.debug(
                 f"Trade Signal - Action: {action_desc} | "
-                f"Description: {prediction['description']}"
+                f"Description: {prediction['description']} | "
+                f"Current Position: {'None' if not self.current_position else ('LONG' if self.current_position['direction'] == 1 else 'SHORT')}"
             )
             
-            # Execute trade with simplified prediction
+            # Execute trade and update position tracking
             success = self.trade_executor.execute_trade(prediction)
+            
+            # Update position tracking based on action
+            if success:
+                if prediction['action'] == 3:  # Close
+                    self.current_position = None
+                elif prediction['action'] in [1, 2] and not self.current_position:  # New position
+                    self.current_position = {
+                        "direction": 1 if prediction['action'] == 1 else -1,
+                        "entry_price": data['close'].iloc[-1],
+                        "lot_size": self.trade_executor.last_lot_size,
+                        "entry_step": len(data) - 1,
+                        "entry_time": str(data.index[-1])
+                    }
             
         except Exception as e:
             self.logger.exception(f"Error in trading cycle: {e}")

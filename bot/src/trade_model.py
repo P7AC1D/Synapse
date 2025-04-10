@@ -81,13 +81,21 @@ class TradeModel:
             
         return data
         
-    def predict_single(self, data_frame: pd.DataFrame) -> Dict[str, Any]:
+    def predict_single(self, data_frame: pd.DataFrame, current_position: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Make a prediction for the latest data point.
         
         Args:
             data_frame: DataFrame with market data containing at minimum:
                        'open', 'close', 'high', 'low', 'spread' columns
+            current_position: Optional dictionary with current position info:
+                            {
+                                "direction": 1 for long/-1 for short,
+                                "entry_price": float,
+                                "lot_size": float,
+                                "entry_step": int,
+                                "entry_time": str
+                            }
             
         Returns:
             Dictionary with prediction details including 'action' (0-3) and 'description'
@@ -106,12 +114,16 @@ class TradeModel:
         # Prepare data
         data = self.prepare_data(data_frame)
         
-        # Create a temporary environment with simplified features
+        # Create environment with position state
         env = TradingEnv(
             data=data,
             random_start=False,
             balance_per_lot=self.balance_per_lot  # Use configured parameter
         )
+        
+        # Set current position if provided
+        if current_position:
+            env.current_position = current_position.copy()  # Use copy to avoid reference issues
         
         # Get normalized observation
         observation = env.get_history()
