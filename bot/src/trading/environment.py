@@ -51,7 +51,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.POINT_VALUE = 0.01      # Gold moves in 0.01 increments
         self.PIP_VALUE = 0.01        # Gold pip and point values are the same
         self.MIN_LOTS = 0.01         # Minimum 0.01 lots
-        self.MAX_LOTS = 50.0         # Maximum lots
+        self.MAX_LOTS = 100.0         # Maximum lots
         self.CONTRACT_SIZE = 100.0   # Standard gold contract size
         self.BALANCE_PER_LOT = balance_per_lot
         self.MAX_DRAWDOWN = 0.4      # Maximum drawdown

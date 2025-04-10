@@ -37,9 +37,9 @@ class TradeExecutor:
             
             # Calculate lot size exactly as done in backtest environment
             lot_size = max(
-                min_lot,  # MIN_LOTS (0.01)
+                min_lot,
                 min(
-                    max_lot,  # MAX_LOTS (50.0)
+                    max_lot,
                     round((account_balance / self.balance_per_lot) * min_lot, 2)
                 )
             )
