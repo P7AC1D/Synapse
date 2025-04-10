@@ -1,4 +1,4 @@
-MT5_SYMBOL = "BTCUSDm"
+MT5_SYMBOL = "XAUUSDm"
 MT5_BASE_SYMBOL = "USDZARm"
 MT5_PATH = "C:/Program Files/MetaTrader 5 EXNESS/terminal64.exe"
 MT5_TIMEFRAME_MINUTES = 15  # Match training timeframe
