@@ -146,12 +146,18 @@ class TradingEnv(gym.Env, EzPickle):
             self.current_position = None
             self.current_hold_time = 0
                 
-        elif action == Action.HOLD:
-            if self.current_position:
-                unrealized_pnl, profit_pips = self.action_handler.manage_position()
-                self.current_position["current_profit_pips"] = profit_pips
-                # Update metrics with unrealized PnL
-                self.metrics.update_unrealized_pnl(unrealized_pnl)
+        # Track unrealized PnL for any active position
+        if self.current_position:
+            unrealized_pnl, profit_pips = self.action_handler.manage_position()
+            self.current_position["current_profit_pips"] = profit_pips
+            # Update metrics with unrealized PnL for accurate drawdown tracking
+            self.metrics.update_unrealized_pnl(unrealized_pnl)
+        else:
+            self.metrics.update_unrealized_pnl(0.0)
+
+        if action == Action.HOLD:
+            # HOLD action with position - PnL already updated above
+            pass
 
         # Calculate reward using RewardCalculator
         reward = self.reward_calculator.calculate_reward(
