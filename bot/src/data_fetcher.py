@@ -139,7 +139,7 @@ class DataFetcher:
                 return None
 
             # Log data range
-            self.logger.debug(f"Data collected from {df.index[0]} to {df.index[-1]}")
+            # self.logger.debug(f"Data collected from {df.index[0]} to {df.index[-1]}")
 
             # Return only the required number of bars
             return df.tail(self.num_bars)
