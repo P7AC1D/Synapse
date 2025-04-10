@@ -95,6 +95,7 @@ def print_metrics(results: dict):
         ('Max Balance Drawdown', results.get('max_drawdown_pct', 0.0), '.2f%'),
         ('Max Equity Drawdown', results.get('max_equity_drawdown_pct', 0.0), '.2f%'),
         ('Current Drawdown', results.get('current_drawdown_pct', 0.0), '.2f%'),
+        ('Current Equity Drawdown', results.get('current_equity_drawndown_pct', 0.0), '.2f%'),
         ('Historical Max DD', results.get('historical_max_drawdown_pct', 0.0), '.2f%')
     ]
     for name, value, format_spec in risk_metrics:

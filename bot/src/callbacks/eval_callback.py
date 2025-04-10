@@ -97,9 +97,9 @@ class UnifiedEvalCallback(BaseCallback):
             'return': total_return,
             'max_drawdown': max_drawdown,
             'reward': episode_reward,
-            'win_rate': trade_metrics['win_rate'],
-            'avg_profit': trade_metrics['avg_profit'],
-            'avg_loss': trade_metrics['avg_loss'],
+            'win_rate': (len([t for t in env.env.trades if t['pnl'] > 0]) / len(env.env.trades)) if env.env.trades else 0.0,
+            'avg_profit': np.mean([t['pnl'] for t in env.env.trades if t['pnl'] > 0]) if any(t['pnl'] > 0 for t in env.env.trades) else 0.0,
+            'avg_loss': np.mean([t['pnl'] for t in env.env.trades if t['pnl'] <= 0]) if any(t['pnl'] <= 0 for t in env.env.trades) else 0.0,
             'balance': running_balance,
             'trades': env.env.trades,
             'current_direction': trade_metrics['current_direction']
@@ -211,12 +211,15 @@ class UnifiedEvalCallback(BaseCallback):
             
             def get_detailed_metrics(env, name, metrics):
                 """Helper function to collect and print detailed metrics for each dataset"""
+                # Calculate overall win rate directly from trades
+                win_rate = (len([t for t in env.env.trades if t['pnl'] > 0]) / len(env.env.trades) * 100) if env.env.trades else 0.0
+                
                 basic_metrics = {
                     "name": name,
                     "balance": metrics['balance'],
                     "return": metrics['return'] * 100,
                     "max_drawdown": metrics['max_drawdown'] * 100,
-                    "win_rate": metrics['win_rate'] * 100,
+                    "win_rate": win_rate,
                     "total_reward": metrics['reward']
                 }
 
@@ -377,6 +380,9 @@ class UnifiedEvalCallback(BaseCallback):
                     period_start = period_end = "NA"
                     print(f"Warning: Could not get period timestamps: {str(e)}")
 
+                # Calculate win rate directly from trades
+                win_rate = (num_winning_trades / len(eval_env.trades) * 100) if eval_env.trades else 0.0
+                
                 period_info = {
                     'results': self.eval_results,
                     'iteration': str(self.iteration),
@@ -385,7 +391,7 @@ class UnifiedEvalCallback(BaseCallback):
                     'active_position': str(active_position),
                     'win_count': str(num_winning_trades),
                     'loss_count': str(num_losing_trades),
-                    'win_rate': str(eval_env.trade_metrics['win_rate'] * 100),
+                    'win_rate': str(win_rate),
                     'period_start': period_start,
                     'period_end': period_end,
                     'trade_metrics': eval_env.trade_metrics,

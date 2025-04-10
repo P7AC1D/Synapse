@@ -20,6 +20,7 @@ class MetricsTracker:
         self.trades: List[Dict[str, Any]] = []
         self.balance = self.initial_balance
         self.max_balance = self.initial_balance
+        self.max_equity_drawdown = 0.0
         self.max_equity = self.initial_balance
         self.current_unrealized_pnl = 0.0
         self.win_count = 0
@@ -134,18 +135,34 @@ class MetricsTracker:
         Returns:
             Current equity drawdown as a percentage
         """
-        current_equity = self.balance + self.current_unrealized_pnl
-        if self.max_equity <= 0:
+        if self.balance <= 0:
             return 1.0
-            
-        # Calculate equity drawdown using current equity and maximum equity seen
-        equity_drawdown = (self.max_equity - current_equity) / self.max_equity
         
-        # Also check balance-based drawdown for full picture
-        balance_drawdown = self.get_drawdown()
+        if self.current_unrealized_pnl > 0:
+            return 0.0
+
+        equity_drawdown = min(-self.current_unrealized_pnl / self.balance, 1.0)
+        self.max_equity_drawdown = max(self.max_equity_drawdown, equity_drawdown)
+        return equity_drawdown
+    
+    def get_max_equity_drawdown(self) -> float:
+        """Get maximum equity drawdown recorded.
         
-        # Return the larger of equity or balance drawdown
-        return max(equity_drawdown, balance_drawdown)
+        Returns:
+            Maximum equity drawdown as a percentage
+        """
+        return self.max_equity_drawdown
+    
+    def get_balance_drawdown(self) -> float:
+        """Calculate current balance drawdown percentage.
+        
+        Returns:
+            Current balance drawdown as a percentage
+        """
+        if self.max_balance <= 0:
+            return 1.0
+        
+        return (self.max_balance - self.balance) / self.max_balance
 
     def get_performance_summary(self) -> Dict[str, Any]:
         """Get comprehensive performance summary.
@@ -176,8 +193,9 @@ class MetricsTracker:
             
             # Risk metrics
             "max_drawdown_pct": self.get_drawdown() * 100,  # Balance-based drawdown
-            "max_equity_drawdown_pct": self.get_equity_drawdown() * 100,  # Equity-based drawdown
-            "current_drawdown_pct": (self.max_balance_history[-1] - self.balance) / self.max_balance_history[-1] * 100 if self.max_balance_history[-1] > 0 else 0,
+            "max_equity_drawdown_pct": self.get_max_equity_drawdown() * 100,  # Equity-based drawdown
+            "current_equity_drawdown_pct": self.get_equity_drawdown() * 100,  # Current equity drawdown
+            "current_drawdown_pct": self.get_balance_drawdown() * 100,  # Current balance drawdown
             
             # Directional metrics
             "long_trades": len(long_trades),

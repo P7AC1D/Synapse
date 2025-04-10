@@ -384,8 +384,10 @@ class TradeModel:
             
             # Calculate drawdowns using MetricsTracker's methods
             metrics['max_drawdown_pct'] = float(env.metrics.get_drawdown() * 100)  # Balance-based drawdown
-            metrics['max_equity_drawdown_pct'] = float(env.metrics.get_equity_drawdown() * 100)  # Equity-based drawdown
-            
+            metrics['max_equity_drawdown_pct'] = float(env.metrics.get_max_equity_drawdown() * 100)  # Equity-based drawdown
+            metrics['current_drawdown_pct'] = float(env.metrics.get_balance_drawdown() * 100)  # Current balance drawdown
+            metrics['current_equity_drawdown_pct'] = float(env.metrics.get_equity_drawdown() * 100)  # Current equity drawdown (realized only)
+
             # Calculate current drawdown (realized only)
             if env.metrics.max_balance > 0:
                 current_drawdown = (env.metrics.max_balance - env.balance) / env.metrics.max_balance
