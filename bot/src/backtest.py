@@ -137,7 +137,7 @@ def print_metrics(results: dict):
 
 def plot_results(results: dict, save_path: str = None):
     """Plot backtest results and performance metrics."""
-    plt.figure(figsize=(20, 20))
+    plt.figure(figsize=(20, 12))  # Adjusted height for three plots
     
     # Convert trades to DataFrame for plotting
     trades = results.get('trades', [])
@@ -149,35 +149,35 @@ def plot_results(results: dict, save_path: str = None):
         
     trades_df = pd.DataFrame(trades)
     
-    # Extract balance history from trades
-    balance_history = []
+    # Extract equity history from trades (including unrealized PnL)
+    equity_history = []
     current_balance = results.get('initial_balance', 0.0)
-    balance_history.append(current_balance)
+    current_equity = current_balance
+    equity_history.append(current_equity)
     
-    for trade in trades:
+    unrealized_pnl = 0.0  # Track unrealized PnL
+    for i, trade in enumerate(trades):
         current_balance += trade.get('pnl', 0)
-        balance_history.append(current_balance)
-    
-    # Plot balance curve and equity curve
-    plt.subplot(611)
-    plt.plot(balance_history, label='Account Balance')
-    plt.title('Backtest Results')
-    plt.ylabel('Balance')
-    plt.legend()
-    plt.grid(True)
+        
+        # For the last trade, include unrealized PnL if it's active
+        if i == len(trades) - 1 and results.get('active_positions', 0) > 0:
+            unrealized_pnl = trade.get('unrealized_pnl', 0)
+        
+        current_equity = current_balance + unrealized_pnl
+        equity_history.append(current_equity)
     
     # Plot balance curve with drawdown overlay
-    plt.subplot(612)
-    balance_series = pd.Series(balance_history)
-    rolling_max = balance_series.expanding().max()
-    drawdowns = ((balance_series - rolling_max) / rolling_max) * 100
+    plt.subplot(311)
+    equity_series = pd.Series(equity_history)
+    rolling_max = equity_series.expanding().max()
+    drawdowns = ((equity_series - rolling_max) / rolling_max) * 100
     
     ax1 = plt.gca()
     ax2 = ax1.twinx()
     
-    # Plot balance
-    ax1.plot(balance_series, 'b-', label='Balance')
-    ax1.set_ylabel('Balance', color='b')
+    # Plot equity
+    ax1.plot(equity_series, 'b-', label='Equity')
+    ax1.set_ylabel('Equity', color='b')
     ax1.tick_params(axis='y', labelcolor='b')
     
     # Plot drawdown
@@ -189,49 +189,11 @@ def plot_results(results: dict, save_path: str = None):
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-    plt.title('Balance and Drawdown')
+    plt.title('Equity and Drawdown')
     plt.grid(True)
     
-    # Plot trade PnLs with performance analytics
-    plt.subplot(613)
-    if not trades_df.empty and 'pnl' in trades_df.columns:
-        trades_df['pnl_cum'] = trades_df['pnl'].cumsum()
-        plt.plot(trades_df['pnl_cum'], label='Cumulative PnL')
-        plt.title('Trade Performance')
-        plt.ylabel('Cumulative PnL')
-        plt.legend()
-        plt.grid(True)
-    
-    # Plot win rate and drawdown analysis - FIX HERE
-    plt.subplot(614)
-    if not trades_df.empty and 'pnl' in trades_df.columns:
-        rolling_window = min(50, len(trades_df))
-        trades_df['win'] = trades_df['pnl'] > 0
-        rolling_winrate = trades_df['win'].rolling(rolling_window).mean() * 100
-        
-        ax1 = plt.gca()
-        ax2 = ax1.twinx()
-        
-        ax1.plot(rolling_winrate, 'g-', label=f'{rolling_window}-Trade Win Rate')
-        ax1.set_ylabel('Win Rate %', color='g')
-        ax1.tick_params(axis='y', labelcolor='g')
-        
-        # Calculate drawdown per trade - FIXED!
-        # This ensures we have a drawdown value for each trade
-        trade_drawdowns = pd.Series(drawdowns.iloc[1:].values[:len(trades_df)])
-        
-        ax2.plot(trade_drawdowns, 'r-', alpha=0.3, label='Drawdown')
-        ax2.set_ylabel('Drawdown %', color='r')
-        ax2.tick_params(axis='y', labelcolor='r')
-        
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-        plt.title('Rolling Win Rate and Drawdown')
-        plt.grid(True)
-    
     # Plot trade size distribution
-    plt.subplot(615)
+    plt.subplot(312)
     if not trades_df.empty and 'lot_size' in trades_df.columns:
         plt.hist(trades_df['lot_size'], bins=30, alpha=0.7)
         plt.axvline(trades_df['lot_size'].mean(), color='r', linestyle='--', label='Mean')
@@ -242,7 +204,7 @@ def plot_results(results: dict, save_path: str = None):
         plt.grid(True)
     
     # Plot hold time distribution
-    plt.subplot(616)
+    plt.subplot(313)
     if not trades_df.empty and 'hold_time' in trades_df.columns:
         plt.hist(trades_df['hold_time'], bins=30, alpha=0.7)
         plt.axvline(trades_df['hold_time'].mean(), color='r', linestyle='--', label='Mean')
