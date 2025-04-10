@@ -126,7 +126,7 @@ class TradeModel:
             env.current_position = current_position.copy()  # Use copy to avoid reference issues
         
         # Get normalized observation
-        observation = env.get_history()
+        observation = env.get_observation()
         
         # Make prediction with LSTM state management and proper deterministic setting
         action, self.lstm_states = self.model.predict(
