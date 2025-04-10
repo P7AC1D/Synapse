@@ -94,9 +94,8 @@ def print_metrics(results: dict):
     risk_metrics = [
         ('Max Balance Drawdown', results.get('max_drawdown_pct', 0.0), '.2f%'),
         ('Max Equity Drawdown', results.get('max_equity_drawdown_pct', 0.0), '.2f%'),
-        ('Current Drawdown', results.get('current_drawdown_pct', 0.0), '.2f%'),
-        ('Current Equity Drawdown', results.get('current_equity_drawndown_pct', 0.0), '.2f%'),
-        ('Historical Max DD', results.get('historical_max_drawdown_pct', 0.0), '.2f%')
+        ('Current Balance DD', results.get('current_drawdown_pct', 0.0), '.2f%'),
+        ('Current Equity DD', results.get('current_equity_drawdown_pct', 0.0), '.2f%')  # Fixed typo
     ]
     for name, value, format_spec in risk_metrics:
         if '%' in format_spec:
@@ -125,11 +124,9 @@ def print_metrics(results: dict):
     # Hold Time Analysis
     print("=== Hold Time Analysis ===")
     hold_time_metrics = [
-        ('Avg Hold Time', results.get('avg_hold_time', 0.0), '.1f'),
-        ('Winners Hold Time', results.get('win_hold_time', 0.0), '.1f'),
-        ('Losers Hold Time', results.get('loss_hold_time', 0.0), '.1f'),
-        ('Max Hold Time', results.get('max_hold_bars', 64), '.1f'),  # Use default if not available
-        ('Avg Hold Time %', results.get('avg_hold_time', 0.0) / results.get('max_hold_bars', 64) * 100, '.1f%')
+        ('Hold Time (avg/med)', f"{results.get('avg_hold_time', 0.0):.1f}/{results.get('median_hold_time', 0.0):.1f}", ''),
+        ('Winners Hold Time (avg/med)', f"{results.get('win_hold_time', 0.0):.1f}/{results.get('win_hold_time_median', 0.0):.1f}", ''),
+        ('Losers Hold Time (avg/med)', f"{results.get('loss_hold_time', 0.0):.1f}/{results.get('loss_hold_time_median', 0.0):.1f}", '')
     ]
     for name, value, format_spec in hold_time_metrics:
         if '%' in format_spec:

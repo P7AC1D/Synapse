@@ -403,15 +403,24 @@ class TradeModel:
             if len(returns) > 1 and returns.std() > 0:
                 metrics['sharpe_ratio'] = float((returns.mean() / returns.std()) * np.sqrt(252))
             
-            # Hold time analysis
+            # Hold time analysis with medians
             if 'hold_time' in trades_df.columns:
-                metrics['avg_hold_time'] = float(trades_df['hold_time'].mean())
+                metrics.update({
+                    'avg_hold_time': float(trades_df['hold_time'].mean()),
+                    'median_hold_time': float(trades_df['hold_time'].median()),
+                })
                 
                 if not winning_trades.empty and 'hold_time' in winning_trades.columns:
-                    metrics['win_hold_time'] = float(winning_trades['hold_time'].mean())
+                    metrics.update({
+                        'win_hold_time': float(winning_trades['hold_time'].mean()),
+                        'win_hold_time_median': float(winning_trades['hold_time'].median())
+                    })
                     
                 if not losing_trades.empty and 'hold_time' in losing_trades.columns:
-                    metrics['loss_hold_time'] = float(losing_trades['hold_time'].mean())
+                    metrics.update({
+                        'loss_hold_time': float(losing_trades['hold_time'].mean()),
+                        'loss_hold_time_median': float(losing_trades['hold_time'].median())
+                    })
         
         # Include trade history
         metrics['trades'] = env.trades

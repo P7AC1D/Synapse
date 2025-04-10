@@ -20,8 +20,6 @@ class MetricsTracker:
         self.trades: List[Dict[str, Any]] = []
         self.balance = self.initial_balance
         self.max_balance = self.initial_balance
-        self.max_equity_drawdown = 0.0
-        self.max_equity = self.initial_balance
         self.current_unrealized_pnl = 0.0
         self.win_count = 0
         self.loss_count = 0
@@ -32,9 +30,16 @@ class MetricsTracker:
             'current_direction': 0
         }
         
-        # Track balance history for accurate drawdown
-        self.balance_history = [self.initial_balance]
-        self.max_balance_history = [self.initial_balance]  # Running maximum balance
+        # Track histories for accurate drawdown calculations
+        self.balance_history = [self.initial_balance]  # Balance history points
+        self.balance_peaks = [self.initial_balance]    # Running balance peaks
+        
+        self.equity_history = [self.initial_balance]   # Total equity points
+        self.equity_peaks = [self.initial_balance]     # Running equity peaks
+        
+        # Maximum drawdowns seen
+        self.max_balance_dd = 0.0  # Maximum balance drawdown
+        self.max_equity_dd = 0.0   # Maximum equity drawdown
 
     def add_trade(self, trade_info: Dict[str, Any]) -> None:
         """Add a completed trade and update metrics.
@@ -64,7 +69,7 @@ class MetricsTracker:
         self.metrics['avg_loss'] = sum(t['pnl'] for t in losing_trades) / len(losing_trades) if losing_trades else 0.0
 
     def update_balance(self, pnl: float) -> None:
-        """Update account balance and track maximum balance.
+        """Update account balance and track balance peaks/drawdowns.
         
         Args:
             pnl: Profit/loss to add to balance
@@ -72,43 +77,59 @@ class MetricsTracker:
         self.balance += pnl
         self.balance_history.append(self.balance)
         
-        # Update running maximum including current point
-        self.max_balance_history.append(max(self.max_balance_history[-1], self.balance))
-        
-        # Update max balance for legacy metrics
-        self.max_balance = max(self.balance_history)
+        # Update balance peaks
+        if not self.balance_peaks:
+            self.balance_peaks.append(self.balance)
+        else:
+            self.balance_peaks.append(max(self.balance_peaks[-1], self.balance))
+            
+        # Track max balance and calculate drawdown
+        peak = self.balance_peaks[-1]
+        if peak > 0:
+            dd = (peak - self.balance) / peak
+            self.max_balance_dd = max(self.max_balance_dd, dd)
+            
+        # Update max balance for backward compatibility
+        self.max_balance = peak
 
     def update_unrealized_pnl(self, unrealized_pnl: float) -> None:
-        """Update unrealized PnL and track max equity.
+        """Update unrealized PnL and track equity peaks/drawdowns.
         
         Args:
             unrealized_pnl: Current unrealized profit/loss
         """
         self.current_unrealized_pnl = unrealized_pnl
         current_equity = self.balance + unrealized_pnl
-        self.max_equity = max(self.max_equity, current_equity)
+        
+        # Track equity history and peaks
+        self.equity_history.append(current_equity)
+        if not self.equity_peaks:
+            self.equity_peaks.append(current_equity)
+        else:
+            self.equity_peaks.append(max(self.equity_peaks[-1], current_equity))
+            
+        # Calculate current equity drawdown
+        peak = self.equity_peaks[-1]
+        if peak > 0:
+            dd = (peak - current_equity) / peak
+            self.max_equity_dd = max(self.max_equity_dd, dd)
 
     def get_drawdown(self) -> float:
-        """Calculate current drawdown percentage using balance history.
+        """Calculate current drawdown percentage based on balance peaks.
         
         Returns:
             Current drawdown as a percentage
         """
-        if not self.balance_history or self.max_balance_history[-1] <= 0:
+        if not self.balance_history:
+            return 0.0
+            
+        peak = self.balance_peaks[-1] if self.balance_peaks else self.balance
+        
+        if peak <= 0:
             return 1.0
             
-        # Calculate drawdown using current balance and max balance at this point
-        current_drawdown = (self.max_balance_history[-1] - self.balance) / self.max_balance_history[-1]
-        
-        # Find maximum drawdown in history for more accurate tracking
-        max_drawdown = 0.0
-        for i in range(len(self.balance_history)):
-            peak = self.max_balance_history[i]
-            if peak > 0:
-                drawdown = (peak - self.balance_history[i]) / peak
-                max_drawdown = max(max_drawdown, drawdown)
-                
-        return max(current_drawdown, max_drawdown)
+        current_dd = (peak - self.balance) / peak if peak > 0 else 0.0
+        return max(current_dd, self.max_balance_dd)
 
     def get_position_metrics(self) -> Dict[str, Any]:
         """Get current position metrics.
@@ -135,23 +156,25 @@ class MetricsTracker:
         Returns:
             Current equity drawdown as a percentage
         """
-        if self.balance <= 0:
-            return 1.0
-        
-        if self.current_unrealized_pnl > 0:
+        if not self.equity_history:
             return 0.0
-
-        equity_drawdown = min(-self.current_unrealized_pnl / self.balance, 1.0)
-        self.max_equity_drawdown = max(self.max_equity_drawdown, equity_drawdown)
-        return equity_drawdown
+            
+        current_equity = self.balance + self.current_unrealized_pnl
+        peak = self.equity_peaks[-1] if self.equity_peaks else current_equity
+        
+        if peak <= 0:
+            return 1.0
+            
+        current_dd = (peak - current_equity) / peak if peak > 0 else 0.0
+        return max(current_dd, self.max_equity_dd)
     
     def get_max_equity_drawdown(self) -> float:
-        """Get maximum equity drawdown recorded.
+        """Get maximum equity drawdown seen.
         
         Returns:
             Maximum equity drawdown as a percentage
         """
-        return self.max_equity_drawdown
+        return self.max_equity_dd
     
     def get_balance_drawdown(self) -> float:
         """Calculate current balance drawdown percentage.
@@ -159,10 +182,16 @@ class MetricsTracker:
         Returns:
             Current balance drawdown as a percentage
         """
-        if self.max_balance <= 0:
-            return 1.0
+        if not self.balance_history:
+            return 0.0
+            
+        peak = self.balance_peaks[-1] if self.balance_peaks else self.balance
         
-        return (self.max_balance - self.balance) / self.max_balance
+        if peak <= 0:
+            return 1.0
+            
+        current_dd = (peak - self.balance) / peak if peak > 0 else 0.0
+        return max(current_dd, self.max_balance_dd)
 
     def get_performance_summary(self) -> Dict[str, Any]:
         """Get comprehensive performance summary.
