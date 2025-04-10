@@ -77,7 +77,7 @@ class RewardCalculator:
         # Correct Non-Action (Discipline)
         if action == Action.HOLD and position_type == 0:
             if self._is_market_flat():
-                reward += 1.0
+                reward += 0.1
                 self.bars_since_consolidation = 0
             else:
                 self.bars_since_consolidation += 1
@@ -87,7 +87,7 @@ class RewardCalculator:
     def calculate_terminal_reward(self, balance: float, initial_balance: float) -> float:
         """Calculate reward for terminal state."""
         if balance <= 0:
-            return -2.0  # Severe bankruptcy penalty
+            return -20.0  # Severe bankruptcy penalty
         
         # End of episode bonus
         if balance > initial_balance:

@@ -15,7 +15,7 @@ class FeatureProcessor:
         self.boll_period = 20
         self.lookback = max(self.boll_period, self.atr_period)
 
-    def setup_observation_space(self, feature_count: int = 10) -> spaces.Box:
+    def setup_observation_space(self, feature_count: int = 11) -> spaces.Box:
         """Setup observation space with proper feature bounds.
         
         Args:
@@ -125,6 +125,12 @@ class FeatureProcessor:
             volatility_breakout = np.divide(position, band_range, out=np.zeros_like(position), where=band_range!=0)
             volatility_breakout = np.clip(volatility_breakout, 0, 1)
             
+            # Calculate volume percentage change
+            volume = data['volume'].values
+            volume_pct = np.zeros_like(volume)
+            volume_pct[1:] = np.diff(volume) / (volume[:-1] + 1e-8)
+            volume_pct = np.clip(volume_pct, -1, 1)
+
             # Create features with preserved index
             features = {
                 'returns': returns,
@@ -135,7 +141,8 @@ class FeatureProcessor:
                 'trend_strength': trend_strength,
                 'candle_pattern': candle_pattern,
                 'sin_time': sin_time,
-                'cos_time': cos_time
+                'cos_time': cos_time,
+                'volume_change': volume_pct
             }
             
             # Convert all features to DataFrame at once
@@ -201,6 +208,7 @@ class FeatureProcessor:
             'returns',          # [-0.1, 0.1] Price momentum
             'rsi',             # [-1, 1] Momentum oscillator
             'atr',             # [-1, 1] Volatility indicator
+            'volume_change',    # [-1, 1] Volume percentage change
             'volatility_breakout', # [0, 1] Trend with volatility context
             'trend_strength',   # [-1, 1] ADX-based trend quality
             'candle_pattern',   # [-1, 1] Combined price action signal
