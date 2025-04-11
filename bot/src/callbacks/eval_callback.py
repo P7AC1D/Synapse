@@ -1,4 +1,11 @@
-"""Enhanced evaluation callback for training with comprehensive metrics."""
+"""Enhanced evaluation callback with comprehensive balance and equity tracking.
+
+This callback provides:
+- Separate balance and equity drawdown tracking
+- Unrealized PnL monitoring
+- Enhanced model selection based on both equity and balance metrics
+- Comprehensive performance summary from MetricsTracker
+"""
 import os
 import json
 import numpy as np
@@ -10,7 +17,21 @@ from stable_baselines3.common.callbacks import BaseCallback
 from trading.environment import TradingEnv
 
 class UnifiedEvalCallback(BaseCallback):
-    """Optimized evaluation callback with enhanced progress tracking and comprehensive evaluation."""
+    """Optimized evaluation callback with comprehensive balance and equity tracking.
+
+    Features:
+    - Tracks both balance and equity drawdowns separately
+    - Monitors unrealized PnL for current positions
+    - Uses integrated MetricsTracker for consistent metrics
+    - Enhanced model selection based on worst-case drawdown
+    - Includes combined dataset evaluation for consistency
+
+    The callback saves models based on:
+    - Validation set performance (60% weight)
+    - Maximum drawdown penalty (30% weight)
+    - Training/validation consistency (10% weight)
+    - Profit factor bonus (up to +20%)
+    """
     def __init__(self, eval_env, train_data, val_data, eval_freq=100000, best_model_save_path=None, 
                  log_path=None, deterministic=True, verbose=1, iteration=0, training_timesteps=200000):
         super(UnifiedEvalCallback, self).__init__(verbose=verbose)
@@ -80,24 +101,31 @@ class UnifiedEvalCallback(BaseCallback):
         performance = env.env.metrics.get_performance_summary()
         trade_metrics = env.env.trade_metrics
 
-        # Convert percentage values to decimals and maintain compatibility
+        # Use performance summary directly
         return {
             'return': performance['return_pct'] / 100,
-            'max_drawdown': performance['max_drawdown_pct'] / 100,
+            'max_balance_drawdown': performance['max_drawdown_pct'] / 100,
+            'max_equity_drawdown': performance['max_equity_drawdown_pct'] / 100,
             'reward': episode_reward,
             'win_rate': performance['win_rate'] / 100,
             'avg_profit': performance['avg_win'],
             'avg_loss': performance['avg_loss'],
-            'balance': env.env.balance,
+            'balance': env.env.metrics.balance,  # Use actual balance from metrics tracker
             'trades': env.env.trades,
-            'current_direction': trade_metrics['current_direction']
+            'current_direction': trade_metrics['current_direction'],
+            'profit_factor': performance['profit_factor'],
+            'unrealized_pnl': env.env.metrics.current_unrealized_pnl
         }
         
     def _calculate_trade_quality(self, metrics: Dict[str, float]) -> float:
         """Calculate overall trade quality score with enhanced metrics."""
         win_rate_score = metrics['win_rate']
-        profit_factor = max(0, metrics['avg_profit']) / (abs(metrics['avg_loss']) + 1e-8)
-        drawdown_penalty = max(0, 1 - metrics['max_drawdown'] * 2)
+        profit_factor = metrics.get('profit_factor', 0.0)  # Now directly from performance
+        # Use max of both balance and equity drawdowns for penalty
+        balance_dd = metrics.get('max_balance_drawdown', 0) / 100  # Convert from percentage
+        equity_dd = metrics.get('max_equity_drawdown', 0) / 100  # Convert from percentage
+        max_dd = max(balance_dd, equity_dd)
+        drawdown_penalty = max(0, 1 - max_dd * 2)
         
         # Ensure directories exist
         if self.best_model_save_path:
@@ -168,7 +196,10 @@ class UnifiedEvalCallback(BaseCallback):
         # Calculate validation-focused score
         score = (
             validation['return'] * 0.6 +                  # Higher weight on validation
-            -validation.get('max_drawdown', 0) * 0.3 +    # Penalize drawdown
+            -max(
+                validation.get('max_balance_drawdown', 0),
+                validation.get('max_equity_drawdown', 0)
+            ) / 100 * 0.3 +    # Penalize worst drawdown
             adjusted_consistency * 0.1                    # Small reward for consistency
         )
         
@@ -181,7 +212,8 @@ class UnifiedEvalCallback(BaseCallback):
         
         # Debug output
         print(f"Model score: {score:.4f} (Val Return: {validation['return']*100:.2f}%, "
-              f"Drawdown: {validation.get('max_drawdown', 0)*100:.2f}%, "
+              f"Balance DD: {validation.get('max_balance_drawdown', 0):.2f}%, "
+              f"Equity DD: {validation.get('max_equity_drawdown', 0):.2f}%, "
               f"Adj Consistency: {adjusted_consistency:.2f})")
         
         if score > self.best_score:
@@ -201,23 +233,16 @@ class UnifiedEvalCallback(BaseCallback):
                 """Helper function to collect and print detailed metrics for each dataset"""
                 # Get comprehensive metrics from MetricsTracker
                 performance = env.env.metrics.get_performance_summary()
-                
-                # Basic metrics with compatibility
-                basic_metrics = {
-                    "name": name,
-                    "balance": metrics['balance'],
-                    "return": metrics['return'] * 100,  # Convert to percentage
-                    "max_drawdown": metrics['max_drawdown'] * 100,  # Convert to percentage
-                    "win_rate": performance['win_rate'],
-                    "total_reward": metrics['reward']
-                }
 
                 print(f"\n===== {name} Metrics (Timestep {self.num_timesteps:,d}) =====")
-                print(f"  Balance: {basic_metrics['balance']:.2f}")
-                print(f"  Return: {basic_metrics['return']:.2f}%")
-                print(f"  Max Drawdown: {basic_metrics['max_drawdown']:.2f}%")
-                print(f"  Win Rate: {basic_metrics['win_rate']:.2f}%")
-                print(f"  Total Reward: {basic_metrics['total_reward']:.2f}")
+                print(f"  Balance: {metrics['balance']:.2f}")
+                print(f"  Equity: {metrics['balance'] + metrics['unrealized_pnl']:.2f}")
+                print(f"  Unrealized PnL: {metrics['unrealized_pnl']:.2f}")
+                print(f"  Return: {metrics['return']*100:.2f}%")
+                print(f"  Max Balance Drawdown: {performance['max_drawdown_pct']:.2f}%")
+                print(f"  Max Equity Drawdown: {performance['max_equity_drawdown_pct']:.2f}%")
+                print(f"  Win Rate: {performance['win_rate']:.2f}%")
+                print(f"  Total Reward: {metrics['reward']:.2f}")
                 print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
                 
                 # Performance Metrics
@@ -238,9 +263,20 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"    Winners Hold Time: {performance['win_hold_time']:.1f} bars")
                 print(f"    Losers Hold Time: {performance['loss_hold_time']:.1f} bars")
 
-                # Return metrics using the comprehensive performance data
+                # Return metrics without redundant basic_metrics dictionary
+                # Calculate equity value
+                equity = metrics['balance'] + metrics['unrealized_pnl']
+                
                 return {
-                    **basic_metrics,
+                    "name": name,
+                    "balance": metrics['balance'],
+                    "equity": equity,
+                    "unrealized_pnl": metrics['unrealized_pnl'],
+                    "return": metrics['return'] * 100,
+                    "max_balance_drawdown": performance['max_drawdown_pct'],
+                    "max_equity_drawdown": performance['max_equity_drawdown_pct'],
+                    "win_rate": performance['win_rate'],
+                    "total_reward": metrics['reward'],
                     "performance": {
                         "total_trades": performance['total_trades'],
                         "average_win": performance['avg_win'],
