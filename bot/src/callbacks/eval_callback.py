@@ -210,12 +210,7 @@ class UnifiedEvalCallback(BaseCallback):
                 profit_factor_bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
                 score += profit_factor_bonus
         
-        # Debug output
-        print(f"Model score: {score:.4f} (Val Return: {validation['return']*100:.2f}%, "
-              f"Balance DD: {validation.get('max_balance_drawdown', 0):.2f}%, "
-              f"Equity DD: {validation.get('max_equity_drawdown', 0):.2f}%, "
-              f"Adj Consistency: {adjusted_consistency:.2f})")
-        
+
         if score > self.best_score:
             self.best_score = score
             self.best_metrics = metrics
