@@ -246,14 +246,8 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"    Average Win: {performance['avg_win']:.2f}")
                 print(f"    Average Loss: {performance['avg_loss']:.2f}")
                 print(f"    Profit Factor: {performance['profit_factor']:.2f}")
-                
-                # Directional Performance
-                print("\n  Directional Performance:")
                 print(f"    Long Trades: {performance['long_trades']} ({performance['long_win_rate']:.1f}% win)")
                 print(f"    Short Trades: {performance['short_trades']} ({performance['short_win_rate']:.1f}% win)")
-                
-                # Hold Time Analysis
-                print("\n  Hold Time Analysis:")
                 print(f"    Average Hold Time: {performance['avg_hold_time']:.1f} bars")
                 print(f"    Winners Hold Time: {performance['win_hold_time']:.1f} bars")
                 print(f"    Losers Hold Time: {performance['loss_hold_time']:.1f} bars")
@@ -276,26 +270,14 @@ class UnifiedEvalCallback(BaseCallback):
                         "total_trades": performance['total_trades'],
                         "average_win": performance['avg_win'],
                         "average_loss": performance['avg_loss'],
-                        "profit_factor": performance['profit_factor']
-                    },
-                    "hold_times": {
-                        "average_hold_time": performance['avg_hold_time'],
-                        "winners_hold_time": performance['win_hold_time'],
-                        "losers_hold_time": performance['loss_hold_time']
-                    },
-                    "directional": {
-                        "long": {
-                            "count": performance['long_trades'],
-                            "percentage": performance['long_trades'] / performance['total_trades'] * 100 if performance['total_trades'] > 0 else 0,
-                            "win_rate": performance['long_win_rate'],
-                            "avg_pnl": performance['avg_win'] if performance['long_win_rate'] > 0 else 0
-                        },
-                        "short": {
-                            "count": performance['short_trades'],
-                            "percentage": performance['short_trades'] / performance['total_trades'] * 100 if performance['total_trades'] > 0 else 0,
-                            "win_rate": performance['short_win_rate'],
-                            "avg_pnl": performance['avg_win'] if performance['short_win_rate'] > 0 else 0
-                        }
+                        "profit_factor": performance['profit_factor'],
+                        "long_trades": performance['long_trades'],
+                        "long_win_rate": performance['long_win_rate'],
+                        "short_trades": performance['short_trades'],
+                        "short_win_rate": performance['short_win_rate'],
+                        "avg_hold_time": performance['avg_hold_time'],
+                        "win_hold_time": performance['win_hold_time'],
+                        "loss_hold_time": performance['loss_hold_time']
                     }
                 }
 
