@@ -76,31 +76,19 @@ class UnifiedEvalCallback(BaseCallback):
             running_balance = env.env.balance
             max_balance = max(max_balance, running_balance)
         
-        # Calculate metrics
-        total_return = (running_balance - env.env.initial_balance) / env.env.initial_balance
-        max_drawdown = 0.0
-        if max_balance > env.env.initial_balance:
-            max_drawdown = (max_balance - running_balance) / max_balance
-            
-        # Use environment's built-in trade metrics
+        # Get comprehensive metrics from MetricsTracker
+        performance = env.env.metrics.get_performance_summary()
         trade_metrics = env.env.trade_metrics
-        
-        if 'win_rate' not in trade_metrics:
-            # No trades were made during evaluation
-            trade_metrics['win_rate'] = 0.0
-            trade_metrics['avg_profit'] = 0.0
-            trade_metrics['avg_loss'] = 0.0
-            trade_metrics['profit_factor'] = 0.0
-            trade_metrics['trade_count'] = 0
-        
+
+        # Convert percentage values to decimals and maintain compatibility
         return {
-            'return': total_return,
-            'max_drawdown': max_drawdown,
+            'return': performance['return_pct'] / 100,
+            'max_drawdown': performance['max_drawdown_pct'] / 100,
             'reward': episode_reward,
-            'win_rate': (len([t for t in env.env.trades if t['pnl'] > 0]) / len(env.env.trades)) if env.env.trades else 0.0,
-            'avg_profit': np.mean([t['pnl'] for t in env.env.trades if t['pnl'] > 0]) if any(t['pnl'] > 0 for t in env.env.trades) else 0.0,
-            'avg_loss': np.mean([t['pnl'] for t in env.env.trades if t['pnl'] <= 0]) if any(t['pnl'] <= 0 for t in env.env.trades) else 0.0,
-            'balance': running_balance,
+            'win_rate': performance['win_rate'] / 100,
+            'avg_profit': performance['avg_win'],
+            'avg_loss': performance['avg_loss'],
+            'balance': env.env.balance,
             'trades': env.env.trades,
             'current_direction': trade_metrics['current_direction']
         }
@@ -211,15 +199,16 @@ class UnifiedEvalCallback(BaseCallback):
             
             def get_detailed_metrics(env, name, metrics):
                 """Helper function to collect and print detailed metrics for each dataset"""
-                # Calculate overall win rate directly from trades
-                win_rate = (len([t for t in env.env.trades if t['pnl'] > 0]) / len(env.env.trades) * 100) if env.env.trades else 0.0
+                # Get comprehensive metrics from MetricsTracker
+                performance = env.env.metrics.get_performance_summary()
                 
+                # Basic metrics with compatibility
                 basic_metrics = {
                     "name": name,
                     "balance": metrics['balance'],
-                    "return": metrics['return'] * 100,
-                    "max_drawdown": metrics['max_drawdown'] * 100,
-                    "win_rate": win_rate,
+                    "return": metrics['return'] * 100,  # Convert to percentage
+                    "max_drawdown": metrics['max_drawdown'] * 100,  # Convert to percentage
+                    "win_rate": performance['win_rate'],
                     "total_reward": metrics['reward']
                 }
 
@@ -232,97 +221,52 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
                 
                 # Performance Metrics
-                total_trades = len(env.env.trades)
-                winning_trades = [t for t in env.env.trades if t['pnl'] > 0]
-                losing_trades = [t for t in env.env.trades if t['pnl'] <= 0]
-                
-                avg_win = np.mean([t['pnl'] for t in winning_trades]) if winning_trades else 0
-                avg_loss = np.mean([t['pnl'] for t in losing_trades]) if losing_trades else 0
-                profit_factor = abs(sum(t['pnl'] for t in winning_trades) / sum(t['pnl'] for t in losing_trades)) if losing_trades else float('inf')
-                
-                performance_metrics = {
-                    "total_trades": total_trades,
-                    "average_win": float(avg_win),
-                    "average_loss": float(avg_loss),
-                    "profit_factor": float(profit_factor)
-                }
-                
                 print("\n  Performance Metrics:")
-                print(f"    Total Trades: {total_trades}")
-                # Add directional metrics right after total trades
-                if total_trades > 0:
-                    long_trades = [t for t in env.env.trades if t['direction'] == 1]
-                    short_trades = [t for t in env.env.trades if t['direction'] == -1]
-                    long_wins = [t for t in long_trades if t['pnl'] > 0]
-                    short_wins = [t for t in short_trades if t['pnl'] > 0]
-                    
-                    print(f"    Long Trades: {len(long_trades)} ({(len(long_wins)/len(long_trades)*100):.1f}% win)" if long_trades else "    Long Trades: 0 (N/A)")
-                    print(f"    Short Trades: {len(short_trades)} ({(len(short_wins)/len(short_trades)*100):.1f}% win)" if short_trades else "    Short Trades: 0 (N/A)")
-                
-                print(f"    Average Win: {avg_win:.2f}" if winning_trades else "    Average Win: N/A")
-                print(f"    Average Loss: {avg_loss:.2f}" if losing_trades else "    Average Loss: N/A")
-                print(f"    Profit Factor: {profit_factor:.2f}")
-                
-                # Hold Time Analysis
-                hold_metrics = {}
-                if env.env.trades:
-                    hold_times = [t['hold_time'] for t in env.env.trades]
-                    win_hold_times = [t['hold_time'] for t in winning_trades]
-                    loss_hold_times = [t['hold_time'] for t in losing_trades]
-                    
-                    hold_metrics = {
-                        "average_hold_time": float(np.mean(hold_times)),
-                        "winners_hold_time": float(np.mean(win_hold_times)) if win_hold_times else 0,
-                        "losers_hold_time": float(np.mean(loss_hold_times)) if loss_hold_times else 0
-                    }
-                    
-                    print("\n  Hold Time Analysis:")
-                    print(f"    Average Hold Time: {hold_metrics['average_hold_time']:.1f} bars")
-                    print(f"    Winners Hold Time: {hold_metrics['winners_hold_time']:.1f} bars" if win_hold_times else "    Winners Hold Time: N/A")
-                    print(f"    Losers Hold Time: {hold_metrics['losers_hold_time']:.1f} bars" if loss_hold_times else "    Losers Hold Time: N/A")
+                print(f"    Total Trades: {performance['total_trades']}")
+                print(f"    Average Win: {performance['avg_win']:.2f}")
+                print(f"    Average Loss: {performance['avg_loss']:.2f}")
+                print(f"    Profit Factor: {performance['profit_factor']:.2f}")
                 
                 # Directional Performance
-                directional_metrics = {}
-                if env.env.trades:
-                    long_trades = [t for t in env.env.trades if t['direction'] == 1]
-                    short_trades = [t for t in env.env.trades if t['direction'] == -1]
-                    
-                    print("\n  Directional Performance:")
-                    
-                    directional_metrics = {
+                print("\n  Directional Performance:")
+                print(f"    Long Trades: {performance['long_trades']} ({performance['long_win_rate']:.1f}% win)")
+                print(f"    Short Trades: {performance['short_trades']} ({performance['short_win_rate']:.1f}% win)")
+                
+                # Hold Time Analysis
+                print("\n  Hold Time Analysis:")
+                print(f"    Average Hold Time: {performance['avg_hold_time']:.1f} bars")
+                print(f"    Winners Hold Time: {performance['win_hold_time']:.1f} bars")
+                print(f"    Losers Hold Time: {performance['loss_hold_time']:.1f} bars")
+
+                # Return metrics using the comprehensive performance data
+                return {
+                    **basic_metrics,
+                    "performance": {
+                        "total_trades": performance['total_trades'],
+                        "average_win": performance['avg_win'],
+                        "average_loss": performance['avg_loss'],
+                        "profit_factor": performance['profit_factor']
+                    },
+                    "hold_times": {
+                        "average_hold_time": performance['avg_hold_time'],
+                        "winners_hold_time": performance['win_hold_time'],
+                        "losers_hold_time": performance['loss_hold_time']
+                    },
+                    "directional": {
                         "long": {
-                            "count": len(long_trades),
-                            "percentage": float(len(long_trades) / total_trades * 100) if total_trades > 0 else 0,
-                            "win_rate": 0,
-                            "avg_pnl": 0
+                            "count": performance['long_trades'],
+                            "percentage": performance['long_trades'] / performance['total_trades'] * 100 if performance['total_trades'] > 0 else 0,
+                            "win_rate": performance['long_win_rate'],
+                            "avg_pnl": performance['avg_win'] if performance['long_win_rate'] > 0 else 0
                         },
                         "short": {
-                            "count": len(short_trades),
-                            "percentage": float(len(short_trades) / total_trades * 100) if total_trades > 0 else 0,
-                            "win_rate": 0,
-                            "avg_pnl": 0
+                            "count": performance['short_trades'],
+                            "percentage": performance['short_trades'] / performance['total_trades'] * 100 if performance['total_trades'] > 0 else 0,
+                            "win_rate": performance['short_win_rate'],
+                            "avg_pnl": performance['avg_win'] if performance['short_win_rate'] > 0 else 0
                         }
                     }
-                    
-                    if long_trades:
-                        long_wins = [t for t in long_trades if t['pnl'] > 0]
-                        directional_metrics["long"]["win_rate"] = float(len(long_wins) / len(long_trades) * 100)
-                        directional_metrics["long"]["avg_pnl"] = float(np.mean([t['pnl'] for t in long_trades]))
-                        print(f"    Long Trades: {len(long_trades)} ({directional_metrics['long']['percentage']:.1f}%)")
-                        print(f"    Long Win Rate: {directional_metrics['long']['win_rate']:.1f}% (Avg PnL: {directional_metrics['long']['avg_pnl']:.2f})")
-                    
-                    if short_trades:
-                        short_wins = [t for t in short_trades if t['pnl'] > 0]
-                        directional_metrics["short"]["win_rate"] = float(len(short_wins) / len(short_trades) * 100)
-                        directional_metrics["short"]["avg_pnl"] = float(np.mean([t['pnl'] for t in short_trades]))
-                        print(f"    Short Trades: {len(short_trades)} ({directional_metrics['short']['percentage']:.1f}%)")
-                        print(f"    Short Win Rate: {directional_metrics['short']['win_rate']:.1f}% (Avg PnL: {directional_metrics['short']['avg_pnl']:.2f})")
-
-                # Combine all metrics
-                return {**basic_metrics, 
-                       "performance": performance_metrics,
-                       "hold_times": hold_metrics,
-                       "directional": directional_metrics}
+                }
 
             # Get detailed metrics for both datasets
             combined_metrics = get_detailed_metrics(self.combined_env, "Combined Dataset", combined)

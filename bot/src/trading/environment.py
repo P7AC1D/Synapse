@@ -264,6 +264,7 @@ class TradingEnv(gym.Env, EzPickle):
         return {
             "balance": self.metrics.balance,
             "total_pnl": self.metrics.balance - self.initial_balance,
+            "equity": self.metrics.get_equity_drawdown() * 100,
             "drawdown": self.metrics.get_drawdown() * 100,
             "position": position_info,
             "trade_metrics": self.metrics.metrics,
