@@ -20,6 +20,15 @@ class RewardCalculator:
         self.min_hold_bars = 20  # Minimum bars for long hold reward
         self.consolidation_threshold = 0.0015  # BB width threshold for consolidation
         
+        # Track max unrealized profit for each trade
+        self.max_unrealized_pnl = 0.0
+        
+        # Reward constants
+        self.INVALID_ACTION_PENALTY = -1.0  # Penalty for invalid actions
+        self.GOOD_HOLD_REWARD = 0.2   # Base reward for holding profitable positions
+        self.LOSING_HOLD_PENALTY = -0.1  # Penalty for holding losing positions
+        self.TIME_PRESSURE_THRESHOLD = 100  # Bars before time pressure kicks in
+        
     def _is_market_flat(self) -> bool:
         """Check if market is in consolidation based on volatility breakout."""
         current_idx = self.env.current_step
@@ -42,45 +51,72 @@ class RewardCalculator:
 
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, current_hold: int,
-                        optimal_hold: Optional[int] = None) -> float:
+                        optimal_hold: Optional[int] = None,
+                        invalid_action: bool = False) -> float:
         """Calculate rewards combining sparse and scaled components."""
+        # Handle invalid actions first
+        if invalid_action:
+            return self.INVALID_ACTION_PENALTY
+            
         reward = 0.0
         
-        # Update trade entry balance when opening new position
-        if action in [Action.BUY, Action.SELL] and position_type == 0:
-            self.trade_entry_balance = self.env.balance
+        # Position management rewards
+        if position_type != 0:  # If we have an open position
+            # Update max unrealized PnL
+            if pnl > self.max_unrealized_pnl:
+                self.max_unrealized_pnl = pnl
+            else:
+                # Penalty for giving back profits
+                profit_drawdown = (self.max_unrealized_pnl - pnl) / self.trade_entry_balance
+                reward -= profit_drawdown * 0.5
             
-        # Trade closure rewards
-        if action == Action.CLOSE and position_type != 0:
-            # Sparse direction reward
-            reward += 1.0 if pnl > 0 else -1.0
-            
-            # Scaled PnL component
-            reward += pnl / self.trade_entry_balance
-            
-            # Track direction for reversals
-            self.last_direction = position_type
-            
-            # Long hold bonus
-            if current_hold >= self.min_hold_bars and pnl > 0:
-                reward += 0.5
-            
-            # Reversal bonus
-            if self._is_successful_reversal(position_type, pnl):
-                reward += 1.0
+            if action == Action.HOLD:
+                if pnl > 0:
+                    # Decay the hold reward over time
+                    hold_decay = max(0.2, 1.0 - (current_hold / 100))
+                    reward += self.GOOD_HOLD_REWARD * hold_decay
+                else:
+                    # Penalty for holding losing positions
+                    reward += self.LOSING_HOLD_PENALTY
+                    
+                # Add time pressure after threshold
+                if current_hold > self.TIME_PRESSURE_THRESHOLD:
+                    reward -= 0.01 * (current_hold - self.TIME_PRESSURE_THRESHOLD) / 100
+                    
+            elif action == Action.CLOSE:
+                # Sparse direction reward
+                reward += 1.0 if pnl > 0 else -1.0
                 
-        # New Balance High
+                # Scaled PnL component
+                reward += pnl / self.trade_entry_balance
+                
+                # Track direction for reversals
+                self.last_direction = position_type
+                
+                # Reset max unrealized PnL
+                self.max_unrealized_pnl = 0.0
+                
+                # Reversal bonus (removed long hold bonus to discourage excessive holding)
+                if self._is_successful_reversal(position_type, pnl):
+                    reward += 1.0
+        else:  # No position open
+            # Update trade entry balance and reset max unrealized PnL for new positions
+            if action in [Action.BUY, Action.SELL]:
+                self.trade_entry_balance = self.env.balance
+                self.max_unrealized_pnl = 0.0
+                
+            # Reward for staying out during consolidation
+            if action == Action.HOLD:
+                if self._is_market_flat():
+                    reward += 0.1
+                    self.bars_since_consolidation = 0
+                else:
+                    self.bars_since_consolidation += 1
+                    
+        # New Balance High bonus (applies to all situations)
         if self.env.balance > self.previous_balance_high:
             reward += 1.0
             self.previous_balance_high = self.env.balance
-            
-        # Correct Non-Action (Discipline)
-        if action == Action.HOLD and position_type == 0:
-            if self._is_market_flat():
-                reward += 0.1
-                self.bars_since_consolidation = 0
-            else:
-                self.bars_since_consolidation += 1
         
         return float(reward)
 

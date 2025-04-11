@@ -116,6 +116,13 @@ class TradingEnv(gym.Env, EzPickle):
         position_type = self.current_position["direction"] if self.current_position else 0
         current_atr = self.prices['atr'][self.current_step]
         
+        # Detect invalid actions
+        invalid_action = False
+        if action in [Action.BUY, Action.SELL] and self.current_position is not None:
+            invalid_action = True  # Trying to open position when one exists
+        elif action == Action.CLOSE and self.current_position is None:
+            invalid_action = True  # Trying to close non-existent position
+            
         # Update counters
         self.episode_steps += 1
         self.current_step += 1
@@ -166,7 +173,8 @@ class TradingEnv(gym.Env, EzPickle):
             pnl=pnl if action == Action.CLOSE else unrealized_pnl,
             atr=current_atr,
             current_hold=self.current_hold_time,
-            optimal_hold=None
+            optimal_hold=None,
+            invalid_action=invalid_action
         )
         
         # Calculate terminal conditions
@@ -216,6 +224,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.reward_calculator.previous_balance_high = self.initial_balance
         self.reward_calculator.last_direction = None
         self.reward_calculator.bars_since_consolidation = 0
+        self.reward_calculator.max_unrealized_pnl = 0.0  # Reset max unrealized PnL tracking
         
         return self.get_observation(), self._get_info()
         
