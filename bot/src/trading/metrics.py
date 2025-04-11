@@ -218,6 +218,8 @@ class MetricsTracker:
             "return_pct": ((self.balance - self.initial_balance) / self.initial_balance) * 100,
             "avg_win": winning_trades["pnl"].mean() if not winning_trades.empty else 0.0,
             "avg_loss": losing_trades["pnl"].mean() if not losing_trades.empty else 0.0,
+            "avg_win_pips": winning_trades["profit_pips"].mean() if not winning_trades.empty else 0.0,
+            "avg_loss_pips": losing_trades["profit_pips"].mean() if not losing_trades.empty else 0.0,
             "profit_factor": abs(winning_trades["pnl"].sum() / losing_trades["pnl"].sum()) if not losing_trades.empty else float('inf'),
             
             # Risk metrics
