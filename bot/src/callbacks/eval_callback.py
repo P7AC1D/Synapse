@@ -437,7 +437,14 @@ class UnifiedEvalCallback(BaseCallback):
                 metrics_path = os.path.join(self.best_model_save_path, "best_model_metrics.json")
                 self.model.save(model_path)
                 
-                # Save full metrics for later analysis
+                # Load existing metrics if available
+                try:
+                    with open(metrics_path, 'r') as f:
+                        all_best_metrics = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    all_best_metrics = {}
+                
+                # Create metrics for current iteration
                 best_metrics = {
                     'timestep': self.num_timesteps,
                     'training': val_metrics['training'],
@@ -455,8 +462,13 @@ class UnifiedEvalCallback(BaseCallback):
                         'profit_factor_bonus': min(max(0, metrics['validation']['profit_factor'] - 1.0), 2.0) * 0.1
                     }
                 }
+                
+                # Add current iteration metrics to collection
+                all_best_metrics[f"iteration_{self.iteration}"] = best_metrics
+                
+                # Save updated metrics
                 with open(metrics_path, 'w') as f:
-                    json.dump(best_metrics, f, indent=2)
+                    json.dump(all_best_metrics, f, indent=2)
                 
                 # Get latest training stats for debugging
                 training_stats = val_metrics['training']
