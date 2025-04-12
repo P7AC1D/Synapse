@@ -486,7 +486,11 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"    Consistency (10%): {metrics['scores']['consistency']:.2f}")
                 print(f"    Profit Factor Bonus: +{profit_factor_bonus:.3f}")
                 print(f"    Progress: {self.num_timesteps/self.training_timesteps*100:.1f}%")
-                print(f"\n  Network Stats:")
+                
+                # Separator before network stats
+                print(f"\n  {'-'*50}")
+                
+                print("  Network Stats:")
                 print(f"    Value Network:")
                 print(f"      Loss: {training_stats['value_loss']:.4f}")
                 print(f"      Explained Var: {training_stats['explained_variance']:.2f}")
