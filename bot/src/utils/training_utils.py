@@ -34,9 +34,10 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
             "vf": [128, 64]               # Matching value network
         },
         "activation_fn": th.nn.Mish,      # Better activation function
+        "dropout_rate": 0.1,
         "optimizer_kwargs": {
             "eps": 1e-5,
-            "weight_decay": 1e-6          # Slightly reduced regularization
+            "weight_decay": 1e-4          # Slightly reduced regularization
         }
     }
 
