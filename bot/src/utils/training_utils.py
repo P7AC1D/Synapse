@@ -227,7 +227,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 log_path=f"../results/{args.seed}",
                 eval_freq=args.eval_freq,
                 deterministic=True,
-                verbose=1,
+                verbose=0,
                 iteration=iteration,
                 training_timesteps=period_timesteps
             )
