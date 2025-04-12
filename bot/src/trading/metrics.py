@@ -199,46 +199,67 @@ class MetricsTracker:
         Returns:
             Dictionary containing performance metrics
         """
-        if not self.trades:
-            return {"total_trades": 0}
-
-        trades_df = pd.DataFrame(self.trades)
-        winning_trades = trades_df[trades_df["pnl"] > 0]
-        losing_trades = trades_df[trades_df["pnl"] < 0]
-        
-        long_trades = trades_df[trades_df["direction"] == 1]
-        short_trades = trades_df[trades_df["direction"] == -1]
-        long_wins = long_trades[long_trades["pnl"] > 0]
-        short_wins = short_trades[short_trades["pnl"] > 0]
-
+        # Create base summary with default values (for the no-trade case)
         summary = {
-            "total_trades": len(trades_df),
-            "win_rate": len(winning_trades) / len(trades_df) * 100,
+            "total_trades": 0,
+            "win_rate": 0.0,
             "total_pnl": self.balance - self.initial_balance,
             "return_pct": ((self.balance - self.initial_balance) / self.initial_balance) * 100,
-            "avg_win": winning_trades["pnl"].mean() if not winning_trades.empty else 0.0,
-            "avg_loss": losing_trades["pnl"].mean() if not losing_trades.empty else 0.0,
-            "avg_win_pips": winning_trades["profit_pips"].mean() if not winning_trades.empty else 0.0,
-            "avg_loss_pips": losing_trades["profit_pips"].mean() if not losing_trades.empty else 0.0,
-            "profit_factor": abs(winning_trades["pnl"].sum() / losing_trades["pnl"].sum()) if not losing_trades.empty else float('inf'),
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "avg_win_pips": 0.0,
+            "avg_loss_pips": 0.0,
+            "profit_factor": 0.0,
             
             # Risk metrics
-            "max_drawdown_pct": self.get_drawdown() * 100,  # Balance-based drawdown
-            "max_equity_drawdown_pct": self.get_max_equity_drawdown() * 100,  # Equity-based drawdown
-            "current_equity_drawdown_pct": self.get_equity_drawdown() * 100,  # Current equity drawdown
-            "current_drawdown_pct": self.get_balance_drawdown() * 100,  # Current balance drawdown
+            "max_drawdown_pct": self.get_drawdown() * 100,
+            "max_equity_drawdown_pct": self.get_max_equity_drawdown() * 100,
+            "current_equity_drawdown_pct": self.get_equity_drawdown() * 100,
+            "current_drawdown_pct": self.get_balance_drawdown() * 100,
             
             # Directional metrics
-            "long_trades": len(long_trades),
-            "short_trades": len(short_trades),
-            "long_win_rate": len(long_wins) / len(long_trades) * 100 if not long_trades.empty else 0.0,
-            "short_win_rate": len(short_wins) / len(short_trades) * 100 if not short_trades.empty else 0.0,
+            "long_trades": 0,
+            "short_trades": 0,
+            "long_win_rate": 0.0,
+            "short_win_rate": 0.0,
             
             # Hold time analysis
-            "avg_hold_time": trades_df["hold_time"].mean() if "hold_time" in trades_df else 0,
-            "win_hold_time": winning_trades["hold_time"].mean() if "hold_time" in winning_trades else 0,
-            "loss_hold_time": losing_trades["hold_time"].mean() if "hold_time" in losing_trades else 0
+            "avg_hold_time": 0,
+            "win_hold_time": 0,
+            "loss_hold_time": 0
         }
+        
+        # If we have trades, update the summary with actual values
+        if self.trades:
+            trades_df = pd.DataFrame(self.trades)
+            winning_trades = trades_df[trades_df["pnl"] > 0]
+            losing_trades = trades_df[trades_df["pnl"] < 0]
+            
+            long_trades = trades_df[trades_df["direction"] == 1]
+            short_trades = trades_df[trades_df["direction"] == -1]
+            long_wins = long_trades[long_trades["pnl"] > 0]
+            short_wins = short_trades[short_trades["pnl"] > 0]
+
+            summary.update({
+                "total_trades": len(trades_df),
+                "win_rate": len(winning_trades) / len(trades_df) * 100,
+                "avg_win": winning_trades["pnl"].mean() if not winning_trades.empty else 0.0,
+                "avg_loss": losing_trades["pnl"].mean() if not losing_trades.empty else 0.0,
+                "avg_win_pips": winning_trades["profit_pips"].mean() if not winning_trades.empty else 0.0,
+                "avg_loss_pips": losing_trades["profit_pips"].mean() if not losing_trades.empty else 0.0,
+                "profit_factor": abs(winning_trades["pnl"].sum() / losing_trades["pnl"].sum()) if not losing_trades.empty else float('inf'),
+                
+                # Directional metrics
+                "long_trades": len(long_trades),
+                "short_trades": len(short_trades),
+                "long_win_rate": len(long_wins) / len(long_trades) * 100 if not long_trades.empty else 0.0,
+                "short_win_rate": len(short_wins) / len(short_trades) * 100 if not short_trades.empty else 0.0,
+                
+                # Hold time analysis
+                "avg_hold_time": trades_df["hold_time"].mean() if "hold_time" in trades_df else 0,
+                "win_hold_time": winning_trades["hold_time"].mean() if "hold_time" in winning_trades else 0,
+                "loss_hold_time": losing_trades["hold_time"].mean() if "hold_time" in losing_trades else 0
+            })
         
         return {k: float(v) if isinstance(v, (np.float32, np.float64)) else v 
                 for k, v in summary.items()}

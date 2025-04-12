@@ -234,7 +234,6 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"  Unrealized PnL: {metrics['unrealized_pnl']:.2f}")
                 print(f"  Return: {metrics['return']*100:.2f}%")
                 print(f"  Max Drawdown: {performance['max_drawdown_pct']:.2f}% ({performance['max_equity_drawdown_pct']:.2f}%)")
-                print(f"  Win Rate: {performance['win_rate']:.2f}%")
                 print(f"  Total Reward: {metrics['reward']:.2f}")
                 print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
                 
@@ -259,6 +258,9 @@ class UnifiedEvalCallback(BaseCallback):
                         "learning_rate": float(self.model.logger.name_to_value.get('train/learning_rate', 0.0)),
                         "n_updates": int(self.model.logger.name_to_value.get('train/n_updates', 0))
                     }
+
+                    # Separator
+                    print(f"\n  {'-'*50}")
                     
                     print("\n  Network Stats:")
                     print(f"    Value Network:")
@@ -295,18 +297,12 @@ class UnifiedEvalCallback(BaseCallback):
                 
                 # Performance Metrics
                 print("  Performance Metrics:")
-                print(f"    Total Trades: {performance['total_trades']}")
-                print(f"    Average Win: {performance['avg_win']:.2f} ({performance['avg_win_pips']:.1f} pips)")
-                print(f"    Average Loss: {performance['avg_loss']:.2f} ({performance['avg_loss_pips']:.1f} pips)")
-                print(f"    Profit Factor: {performance['profit_factor']:.2f}")
+                print(f"    Total Trades: {performance['total_trades']} ({performance['win_rate']:.2f}%)")
+                print(f"    Average Win: {performance['avg_win_pips']:.1f} pips ({performance['win_hold_time']:.1f} bars)")
+                print(f"    Average Loss: {performance['avg_loss_pips']:.1f} pips ({performance['loss_hold_time']:.1f} bars)")
                 print(f"    Long Trades: {performance['long_trades']} ({performance['long_win_rate']:.1f}% win)")
                 print(f"    Short Trades: {performance['short_trades']} ({performance['short_win_rate']:.1f}% win)")
-                print(f"    Average Hold Time: {performance['avg_hold_time']:.1f} bars")
-                print(f"    Winners Hold Time: {performance['win_hold_time']:.1f} bars")
-                print(f"    Losers Hold Time: {performance['loss_hold_time']:.1f} bars")
-
-                # Calculate equity value for return metrics
-                equity = metrics['balance'] + metrics['unrealized_pnl']
+                print(f"    Profit Factor: {performance['profit_factor']:.2f}")
 
                 # Group metrics into categories
                 account_stats = {
@@ -487,7 +483,7 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"    Profit Factor Bonus: +{profit_factor_bonus:.3f}")
                 print(f"    Progress: {self.num_timesteps/self.training_timesteps*100:.1f}%")
                 
-                # Separator before network stats
+                # Separator
                 print(f"\n  {'-'*50}")
                 
                 print("  Network Stats:")
