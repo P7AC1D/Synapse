@@ -240,6 +240,50 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"  Total Reward: {metrics['reward']:.2f}")
                 print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
                 
+                # Get training stats first
+                print("\n  Training Stats:")
+                try:                    
+                    # Store training stats with multiple lookup paths
+                    def get_metric(base_name):
+                        paths = [
+                            f"train/{base_name}",
+                            f"rollout/{base_name}",
+                            base_name,
+                            f"loss/{base_name}"
+                        ]
+                        for path in paths:
+                            value = self.model.logger.name_to_value.get(path)
+                            if value is not None:
+                                return float(value)
+                        return 0.0
+
+                    training_stats = {
+                        "value_loss": get_metric("value_loss"),
+                        "policy_loss": get_metric("policy_gradient_loss"),
+                        "entropy_loss": get_metric("entropy_loss"),
+                        "approx_kl": get_metric("approx_kl"),
+                        "explained_variance": get_metric("explained_variance"),
+                        "clip_fraction": get_metric("clip_fraction")
+                    }
+                    
+                    # Display training stats
+                    print(f"    Value Loss: {training_stats['value_loss']:.4f}")
+                    print(f"    Policy Loss: {training_stats['policy_loss']:.4f}")
+                    print(f"    Entropy Loss: {training_stats['entropy_loss']:.4f}")
+                    print(f"    Approx KL: {training_stats['approx_kl']:.4f}")
+                    print(f"    Explained Variance: {training_stats['explained_variance']:.4f}")
+                    print(f"    Clip Fraction: {training_stats['clip_fraction']:.4f}")
+                except (KeyError, AttributeError):
+                    print("    Training stats not yet available")
+                    training_stats = {
+                        "value_loss": 0.0,
+                        "policy_loss": 0.0,
+                        "entropy": 0.0,
+                        "approx_kl": 0.0,
+                        "explained_variance": 0.0,
+                        "clip_fraction": 0.0
+                    }
+                
                 # Performance Metrics
                 print("\n  Performance Metrics:")
                 print(f"    Total Trades: {performance['total_trades']}")
@@ -252,14 +296,14 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"    Winners Hold Time: {performance['win_hold_time']:.1f} bars")
                 print(f"    Losers Hold Time: {performance['loss_hold_time']:.1f} bars")
 
-                # Return metrics without redundant basic_metrics dictionary
-                # Calculate equity value
+                # Calculate equity value for return metrics
                 equity = metrics['balance'] + metrics['unrealized_pnl']
-                
+
                 return {
                     "name": name,
                     "balance": metrics['balance'],
                     "equity": equity,
+                    "training": training_stats,
                     "unrealized_pnl": metrics['unrealized_pnl'],
                     "return": metrics['return'] * 100,
                     "max_balance_drawdown": performance['max_drawdown_pct'],
