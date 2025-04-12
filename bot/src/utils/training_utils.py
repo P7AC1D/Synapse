@@ -19,7 +19,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     lr_schedule = get_linear_fn(
         start=args.learning_rate,
         end=args.final_learning_rate,
-        end_fraction=0.95
+        end_fraction=0.8
     )
     
     # Configure network architecture for better feature processing
@@ -43,7 +43,7 @@ def train_model(train_env, val_env, train_data, val_data, args, iteration=0):
     model = RecurrentPPO(
         "MlpLstmPolicy",
         train_env,
-        learning_rate=5e-4,           # Lower learning rate for sparse rewards
+        learning_rate=lr_schedule,    # Lower learning rate for sparse rewards
         n_steps=512,                  # Longer sequences for better reward propagation
         batch_size=256,               # Larger batch for stable sparse reward learning
         gamma=0.99,                   # High gamma for sparse rewards
