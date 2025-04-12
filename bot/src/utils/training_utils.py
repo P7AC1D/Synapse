@@ -247,10 +247,17 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             for result in unified_callback.eval_results:
                 result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
         
+        # Always use the best model if it exists
+        best_model_path = f"../results/{args.seed}/best_balance_model.zip"
+        if os.path.exists(best_model_path):
+            print(f"Loading best model from this iteration for next training step")
+            model = RecurrentPPO.load(best_model_path)
+            
+        # Save the best model as the period model and update training state
         period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
         model.save(period_model_path)
         save_training_state(state_path, training_start + step_size, period_model_path)
-        print(f"Saved model and state for period {training_start} to {train_end}")
+        print(f"Saved best model as period model: {training_start} to {train_end}")
         
         try:
             training_start += step_size
