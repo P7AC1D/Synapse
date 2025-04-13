@@ -121,12 +121,14 @@ def print_metrics(results: dict):
             print(f"{name}: {value:{format_spec}}")
     print("")
 
-    # Hold Time Analysis
-    print("=== Hold Time Analysis ===")
+    # Hold Time and Pips Analysis
+    print("=== Hold Time and Pips Analysis ===")
     hold_time_metrics = [
         ('Hold Time (avg/med)', f"{results.get('avg_hold_time', 0.0):.1f}/{results.get('median_hold_time', 0.0):.1f}", ''),
         ('Winners Hold Time (avg/med)', f"{results.get('win_hold_time', 0.0):.1f}/{results.get('win_hold_time_median', 0.0):.1f}", ''),
-        ('Losers Hold Time (avg/med)', f"{results.get('loss_hold_time', 0.0):.1f}/{results.get('loss_hold_time_median', 0.0):.1f}", '')
+        ('Losers Hold Time (avg/med)', f"{results.get('loss_hold_time', 0.0):.1f}/{results.get('loss_hold_time_median', 0.0):.1f}", ''),
+        ('Winners Pips (avg/med)', f"{results.get('avg_win_pips', 0.0):.1f}/{results.get('median_win_pips', 0.0):.1f}", ''),
+        ('Losers Pips (avg/med)', f"{results.get('avg_loss_pips', 0.0):.1f}/{results.get('median_loss_pips', 0.0):.1f}", '')
     ]
     for name, value, format_spec in hold_time_metrics:
         if '%' in format_spec:
@@ -137,7 +139,7 @@ def print_metrics(results: dict):
 
 def plot_results(results: dict, save_path: str = None):
     """Plot backtest results and performance metrics."""
-    plt.figure(figsize=(20, 12))  # Adjusted height for three plots
+    plt.figure(figsize=(20, 16))  # Adjusted height for four plots
     
     # Convert trades to DataFrame for plotting
     trades = results.get('trades', [])
@@ -167,7 +169,7 @@ def plot_results(results: dict, save_path: str = None):
         equity_history.append(current_equity)
     
     # Plot balance curve with drawdown overlay
-    plt.subplot(311)
+    plt.subplot(411)
     equity_series = pd.Series(equity_history)
     rolling_max = equity_series.expanding().max()
     drawdowns = ((equity_series - rolling_max) / rolling_max) * 100
@@ -193,7 +195,7 @@ def plot_results(results: dict, save_path: str = None):
     plt.grid(True)
     
     # Plot trade size distribution
-    plt.subplot(312)
+    plt.subplot(412)
     if not trades_df.empty and 'lot_size' in trades_df.columns:
         plt.hist(trades_df['lot_size'], bins=30, alpha=0.7)
         plt.axvline(trades_df['lot_size'].mean(), color='r', linestyle='--', label='Mean')
@@ -204,7 +206,7 @@ def plot_results(results: dict, save_path: str = None):
         plt.grid(True)
     
     # Plot hold time distribution
-    plt.subplot(313)
+    plt.subplot(413)
     if not trades_df.empty and 'hold_time' in trades_df.columns:
         plt.hist(trades_df['hold_time'], bins=30, alpha=0.7)
         plt.axvline(trades_df['hold_time'].mean(), color='r', linestyle='--', label='Mean')
@@ -214,6 +216,28 @@ def plot_results(results: dict, save_path: str = None):
         plt.legend()
         plt.grid(True)
     
+    # Plot profit/loss pips distribution
+    plt.subplot(414)
+    if not trades_df.empty and 'profit_pips' in trades_df.columns:
+        winning_trades = trades_df[trades_df['profit_pips'] > 0]
+        losing_trades = trades_df[trades_df['profit_pips'] <= 0]
+        
+        # Plot winning trades in green
+        if not winning_trades.empty:
+            plt.hist(winning_trades['profit_pips'], bins=30, alpha=0.7, color='g', label='Profit Pips')
+        
+        # Plot losing trades in red (taking absolute value)
+        if not losing_trades.empty:
+            plt.hist(abs(losing_trades['profit_pips']), bins=30, alpha=0.7, color='r', label='Loss Pips (Absolute)')
+        
+        plt.axvline(trades_df[trades_df['profit_pips'] > 0]['profit_pips'].mean(), color='g', linestyle='--', label='Mean Profit')
+        plt.axvline(abs(trades_df[trades_df['profit_pips'] <= 0]['profit_pips'].mean()), color='r', linestyle='--', label='Mean Loss')
+        plt.title('Profit/Loss Pips Distribution')
+        plt.xlabel('Pips')
+        plt.ylabel('Frequency')
+        plt.legend()
+        plt.grid(True)
+
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')

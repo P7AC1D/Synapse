@@ -341,7 +341,11 @@ class TradeModel:
             'sharpe_ratio': 0.0,
             'avg_hold_time': 0.0,
             'win_hold_time': 0.0,
-            'loss_hold_time': 0.0
+            'loss_hold_time': 0.0,
+            'avg_win_pips': 0.0,
+            'avg_loss_pips': 0.0,
+            'median_win_pips': 0.0,
+            'median_loss_pips': 0.0,
         })
         
         # Only calculate detailed metrics if trades exist
@@ -424,6 +428,12 @@ class TradeModel:
         
         # Include trade history
         metrics['trades'] = env.trades
+
+        # check if pnl is > 0 and work out avg profit_pips
+        metrics['avg_win_pips'] = winning_trades["profit_pips"].mean() if not winning_trades.empty else 0.0
+        metrics['avg_loss_pips'] = losing_trades["profit_pips"].mean() if not losing_trades.empty else 0.0
+        metrics['median_win_pips'] = winning_trades["profit_pips"].median() if not winning_trades.empty else 0.0
+        metrics['median_loss_pips'] = losing_trades["profit_pips"].median() if not losing_trades.empty else 0.0
         
         return metrics
 
