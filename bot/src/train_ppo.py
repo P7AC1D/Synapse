@@ -44,7 +44,7 @@ def main():
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
-    parser.add_argument('--final_learning_rate', type=float, default=1e-5,
+    parser.add_argument('--final_learning_rate', type=float, default=5e-5,
                       help='Final learning rate')
     parser.add_argument('--eval_freq', type=int, default=10000,
                       help='Evaluation frequency in timesteps')
