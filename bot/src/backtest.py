@@ -8,6 +8,7 @@ import logging
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib import gridspec
 from typing import Dict, Any
 from trade_model import TradeModel
 import time
@@ -139,7 +140,8 @@ def print_metrics(results: dict):
 
 def plot_results(results: dict, save_path: str = None):
     """Plot backtest results and performance metrics."""
-    plt.figure(figsize=(20, 16))  # Adjusted height for four plots
+    fig = plt.figure(figsize=(20, 16))  # Adjusted height for four plots
+    gs = gridspec.GridSpec(4, 2, height_ratios=[1, 1, 1, 1])
     
     # Convert trades to DataFrame for plotting
     trades = results.get('trades', [])
@@ -168,8 +170,8 @@ def plot_results(results: dict, save_path: str = None):
         current_equity = current_balance + unrealized_pnl
         equity_history.append(current_equity)
     
-    # Plot balance curve with drawdown overlay
-    plt.subplot(411)
+    # Plot balance curve with drawdown overlay (spans both columns)
+    ax1 = plt.subplot(gs[0, :])
     equity_series = pd.Series(equity_history)
     rolling_max = equity_series.expanding().max()
     drawdowns = ((equity_series - rolling_max) / rolling_max) * 100
@@ -194,8 +196,8 @@ def plot_results(results: dict, save_path: str = None):
     plt.title('Equity and Drawdown')
     plt.grid(True)
     
-    # Plot trade size distribution
-    plt.subplot(412)
+    # Plot trade size distribution (spans both columns)
+    plt.subplot(gs[1, :])
     if not trades_df.empty and 'lot_size' in trades_df.columns:
         plt.hist(trades_df['lot_size'], bins=30, alpha=0.7)
         plt.axvline(trades_df['lot_size'].mean(), color='r', linestyle='--', label='Mean')
@@ -205,8 +207,8 @@ def plot_results(results: dict, save_path: str = None):
         plt.legend()
         plt.grid(True)
     
-    # Plot hold time distribution
-    plt.subplot(413)
+    # Plot hold time distribution (spans both columns)
+    plt.subplot(gs[2, :])
     if not trades_df.empty and 'hold_time' in trades_df.columns:
         plt.hist(trades_df['hold_time'], bins=30, alpha=0.7)
         plt.axvline(trades_df['hold_time'].mean(), color='r', linestyle='--', label='Mean')
@@ -216,27 +218,39 @@ def plot_results(results: dict, save_path: str = None):
         plt.legend()
         plt.grid(True)
     
-    # Plot profit/loss pips distribution
-    plt.subplot(414)
+    # Create side-by-side plots for profit and loss pips (fourth row, split into columns)
     if not trades_df.empty and 'profit_pips' in trades_df.columns:
         winning_trades = trades_df[trades_df['profit_pips'] > 0]
         losing_trades = trades_df[trades_df['profit_pips'] <= 0]
         
-        # Plot winning trades in green
+        # Plot winning trades (profit pips) - left column
+        ax_profit = plt.subplot(gs[3, 0])
         if not winning_trades.empty:
             plt.hist(winning_trades['profit_pips'], bins=30, alpha=0.7, color='g', label='Profit Pips')
+            mean_profit = winning_trades['profit_pips'].mean()
+            median_profit = winning_trades['profit_pips'].median()
+            plt.axvline(mean_profit, color='g', linestyle='--', label=f'Mean: {mean_profit:.1f}')
+            plt.axvline(median_profit, color='g', linestyle=':', label=f'Median: {median_profit:.1f}')
+            plt.title('Profit Pips Distribution')
+            plt.xlabel('Pips')
+            plt.ylabel('Frequency')
+            plt.legend()
+            plt.grid(True)
         
-        # Plot losing trades in red (taking absolute value)
+        # Plot losing trades (absolute loss pips) - right column
+        ax_loss = plt.subplot(gs[3, 1])
         if not losing_trades.empty:
-            plt.hist(abs(losing_trades['profit_pips']), bins=30, alpha=0.7, color='r', label='Loss Pips (Absolute)')
-        
-        plt.axvline(trades_df[trades_df['profit_pips'] > 0]['profit_pips'].mean(), color='g', linestyle='--', label='Mean Profit')
-        plt.axvline(abs(trades_df[trades_df['profit_pips'] <= 0]['profit_pips'].mean()), color='r', linestyle='--', label='Mean Loss')
-        plt.title('Profit/Loss Pips Distribution')
-        plt.xlabel('Pips')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.grid(True)
+            abs_loss_pips = abs(losing_trades['profit_pips'])
+            plt.hist(abs_loss_pips, bins=30, alpha=0.7, color='r', label='Loss Pips (Absolute)')
+            mean_loss = abs_loss_pips.mean()
+            median_loss = abs_loss_pips.median()
+            plt.axvline(mean_loss, color='r', linestyle='--', label=f'Mean: {mean_loss:.1f}')
+            plt.axvline(median_loss, color='r', linestyle=':', label=f'Median: {median_loss:.1f}')
+            plt.title('Loss Pips Distribution (Absolute)')
+            plt.xlabel('Pips')
+            plt.ylabel('Frequency')
+            plt.legend()
+            plt.grid(True)
 
     plt.tight_layout()
     if save_path:
