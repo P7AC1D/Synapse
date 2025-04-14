@@ -43,6 +43,14 @@ class UnifiedEvalCallback(BaseCallback):
         self.eval_results = []
         self.last_time_trigger = 0
         self.iteration = iteration
+        self.training_timesteps = training_timesteps
+
+        # Track previous best model
+        self.prev_best_model = None
+        if best_model_save_path:
+            model_path = os.path.join(best_model_save_path, "best_model")
+            if os.path.exists(model_path + ".zip"):
+                self.prev_best_model = model_path
         
         # Store separate datasets
         self.train_data = train_data
@@ -174,13 +182,74 @@ class UnifiedEvalCallback(BaseCallback):
         
         return result
     
+    def _calculate_final_score(self, metrics: Dict[str, Dict[str, float]]) -> float:
+        """Calculate final score for model comparison."""
+        validation = metrics['validation']
+        combined = metrics['combined']
+        
+        if validation['return'] <= 0 or combined['return'] <= 0:
+            return float('-inf')
+            
+        # Calculate average return between validation and combined datasets
+        average_return = (validation['return'] + combined['return']) / 2
+        
+        # Add profit factor bonus if available
+        bonus = 0.0
+        if 'profit_factor' in validation.get('performance', {}):
+            pf = validation['performance']['profit_factor']
+            if pf > 1.0:  # Only reward profit factors above 1.0
+                bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
+        
+        return average_return + bonus
+
+    def _evaluate_against_previous(self) -> bool:
+        """
+        Compare current model against previous best using validation data.
+        Returns True if current model scores better than previous best.
+        """
+        if not self.prev_best_model:
+            return True  # No previous model to compare against
+            
+        # Get current model performance
+        current_metrics = self._evaluate_performance()
+        current_score = self._calculate_final_score(current_metrics)
+        
+        try:
+            # Load and evaluate previous best model
+            from sb3_contrib.ppo_recurrent import RecurrentPPO
+            prev_model = RecurrentPPO.load(self.prev_best_model)
+            
+            # Store current model temporarily
+            temp_model = self.model
+            self.model = prev_model
+            
+            # Evaluate previous model
+            prev_metrics = self._evaluate_performance()
+            prev_score = self._calculate_final_score(prev_metrics)
+            
+            # Restore current model
+            self.model = temp_model
+            
+            # Log comparison results
+            self.logger.info(f"\nModel Comparison (End of Iteration {self.iteration}):")
+            self.logger.info(f"  Current Model Score: {current_score:.4f}")
+            self.logger.info(f"  Previous Best Score: {prev_score:.4f}")
+            
+            # Compare scores
+            return current_score > prev_score
+            
+        except Exception as e:
+            self.logger.warning(f"Error comparing with previous model: {e}")
+            return True  # Default to accepting current model on error
+        
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
         """
         Determine if current model should be saved as best.
         
         A model is only saved if:
         1. Both validation and combined returns are positive
-        2. The score (average return + profit factor bonus) is better than previous best
+        2. The score is better than the previous best
+        3. When comparing at end of iteration, performs better than previous best model
         """
         validation = metrics['validation']
         combined = metrics['combined']
@@ -421,12 +490,28 @@ class UnifiedEvalCallback(BaseCallback):
                 with open(combined_file, "w") as f:
                     json.dump(all_results, f, indent=2)
             
-            # Check if model should be saved as best
-            if self._should_save_model(metrics) and self.best_model_save_path is not None:
-                # Save model and metrics
+            should_save = False
+            
+            # Check if we've reached end of iteration or normal evaluation
+            if self.num_timesteps >= self.training_timesteps:
+                # End of iteration - compare against previous best
+                if self._should_save_model(metrics) and self._evaluate_against_previous():
+                    should_save = True
+            else:
+                # Normal evaluation during training
+                if self._should_save_model(metrics):
+                    should_save = True
+            
+            # Save model if criteria met
+            if should_save and self.best_model_save_path is not None:
                 model_path = os.path.join(self.best_model_save_path, "best_model")
                 metrics_path = os.path.join(self.best_model_save_path, "best_model_metrics.json")
+                
+                # Save model
                 self.model.save(model_path)
+                
+                # Update prev_best_model path for next iteration
+                self.prev_best_model = model_path
                 
                 # Load existing metrics if available
                 try:
