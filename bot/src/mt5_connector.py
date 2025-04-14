@@ -163,9 +163,13 @@ class MT5Connector:
             "tp": tp   # Set take profit if provided
         }
 
+        # Pre-format stop loss and take profit values
+        sl_str = f"{sl:.5f}" if sl > 0 else "None"
+        tp_str = f"{tp:.5f}" if tp > 0 else "None"
+        
         self.logger.debug(
             f"Sending order for {symbol}. Type: {order_type} | Price: {price:.5f} | "
-            f"Lot: {lot} | SL: {sl:.5f if sl > 0 else 'None'} | TP: {tp:.5f if tp > 0 else 'None'}"
+            f"Lot: {lot} | SL: {sl_str} | TP: {tp_str}"
         )
         
         result = mt5.order_send(request)
