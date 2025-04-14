@@ -407,7 +407,7 @@ class TradeModel:
             if len(returns) > 1 and returns.std() > 0:
                 metrics['sharpe_ratio'] = float((returns.mean() / returns.std()) * np.sqrt(252))
             
-            # Hold time analysis with medians
+            # Hold time analysis with medians and 90th percentiles
             if 'hold_time' in trades_df.columns:
                 metrics.update({
                     'avg_hold_time': float(trades_df['hold_time'].mean()),
@@ -417,23 +417,34 @@ class TradeModel:
                 if not winning_trades.empty and 'hold_time' in winning_trades.columns:
                     metrics.update({
                         'win_hold_time': float(winning_trades['hold_time'].mean()),
-                        'win_hold_time_median': float(winning_trades['hold_time'].median())
+                        'win_hold_time_median': float(winning_trades['hold_time'].median()),
+                        'win_hold_time_90th': float(winning_trades['hold_time'].quantile(0.9))
                     })
                     
                 if not losing_trades.empty and 'hold_time' in losing_trades.columns:
                     metrics.update({
                         'loss_hold_time': float(losing_trades['hold_time'].mean()),
-                        'loss_hold_time_median': float(losing_trades['hold_time'].median())
+                        'loss_hold_time_median': float(losing_trades['hold_time'].median()),
+                        'loss_hold_time_90th': float(losing_trades['hold_time'].quantile(0.9))
                     })
         
         # Include trade history
         metrics['trades'] = env.trades
 
-        # check if pnl is > 0 and work out avg profit_pips
-        metrics['avg_win_pips'] = winning_trades["profit_pips"].mean() if not winning_trades.empty else 0.0
-        metrics['avg_loss_pips'] = losing_trades["profit_pips"].mean() if not losing_trades.empty else 0.0
-        metrics['median_win_pips'] = winning_trades["profit_pips"].median() if not winning_trades.empty else 0.0
-        metrics['median_loss_pips'] = losing_trades["profit_pips"].median() if not losing_trades.empty else 0.0
+        # Calculate pips metrics including averages, medians, and 90th percentiles
+        if not winning_trades.empty:
+            metrics.update({
+                'avg_win_pips': float(winning_trades["profit_pips"].mean()),
+                'median_win_pips': float(winning_trades["profit_pips"].median()),
+                'win_pips_90th': float(winning_trades["profit_pips"].quantile(0.9))
+            })
+        
+        if not losing_trades.empty:
+            metrics.update({
+                'avg_loss_pips': float(losing_trades["profit_pips"].mean()),
+                'median_loss_pips': float(losing_trades["profit_pips"].median()),
+                'loss_pips_90th': float(losing_trades["profit_pips"].quantile(0.9))
+            })
         
         return metrics
 
