@@ -124,12 +124,22 @@ def print_metrics(results: dict):
 
     # Hold Time and Pips Analysis
     print("=== Hold Time and Pips Analysis ===")
-    hold_time_metrics = [
-        ('Hold Time (avg/med)', f"{results.get('avg_hold_time', 0.0):.1f}/{results.get('median_hold_time', 0.0):.1f}", ''),
-        ('Winners Hold Time (avg/med)', f"{results.get('win_hold_time', 0.0):.1f}/{results.get('win_hold_time_median', 0.0):.1f}", ''),
-        ('Losers Hold Time (avg/med)', f"{results.get('loss_hold_time', 0.0):.1f}/{results.get('loss_hold_time_median', 0.0):.1f}", ''),
-        ('Winners Pips (avg/med)', f"{results.get('avg_win_pips', 0.0):.1f}/{results.get('median_win_pips', 0.0):.1f}", ''),
-        ('Losers Pips (avg/med)', f"{results.get('avg_loss_pips', 0.0):.1f}/{results.get('median_loss_pips', 0.0):.1f}", '')
+    hold_time_metrics = [        
+        ('Winners Hold Time (avg/med/90th)', 
+         f"{results.get('win_hold_time', 0.0):.1f}/{results.get('win_hold_time_median', 0.0):.1f}"
+         f"/{results.get('win_hold_time_90th', 0.0):.1f}", ''),
+        
+        ('Losers Hold Time (avg/med/90th)', 
+         f"{results.get('loss_hold_time', 0.0):.1f}/{results.get('loss_hold_time_median', 0.0):.1f}"
+         f"/{results.get('loss_hold_time_90th', 0.0):.1f}", ''),
+        
+        ('Winners Pips (avg/med/90th)', 
+         f"{results.get('avg_win_pips', 0.0):.1f}/{results.get('median_win_pips', 0.0):.1f}"
+         f"/{results.get('win_pips_90th', 0.0):.1f}", ''),
+        
+        ('Losers Pips (avg/med/90th)', 
+         f"{results.get('avg_loss_pips', 0.0):.1f}/{results.get('median_loss_pips', 0.0):.1f}"
+         f"/{results.get('loss_pips_90th', 0.0):.1f}", '')
     ]
     for name, value, format_spec in hold_time_metrics:
         if '%' in format_spec:
