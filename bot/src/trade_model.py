@@ -440,10 +440,12 @@ class TradeModel:
             })
         
         if not losing_trades.empty:
+            # Calculate stats on absolute values, then make negative
+            abs_loss_pips = losing_trades["profit_pips"].abs()
             metrics.update({
-                'avg_loss_pips': float(losing_trades["profit_pips"].mean()),
-                'median_loss_pips': float(losing_trades["profit_pips"].median()),
-                'loss_pips_90th': float(losing_trades["profit_pips"].quantile(0.9))
+                'avg_loss_pips': -float(abs_loss_pips.mean()),
+                'median_loss_pips': -float(abs_loss_pips.median()),
+                'loss_pips_90th': -float(abs_loss_pips.quantile(0.9))
             })
         
         return metrics
