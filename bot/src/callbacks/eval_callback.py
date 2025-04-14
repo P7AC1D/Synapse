@@ -178,37 +178,19 @@ class UnifiedEvalCallback(BaseCallback):
         """Determine if current model should be saved as best."""
         validation = metrics['validation']
         combined = metrics['combined']
-        scores = metrics.get('scores', {})
         
-        # IMPORTANT: Reject any model with negative validation return
-        if validation['return'] < 0:
-            return False
-        
-        # Properly handle consistency for different scenarios
-        consistency = scores.get('consistency', 0)
-        if combined['return'] < 0 and validation['return'] > 0:
-            # Model improved on validation data - this is good!
-            adjusted_consistency = 1.0  # Reward this case
-        else:
-            # Normal case - use bounded consistency
-            adjusted_consistency = max(-0.5, min(consistency, 1.0))
-        
-        # Calculate validation-focused score
-        score = (
-            validation['return'] * 0.6 +                  # Higher weight on validation
-            -max(
-                validation.get('max_balance_drawdown', 0),
-                validation.get('max_equity_drawdown', 0)
-            ) / 100 * 0.3 +    # Penalize worst drawdown
-            adjusted_consistency * 0.1                    # Small reward for consistency
-        )
+        # Calculate average return between validation and combined datasets
+        average_return = (validation['return'] + combined['return']) / 2
         
         # Add profit factor bonus if available
-        if 'performance' in validation and 'profit_factor' in validation['performance']:
+        bonus = 0.0
+        if 'profit_factor' in validation.get('performance', {}):
             pf = validation['performance']['profit_factor']
             if pf > 1.0:  # Only reward profit factors above 1.0
-                profit_factor_bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
-                score += profit_factor_bonus
+                bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
+        
+        # Calculate final score
+        score = average_return + bonus
         
 
         if score > self.best_score:
@@ -258,9 +240,6 @@ class UnifiedEvalCallback(BaseCallback):
                         "learning_rate": float(self.model.logger.name_to_value.get('train/learning_rate', 0.0)),
                         "n_updates": int(self.model.logger.name_to_value.get('train/n_updates', 0))
                     }
-
-                    # Separator
-                    print(f"\n  {'-'*50}")
                     
                     print("\n  Network Stats:")
                     print(f"    Value Network:")
@@ -292,11 +271,8 @@ class UnifiedEvalCallback(BaseCallback):
                         "n_updates": 0
                     }
                 
-                # Section separator
-                print("\n  " + "-"*50)
-                
                 # Performance Metrics
-                print("  Performance Metrics:")
+                print("\n  Performance Metrics:")
                 print(f"    Total Trades: {performance['total_trades']} ({performance['win_rate']:.2f}%)")
                 print(f"    Average Win: {performance['avg_win_pips']:.1f} pips ({performance['win_hold_time']:.1f} bars)")
                 print(f"    Average Loss: {performance['avg_loss_pips']:.1f} pips ({performance['loss_hold_time']:.1f} bars)")
@@ -453,13 +429,10 @@ class UnifiedEvalCallback(BaseCallback):
                     'scores': metrics['scores'],
                     'selection': {
                         'best_score': self.best_score,
+                        'average_return': (metrics['validation']['return'] + metrics['combined']['return']) / 2 * 100,
                         'validation_return': metrics['validation']['return'] * 100,
-                        'validation_drawdown': -max(
-                            metrics['validation'].get('max_balance_drawdown', 0),
-                            metrics['validation'].get('max_equity_drawdown', 0)
-                        ) * 100,
-                        'consistency': metrics['scores']['consistency'],
-                        'profit_factor_bonus': min(max(0, metrics['validation']['profit_factor'] - 1.0), 2.0) * 0.1
+                        'combined_return': metrics['combined']['return'] * 100,
+                        'profit_factor_bonus': min(max(0, metrics['validation'].get('profit_factor', 1.0) - 1.0), 2.0) * 0.1
                     }
                 }
                 
@@ -487,11 +460,12 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"\n  {'-'*50}")
                 
                 # Selection metrics
+                average_return = (metrics['validation']['return'] + metrics['combined']['return']) / 2
                 profit_factor_bonus = min(max(0, metrics['validation']['profit_factor'] - 1.0), 2.0) * 0.1
                 print(f"  Selection (Score: {self.best_score:.3f}):")
-                print(f"    Return (60%): {metrics['validation']['return']*100:.2f}%")
-                print(f"    Drawdown (30%): {-max(metrics['validation'].get('max_balance_drawdown', 0), metrics['validation'].get('max_equity_drawdown', 0))*100:.2f}%")
-                print(f"    Consistency (10%): {metrics['scores']['consistency']:.2f}")
+                print(f"    Averaged Return: {average_return*100:.2f}%")
+                print(f"      - Validation: {metrics['validation']['return']*100:.2f}%")
+                print(f"      - Combined: {metrics['combined']['return']*100:.2f}%")
                 print(f"    Profit Factor Bonus: +{profit_factor_bonus:.3f}")
                 print(f"    Progress: {self.num_timesteps/self.training_timesteps*100:.1f}%")
                 
