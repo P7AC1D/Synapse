@@ -1,9 +1,9 @@
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 import MetaTrader5 as mt5
 from mt5_connector import MT5Connector
-from config import MT5_SYMBOL, MT5_COMMENT
+from config import MT5_SYMBOL, MT5_COMMENT, STOP_LOSS_PIPS
 
 class TradeExecutor:
     """Class for executing trades based on model predictions."""
@@ -21,6 +21,45 @@ class TradeExecutor:
         self.balance_per_lot = balance_per_lot
         self.last_lot_size = None  # Track last used lot size for position info
         
+    def calculate_stop_loss(self, entry_price: float, trade_type: str) -> float:
+        """
+        Calculate stop loss price based on pips from entry price.
+        
+        Args:
+            entry_price: Entry price for the trade
+            trade_type: Either 'buy' or 'sell'
+            
+        Returns:
+            float: Stop loss price
+        """
+        try:
+            # Get point value for the symbol
+            point = mt5.symbol_info(MT5_SYMBOL).point
+            digits = mt5.symbol_info(MT5_SYMBOL).digits
+            
+            # For XAUUSD, 1 pip = 0.1 points (need to multiply by 10)
+            pip_value = point * 10 if 'XAU' in MT5_SYMBOL else point
+            
+            # Calculate stop loss price
+            if trade_type == 'buy':
+                sl_price = entry_price - (STOP_LOSS_PIPS * pip_value)
+            else:  # sell
+                sl_price = entry_price + (STOP_LOSS_PIPS * pip_value)
+                
+            # Round to symbol digits
+            sl_price = round(sl_price, digits)
+            
+            self.logger.debug(
+                f"Stop Loss calculation: Entry: {entry_price:.{digits}f} | "
+                f"Type: {trade_type} | SL: {sl_price:.{digits}f} | "
+                f"Distance: {STOP_LOSS_PIPS} pips"
+            )
+            return sl_price
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating stop loss: {e}")
+            return 0.0  # Return 0 on error to indicate failure
+
     def calculate_position_size(self, account_balance: float) -> float:
         """
         Calculate position size using the same method as the backtest environment.
@@ -122,21 +161,31 @@ class TradeExecutor:
                 'buy' if action == 1 else 'sell'
             )
             
-            # Execute the trade without SL/TP - let model control position closure
+            # Calculate stop loss
+            trade_type = 'buy' if action == 1 else 'sell'
+            stop_loss = self.calculate_stop_loss(current_price, trade_type)
+            if stop_loss == 0.0:
+                self.logger.error("Failed to calculate stop loss")
+                return False
+
+            # Execute the trade with stop loss
             success = self.mt5.open_trade(
                 symbol=MT5_SYMBOL,
                 lot=lot_size,
                 price=current_price,
-                order_type='buy' if action == 1 else 'sell',
-                filling_type=filling_type
+                order_type=trade_type,
+                filling_type=filling_type,
+                sl=stop_loss
             )
             
             if success:
                 self.last_lot_size = lot_size  # Store last used lot size
+                # Calculate stop loss distance in points
+                sl_points = abs(current_price - stop_loss)
                 self.logger.info(
-                    f"Trade executed: {'BUY' if action == 1 else 'SELL'} "
+                    f"Trade executed: {trade_type.upper()} "
                     f"{lot_size:.2f} lots @ {current_price:.5f} "
-                    f"(No SL/TP - model controlled)"
+                    f"(SL: {stop_loss:.5f}, {STOP_LOSS_PIPS} pips)"
                 )
             else:
                 self.logger.error("Trade execution failed")

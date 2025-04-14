@@ -78,7 +78,7 @@ class TradingEnv(gym.Env, EzPickle):
         # Process data and setup spaces
         self.raw_data, self.atr_values = self.feature_processor.preprocess_data(data)
         self.action_space = spaces.Discrete(4)
-        self.observation_space = self.feature_processor.setup_observation_space()
+        self.observation_space = self.feature_processor.setup_obervation_space()
         
         # Save datetime index and data length
         self.original_index = data.index

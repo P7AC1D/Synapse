@@ -132,14 +132,25 @@ class MT5Connector:
                 
         return mt5.ORDER_FILLING_IOC  # Default to IOC if no valid filling type found
     
-    def open_trade(self, symbol: str, lot: float, price: float, order_type: str, filling_type: int) -> bool:
-        """Open a new trade."""
+    def open_trade(self, symbol: str, lot: float, price: float, order_type: str, filling_type: int, sl: float = 0.0, tp: float = 0.0) -> bool:
+        """
+        Open a new trade with optional stop loss and take profit.
+        
+        Args:
+            symbol: Trading symbol
+            lot: Trade volume in lots
+            price: Entry price
+            order_type: Either 'buy' or 'sell'
+            filling_type: MT5 filling type
+            sl: Stop Loss price (optional)
+            tp: Take Profit price (optional)
+        """
         if not self._ensure_connected():
             return False
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": symbol,  # Use provided symbol
+            "symbol": symbol,
             "volume": lot,
             "type": mt5.ORDER_TYPE_BUY if order_type == 'buy' else mt5.ORDER_TYPE_SELL,
             "price": price,
@@ -148,12 +159,13 @@ class MT5Connector:
             "comment": MT5_COMMENT,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling_type,
-            "sl": 0.0,  # Explicitly set no stop loss
-            "tp": 0.0,  # Explicitly set no take profit
+            "sl": sl,  # Set stop loss if provided
+            "tp": tp   # Set take profit if provided
         }
 
         self.logger.debug(
-            f"Sending order for {symbol}. Type: {order_type} | Price: {price:.2f} | Lot: {lot}"
+            f"Sending order for {symbol}. Type: {order_type} | Price: {price:.5f} | "
+            f"Lot: {lot} | SL: {sl:.5f if sl > 0 else 'None'} | TP: {tp:.5f if tp > 0 else 'None'}"
         )
         
         result = mt5.order_send(request)

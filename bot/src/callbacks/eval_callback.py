@@ -273,7 +273,7 @@ class UnifiedEvalCallback(BaseCallback):
                 
                 # Performance Metrics
                 print("\n  Performance Metrics:")
-                print(f"    Total Trades: {performance['total_trades']} ({performance['win_rate']:.2f}%)")
+                print(f"    Total Trades: {performance['total_trades']} ({performance['win_rate']:.2f}% win)")
                 print(f"    Average Win: {performance['avg_win_pips']:.1f} pips ({performance['win_hold_time']:.1f} bars)")
                 print(f"    Average Loss: {performance['avg_loss_pips']:.1f} pips ({performance['loss_hold_time']:.1f} bars)")
                 print(f"    Long Trades: {performance['long_trades']} ({performance['long_win_rate']:.1f}% win)")

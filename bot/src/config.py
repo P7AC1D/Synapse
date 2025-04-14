@@ -8,3 +8,4 @@ LOG_FILE_PATH = f"C:/Users/Admin/Desktop"
 MODEL_PATH = f"C:/Code/drl/bot/model/{MT5_SYMBOL}.zip"
 MAX_SPREAD = 35.0  # Maximum allowed spread for trade execution
 BALANCE_PER_LOT = 2500.0  # Amount of balance required per 0.01 lot (matches TradingEnv)
+STOP_LOSS_PIPS = 500.0  # Stop loss in pips for all trades
