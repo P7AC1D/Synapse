@@ -175,9 +175,24 @@ class UnifiedEvalCallback(BaseCallback):
         return result
     
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
-        """Determine if current model should be saved as best."""
+        """
+        Determine if current model should be saved as best.
+        
+        A model is only saved if:
+        1. Both validation and combined returns are positive
+        2. The score (average return + profit factor bonus) is better than previous best
+        """
         validation = metrics['validation']
         combined = metrics['combined']
+        
+        # Reject models with negative returns on either dataset
+        if validation['return'] <= 0 or combined['return'] <= 0:
+            self.logger.debug(
+                f"Model rejected - Negative returns: "
+                f"Validation: {validation['return']*100:.2f}%, "
+                f"Combined: {combined['return']*100:.2f}%"
+            )
+            return False
         
         # Calculate average return between validation and combined datasets
         average_return = (validation['return'] + combined['return']) / 2
