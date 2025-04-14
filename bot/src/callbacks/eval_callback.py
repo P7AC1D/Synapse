@@ -249,7 +249,7 @@ class UnifiedEvalCallback(BaseCallback):
         A model is only saved if:
         1. Both validation and combined returns are positive
         2. The score is better than the previous best
-        3. When comparing at end of iteration, performs better than previous best model
+        3. When at end of iteration, must also beat previous best model
         """
         validation = metrics['validation']
         combined = metrics['combined']
@@ -492,15 +492,10 @@ class UnifiedEvalCallback(BaseCallback):
             
             should_save = False
             
-            # Check if we've reached end of iteration or normal evaluation
-            if self.num_timesteps >= self.training_timesteps:
-                # End of iteration - compare against previous best
-                if self._should_save_model(metrics) and self._evaluate_against_previous():
-                    should_save = True
-            else:
-                # Normal evaluation during training
-                if self._should_save_model(metrics):
-                    should_save = True
+            # Check if model should be saved based on current metrics
+            if self._should_save_model(metrics) and self._evaluate_against_previous():
+                self.logger.info("Model passed both current iteration and previous best comparison")
+                should_save = True
             
             # Save model if criteria met
             if should_save and self.best_model_save_path is not None:
