@@ -148,6 +148,23 @@ def print_metrics(results: dict):
             print(f"{name}: {value:{format_spec}}")
     print("")
 
+    # Consecutive Trade Analysis
+    print("=== Consecutive Trade Analysis ===")
+    consecutive_metrics = [
+        ('Max Consecutive Wins', results.get('max_consecutive_wins', 0), 'd'),
+        ('Max Consecutive Losses', results.get('max_consecutive_losses', 0), 'd'),
+        ('Current Win Streak', results.get('current_consecutive_wins', 0), 'd'),
+        ('Current Loss Streak', results.get('current_consecutive_losses', 0), 'd')
+    ]
+    for name, value, format_spec in consecutive_metrics:
+        if 'd' in format_spec:
+            print(f"{name}: {value:d}")
+        elif '%' in format_spec:
+            print(f"{name}: {value:{format_spec[:-1]}}%")
+        else:
+            print(f"{name}: {value:{format_spec}}")
+    print("")
+
 def plot_results(results: dict, save_path: str = None):
     """Plot backtest results and performance metrics."""
     fig = plt.figure(figsize=(20, 16))  # Adjusted height for four plots
@@ -163,7 +180,7 @@ def plot_results(results: dict, save_path: str = None):
         
     trades_df = pd.DataFrame(trades)
     
-    # Extract equity history from trades (including unrealized PnL)
+    # Extract equity history from trades and track streaks (including unrealized PnL)
     equity_history = []
     current_balance = results.get('initial_balance', 0.0)
     current_equity = current_balance
@@ -171,7 +188,8 @@ def plot_results(results: dict, save_path: str = None):
     
     unrealized_pnl = 0.0  # Track unrealized PnL
     for i, trade in enumerate(trades):
-        current_balance += trade.get('pnl', 0)
+        pnl = trade.get('pnl', 0)
+        current_balance += pnl
         
         # For the last trade, include unrealized PnL if it's active
         if i == len(trades) - 1 and results.get('active_positions', 0) > 0:

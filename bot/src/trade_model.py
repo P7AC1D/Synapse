@@ -361,16 +361,16 @@ class TradeModel:
             metrics['short_trades'] = len(short_trades)
             
             if len(long_trades) > 0:
-                long_wins = long_trades[long_trades['pnl'] > 0]
+                long_wins = long_trades[long_trades['pnl'].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
                 metrics['long_win_rate'] = (len(long_wins) / len(long_trades) * 100)
             
             if len(short_trades) > 0:
-                short_wins = short_trades[short_trades['pnl'] > 0]
+                short_wins = short_trades[short_trades['pnl'].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
                 metrics['short_win_rate'] = (len(short_wins) / len(short_trades) * 100)
             
-            # Overall win/loss metrics
-            winning_trades = trades_df[trades_df['pnl'] > 0]
-            losing_trades = trades_df[trades_df['pnl'] < 0]
+            # Overall win/loss metrics with proper PnL thresholds
+            winning_trades = trades_df[trades_df['pnl'].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
+            losing_trades = trades_df[trades_df['pnl'].apply(lambda x: x <= 0 or abs(x) < 1e-8)]
             
             # Calculate PnL metrics
             metrics['total_profit'] = float(winning_trades['pnl'].sum()) if not winning_trades.empty else 0.0
@@ -447,6 +447,32 @@ class TradeModel:
                 'median_loss_pips': -float(abs_loss_pips.median()),
                 'loss_pips_90th': -float(abs_loss_pips.quantile(0.9))
             })
+        
+        # Calculate consecutive trade metrics
+        current_win_streak = 0
+        current_loss_streak = 0
+        max_win_streak = 0
+        max_loss_streak = 0
+        
+        # Process trades chronologically to track streaks
+        for trade in env.trades:
+            pnl = trade.get('pnl', 0)
+            if pnl > 0 and abs(pnl) >= 1e-8:  # Clear win
+                current_win_streak += 1
+                current_loss_streak = 0
+                max_win_streak = max(max_win_streak, current_win_streak)
+            else:  # Loss or zero PnL
+                current_loss_streak += 1
+                current_win_streak = 0
+                max_loss_streak = max(max_loss_streak, current_loss_streak)
+
+        # Add streak metrics
+        metrics.update({
+            'max_consecutive_wins': max_win_streak,
+            'max_consecutive_losses': max_loss_streak,
+            'current_consecutive_wins': current_win_streak,
+            'current_consecutive_losses': current_loss_streak
+        })
         
         return metrics
 

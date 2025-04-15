@@ -13,6 +13,10 @@ class MetricsTracker:
             initial_balance: Starting account balance
         """
         self.initial_balance = initial_balance
+        self.current_win_streak = 0
+        self.current_loss_streak = 0
+        self.max_win_streak = 0
+        self.max_loss_streak = 0
         self.reset()
 
     def reset(self) -> None:
@@ -23,11 +27,20 @@ class MetricsTracker:
         self.current_unrealized_pnl = 0.0
         self.win_count = 0
         self.loss_count = 0
+        # Reset streak counters
+        self.current_win_streak = 0
+        self.current_loss_streak = 0
+        self.max_win_streak = 0
+        self.max_loss_streak = 0
         self.metrics = {
             'win_rate': 0.0,
             'avg_profit': 0.0,
             'avg_loss': 0.0,
-            'current_direction': 0
+            'current_direction': 0,
+            'max_consecutive_wins': 0,
+            'max_consecutive_losses': 0,
+            'current_consecutive_wins': 0,
+            'current_consecutive_losses': 0
         }
         
         # Track histories for accurate drawdown calculations
@@ -49,10 +62,18 @@ class MetricsTracker:
         """
         self.trades.append(trade_info)
         
-        if trade_info['pnl'] > 0:
+        # Update win/loss counts and streaks
+        pnl = trade_info['pnl']
+        if pnl > 0 and abs(pnl) >= 1e-8:  # Clear win
             self.win_count += 1
-        else:
+            self.current_win_streak += 1
+            self.current_loss_streak = 0
+            self.max_win_streak = max(self.max_win_streak, self.current_win_streak)
+        else:  # Loss or zero PnL
             self.loss_count += 1
+            self.current_loss_streak += 1
+            self.current_win_streak = 0
+            self.max_loss_streak = max(self.max_loss_streak, self.current_loss_streak)
             
         self._update_metrics()
 
@@ -61,12 +82,19 @@ class MetricsTracker:
         if not self.trades:
             return
             
-        winning_trades = [t for t in self.trades if t['pnl'] > 0]
-        losing_trades = [t for t in self.trades if t['pnl'] <= 0]
+        # Use PnL threshold for win/loss classification
+        winning_trades = [t for t in self.trades if t['pnl'] > 0 and abs(t['pnl']) >= 1e-8]
+        losing_trades = [t for t in self.trades if t['pnl'] <= 0 or abs(t['pnl']) < 1e-8]
         
-        self.metrics['win_rate'] = len(winning_trades) / len(self.trades) if self.trades else 0.0
-        self.metrics['avg_profit'] = sum(t['pnl'] for t in winning_trades) / len(winning_trades) if winning_trades else 0.0
-        self.metrics['avg_loss'] = sum(t['pnl'] for t in losing_trades) / len(losing_trades) if losing_trades else 0.0
+        self.metrics.update({
+            'win_rate': len(winning_trades) / len(self.trades) if self.trades else 0.0,
+            'avg_profit': sum(t['pnl'] for t in winning_trades) / len(winning_trades) if winning_trades else 0.0,
+            'avg_loss': sum(t['pnl'] for t in losing_trades) / len(losing_trades) if losing_trades else 0.0,
+            'max_consecutive_wins': self.max_win_streak,
+            'max_consecutive_losses': self.max_loss_streak,
+            'current_consecutive_wins': self.current_win_streak,
+            'current_consecutive_losses': self.current_loss_streak
+        })
 
     def update_balance(self, pnl: float) -> None:
         """Update account balance and track balance peaks/drawdowns.
@@ -226,19 +254,26 @@ class MetricsTracker:
             # Hold time analysis
             "avg_hold_time": 0,
             "win_hold_time": 0,
-            "loss_hold_time": 0
+            "loss_hold_time": 0,
+            
+            # Streak metrics
+            "max_consecutive_wins": self.max_win_streak,
+            "max_consecutive_losses": self.max_loss_streak,
+            "current_consecutive_wins": self.current_win_streak,
+            "current_consecutive_losses": self.current_loss_streak
         }
         
         # If we have trades, update the summary with actual values
         if self.trades:
             trades_df = pd.DataFrame(self.trades)
-            winning_trades = trades_df[trades_df["pnl"] > 0]
-            losing_trades = trades_df[trades_df["pnl"] < 0]
+            winning_trades = trades_df[trades_df["pnl"].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
+            losing_trades = trades_df[trades_df["pnl"].apply(lambda x: x <= 0 or abs(x) < 1e-8)]
             
             long_trades = trades_df[trades_df["direction"] == 1]
             short_trades = trades_df[trades_df["direction"] == -1]
-            long_wins = long_trades[long_trades["pnl"] > 0]
-            short_wins = short_trades[short_trades["pnl"] > 0]
+            # Apply the same PnL threshold to directional wins
+            long_wins = long_trades[long_trades["pnl"].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
+            short_wins = short_trades[short_trades["pnl"].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
 
             summary.update({
                 "total_trades": len(trades_df),
