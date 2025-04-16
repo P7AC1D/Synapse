@@ -99,30 +99,23 @@ def print_metrics(results: dict):
             print(f"{name}: {value:{format_spec}}")
     print("")
 
-    # Hold Time and Pips Analysis
+    # Hold Time and Pips Analysis as Table
     print("=== Hold Time and Pips Analysis ===")
-    hold_time_metrics = [        
-        ('Winners Hold Time (avg/med/90th)', 
-         f"{results.get('win_hold_time', 0.0):.1f}/{results.get('win_hold_time_median', 0.0):.1f}"
-         f"/{results.get('win_hold_time_90th', 0.0):.1f}", ''),
-        
-        ('Losers Hold Time (avg/med/90th)', 
-         f"{results.get('loss_hold_time', 0.0):.1f}/{results.get('loss_hold_time_median', 0.0):.1f}"
-         f"/{results.get('loss_hold_time_90th', 0.0):.1f}", ''),
-        
-        ('Winners Pips (avg/med/90th)', 
-         f"{results.get('avg_win_pips', 0.0):.1f}/{results.get('median_win_pips', 0.0):.1f}"
-         f"/{results.get('win_pips_90th', 0.0):.1f}", ''),
-        
-        ('Losers Pips (avg/med/90th)', 
-         f"{results.get('avg_loss_pips', 0.0):.1f}/{results.get('median_loss_pips', 0.0):.1f}"
-         f"/{results.get('loss_pips_90th', 0.0):.1f}", '')
-    ]
-    for name, value, format_spec in hold_time_metrics:
-        if '%' in format_spec:
-            print(f"{name}: {value:{format_spec[:-1]}}%")
-        else:
-            print(f"{name}: {value:{format_spec}}")
+    print("\n| Metric Type   | Average | Median | 90th Percentile |")
+    print("|--------------|---------|---------|----------------|")
+    
+    # Winners Hold Time
+    print(f"| Winners Hold | {results.get('win_hold_time', 0.0):7.1f} | {results.get('win_hold_time_median', 0.0):7.1f} | {results.get('win_hold_time_90th', 0.0):14.1f} |")
+    
+    # Losers Hold Time
+    print(f"| Losers Hold  | {results.get('loss_hold_time', 0.0):7.1f} | {results.get('loss_hold_time_median', 0.0):7.1f} | {results.get('loss_hold_time_90th', 0.0):14.1f} |")
+    
+    # Winners Pips
+    print(f"| Winners Pips | {results.get('avg_win_pips', 0.0):7.1f} | {results.get('median_win_pips', 0.0):7.1f} | {results.get('win_pips_90th', 0.0):14.1f} |")
+    
+    # Losers Pips
+    print(f"| Losers Pips  | {results.get('avg_loss_pips', 0.0):7.1f} | {results.get('median_loss_pips', 0.0):7.1f} | {results.get('loss_pips_90th', 0.0):14.1f} |")
+    
     print("")
 
     # Consecutive Trade Analysis
