@@ -14,18 +14,20 @@ from trading.actions import Action
 class TradeModel:
     """Class for loading and making predictions with a trained PPO-LSTM model."""
     
-    def __init__(self, model_path: str, balance_per_lot: float = 1000.0):
+    def __init__(self, model_path: str, balance_per_lot: float = 1000.0, initial_balance: float = 10000.0):
         """
         Initialize the trade model.
         
         Args:
             model_path: Path to the saved model file
             balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
+            initial_balance: Starting account balance (default: 10000.0)
         """
         self.logger = logging.getLogger(__name__)
         self.model_path = Path(model_path)
         self.model = None
         self.balance_per_lot = balance_per_lot
+        self.initial_balance = initial_balance
         self.required_columns = [
             'open',   # Required for price action features
             'close',  # Price data
@@ -117,6 +119,7 @@ class TradeModel:
         # Create environment with position state
         env = TradingEnv(
             data=data,
+            initial_balance=self.initial_balance,  # Use actual account balance
             random_start=False,
             balance_per_lot=self.balance_per_lot  # Use configured parameter
         )
@@ -177,6 +180,7 @@ class TradeModel:
         # Create environment for preloading
         env = TradingEnv(
             data=data,
+            initial_balance=self.initial_balance,  # Use actual balance
             random_start=False,
             balance_per_lot=self.balance_per_lot  # Use configured parameter
         )

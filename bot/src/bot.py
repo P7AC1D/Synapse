@@ -124,9 +124,14 @@ class TradingBot:
             self.data_fetcher = DataFetcher(
                 self.mt5, MT5_SYMBOL, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH + 1
             )
-            # Initialize trading model
+            # Initialize trading model with actual balance
             self.logger.info(f"Loading trading model from: {MODEL_PATH}")
-            self.model = TradeModel(MODEL_PATH)
+            account_balance = self.mt5.get_account_balance()
+            self.model = TradeModel(
+                MODEL_PATH,
+                balance_per_lot=BALANCE_PER_LOT,
+                initial_balance=account_balance
+            )
             if not self.model.model:  # Check if model loaded successfully
                 self.logger.error("Failed to load trading model")
                 return False
@@ -210,6 +215,10 @@ class TradingBot:
                 # Update entry step relative to current data window
                 self.current_position["entry_step"] = len(data) - 1
 
+            # Update model's balance before prediction
+            current_balance = self.mt5.get_account_balance()
+            self.model.initial_balance = current_balance
+            
             # Make prediction with position context
             prediction = self.model.predict_single(
                 data,
