@@ -85,16 +85,7 @@ def main():
     print(f"Training Window: {train_size} bars (~{train_size/bars_per_day:.1f} days)")
     print(f"Validation Window: {val_size} bars (~{val_size/bars_per_day:.1f} days)")
     print(f"Training/Validation Split: {(1-args.validation_size):.0%}/{args.validation_size:.0%}\n")
-    
-    if args.resume:
-        state_path = f"../results/{args.seed}/training_state.json"
-        if os.path.exists(state_path):
-            print("\nResuming walk-forward optimization...")
-        else:
-            print("\nNo previous state found. Starting new training...")
-    else:
-        print("\nStarting new walk-forward optimization...")
-    
+        
     try:
         model = train_walk_forward(data, initial_window, step_size, args)
     except KeyboardInterrupt:
