@@ -360,12 +360,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                         verbose=1,
                         iteration=iteration,
                         training_timesteps=args.total_timesteps
-                    ),
-                    # Regular checkpoints
-                    CheckpointCallback(
-                        save_freq=args.eval_freq,
-                        save_path=f"../results/{args.seed}/checkpoints/{args.model_name}",
-                        name_prefix=f"ppo_lstm_initial"
                     )
                 ]
                 
@@ -420,12 +414,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                         verbose=0,
                         iteration=iteration,
                         training_timesteps=period_timesteps
-                    ),
-                    # Regular checkpoints
-                    CheckpointCallback(
-                        save_freq=args.eval_freq,
-                        save_path=f"../results/{args.seed}/checkpoints/{args.model_name}",
-                        name_prefix=f"ppo_lstm_{iteration}"
                     )
                 ]
                 
@@ -443,7 +431,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
 
             # Get paths for model files
-            best_model_path = f"../results/{args.seed}/No best model found and no previous model exists.zip"
+            best_model_path = f"../results/{args.seed}/best_model.zip"
             prev_model_name = f"model_period_{max(0, training_start-step_size)}_{max(0, train_start)}.zip"
             prev_period_model = os.path.join(f"../results/{args.seed}", prev_model_name)
             
