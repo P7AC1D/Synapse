@@ -14,8 +14,6 @@ from utils.training_utils import save_training_state, load_training_state, train
 
 def main():
     parser = argparse.ArgumentParser(description='Train a PPO-LSTM model for trading')    
-    parser.add_argument('--model_name', type=str, required=True,
-                      help='Name for saving the trained model')
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the input dataset CSV file')
     
