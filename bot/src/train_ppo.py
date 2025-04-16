@@ -13,10 +13,7 @@ from datetime import datetime
 from utils.training_utils import save_training_state, load_training_state, train_walk_forward
 
 def main():
-    parser = argparse.ArgumentParser(description='Train a PPO-LSTM model for trading')
-    parser.add_argument('--resume', action='store_true',
-                      help='Resume training from last saved state')
-    
+    parser = argparse.ArgumentParser(description='Train a PPO-LSTM model for trading')    
     parser.add_argument('--model_name', type=str, required=True,
                       help='Name for saving the trained model')
     parser.add_argument('--data_path', type=str, required=True,
