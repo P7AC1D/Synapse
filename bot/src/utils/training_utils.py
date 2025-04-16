@@ -283,6 +283,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     total_periods = len(data)
     base_timesteps = args.total_timesteps
     
+    # Calculate total number of iterations
+    total_iterations = (total_periods - initial_window) // step_size + 1
+    
     state_path = f"../results/{args.seed}/training_state.json"
     training_start, model_path = load_training_state(state_path)
     
@@ -325,7 +328,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         
         print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
         print(f"=== Validation Period: {val_data.index[0]} to {val_data.index[-1]} ===")
-        print(f"=== Walk-forward Iteration: {iteration} ===")
+        print(f"=== Walk-forward Iteration: {iteration}/{total_iterations} ===")
         
         env_params = {
             'initial_balance': args.initial_balance,
@@ -427,8 +430,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 print("\nNo best model found for this iteration and no previous model exists")
         
         try:
-            training_progress = (training_start + train_size) / total_periods * 100
-            print(f"\n=== Total Progress: {training_progress:.2f}% ===")
             training_start += step_size
         except KeyboardInterrupt:
             print("\nTraining interrupted. Progress saved - use same command to resume.")
