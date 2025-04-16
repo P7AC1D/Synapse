@@ -10,7 +10,7 @@ from sb3_contrib.ppo_recurrent import RecurrentPPO
 import torch as th
 from datetime import datetime
 
-from utils.training_utils import train_model, save_training_state, load_training_state, train_walk_forward
+from utils.training_utils import save_training_state, load_training_state, train_walk_forward
 
 def main():
     parser = argparse.ArgumentParser(description='Train a PPO-LSTM model for trading')
@@ -27,7 +27,7 @@ def main():
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
     
-    parser.add_argument('--initial_balance', type=float, default=1000.0,
+    parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
     parser.add_argument('--initial_window', type=int, default=2500,
                       help='Initial training window size in bars')
