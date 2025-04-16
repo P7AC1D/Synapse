@@ -324,8 +324,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         val_data.index = data.index[train_end:val_end]
         
         print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
-        training_progress = (training_start + train_size) / total_periods * 100
-        print(f"=== Total Progress: {training_progress:.2f}% ===")
         print(f"=== Validation Period: {val_data.index[0]} to {val_data.index[-1]} ===")
         print(f"=== Walk-forward Iteration: {iteration} ===")
         
@@ -399,31 +397,38 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         prev_model_name = f"model_period_{max(0, training_start-step_size)}_{max(0, train_start)}.zip"
         prev_period_model = os.path.join(f"../results/{args.seed}", prev_model_name)
         
-        # Compare best model from this iteration against previous period model on full dataset
+        # Handle model saving/comparison at end of iteration
         best_model_path = f"../results/{args.seed}/best_balance_model.zip"
         if os.path.exists(best_model_path):
-            print("\nComparing best model from this iteration against previous period model...")
-            if compare_models_on_full_dataset(best_model_path, prev_period_model, data, args):
-                # Save as new period model if better
-                period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
-                model.save(period_model_path)
-                save_training_state(state_path, training_start + step_size, period_model_path)
-                print(f"Best model outperformed previous - saved as period model: {training_start} to {train_end}")
-            else:
-                # Keep previous period model if current one isn't better
-                if os.path.exists(prev_period_model):
-                    save_training_state(state_path, training_start + step_size, prev_period_model)
-                    print(f"Previous model performed better - keeping {prev_model_name}")
-                else:
-                    # If no previous model exists, use current one
+            if os.path.exists(prev_period_model):
+                print("\nComparing best model from this iteration against previous period model...")
+                if compare_models_on_full_dataset(best_model_path, prev_period_model, data, args):
+                    # Save as new period model if better
                     period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
                     model.save(period_model_path)
                     save_training_state(state_path, training_start + step_size, period_model_path)
-                    print(f"No previous model found - saved current as period model: {training_start} to {train_end}")
+                    print(f"Best model outperformed previous - saved as period model: {training_start} to {train_end}")
+                else:
+                    # Keep previous period model if current one isn't better
+                    save_training_state(state_path, training_start + step_size, prev_period_model)
+                    print(f"Previous model performed better - keeping {prev_model_name}")
+            else:
+                # No previous model exists but we have a best model - use it
+                period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
+                model.save(period_model_path)
+                save_training_state(state_path, training_start + step_size, period_model_path)
+                print(f"Using best model as period model (no previous model to compare against)")
         else:
-            print("\nNo best model found for this iteration - skipping period model update")
+            if os.path.exists(prev_period_model):
+                # No best model found but we have a previous model - keep using it
+                save_training_state(state_path, training_start + step_size, prev_period_model)
+                print(f"\nNo best model found for this iteration - keeping previous model {prev_model_name}")
+            else:
+                print("\nNo best model found for this iteration and no previous model exists")
         
         try:
+            training_progress = (training_start + train_size) / total_periods * 100
+            print(f"\n=== Total Progress: {training_progress:.2f}% ===")
             training_start += step_size
         except KeyboardInterrupt:
             print("\nTraining interrupted. Progress saved - use same command to resume.")
