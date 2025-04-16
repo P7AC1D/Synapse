@@ -378,7 +378,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 )
                 
                 # Check if we found a best model during training
-                best_model_path = f"../results/{args.seed}/best_balance_model.zip"
+                best_model_path = f"../results/{args.seed}/best_model.zip"
                 if os.path.exists(best_model_path):
                     print("\nFound best model from initial training - using it as first period model")
                     model = RecurrentPPO.load(best_model_path)
@@ -443,7 +443,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
 
             # Get paths for model files
-            best_model_path = f"../results/{args.seed}/best_balance_model.zip"
+            best_model_path = f"../results/{args.seed}/No best model found and no previous model exists.zip"
             prev_model_name = f"model_period_{max(0, training_start-step_size)}_{max(0, train_start)}.zip"
             prev_period_model = os.path.join(f"../results/{args.seed}", prev_model_name)
             
