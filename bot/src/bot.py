@@ -61,6 +61,54 @@ class TradingBot:
         )
         self.logger = logging.getLogger(__name__)
         
+    def verify_positions(self) -> None:
+        """Verify and synchronize internal position tracking with MT5 positions."""
+        try:
+            positions = self.mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
+            
+            # Case 1: We think we have a position but MT5 doesn't
+            if self.current_position and not positions:
+                self.logger.warning(
+                    f"Position tracking mismatch: Internal position exists but no MT5 position found. "
+                    f"Clearing internal position tracking."
+                )
+                self.current_position = None
+                
+            # Case 2: MT5 has a position but we don't think we do
+            elif not self.current_position and positions:
+                position = positions[0]  # Get first position if multiple exist
+                self.logger.warning(
+                    f"Position tracking mismatch: MT5 position found but no internal tracking. "
+                    f"Updating internal tracking."
+                )
+                self.current_position = {
+                    "direction": 1 if position.type == 0 else -1,  # 0=buy, 1=sell in MT5
+                    "entry_price": position.price_open,
+                    "lot_size": position.volume,
+                    "entry_step": 0,  # Will be updated in trading cycle
+                    "entry_time": str(position.time)
+                }
+                
+            # Case 3: Both have positions - verify details match
+            elif self.current_position and positions:
+                position = positions[0]
+                mt5_direction = 1 if position.type == 0 else -1
+                
+                if (mt5_direction != self.current_position['direction'] or
+                    abs(position.volume - self.current_position['lot_size']) > 1e-8):
+                    self.logger.warning(
+                        f"Position details mismatch - MT5: {position.type} {position.volume:.2f} lots, "
+                        f"Internal: {self.current_position['direction']} {self.current_position['lot_size']:.2f} lots. "
+                        f"Updating internal tracking."
+                    )
+                    self.current_position.update({
+                        "direction": mt5_direction,
+                        "lot_size": position.volume
+                    })
+            
+        except Exception as e:
+            self.logger.error(f"Error verifying positions: {e}")
+
     def initialize(self) -> bool:
         """Initialize connections and components."""
         try:
@@ -138,6 +186,9 @@ class TradingBot:
                 
             self.logger.info(f"New bar detected at {current_time}")
             self.last_bar_index = current_time
+            
+            # Verify position tracking is synchronized with MT5
+            self.verify_positions()
             
             # Get and preprocess the data for prediction
             data = self.data_fetcher.fetch_data()
