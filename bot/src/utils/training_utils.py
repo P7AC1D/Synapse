@@ -3,7 +3,9 @@ import os
 import json
 import pandas as pd
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, Dict, Any
+import threading
+from utils.progress import show_progress_continuous, stop_progress_indicator
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.utils import get_linear_fn
@@ -130,6 +132,144 @@ def save_training_state(path: str, training_start: int, model_path: str) -> None
     with open(path, 'w') as f:
         json.dump(state, f)
 
+def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict[str, Any]:
+    """
+    Evaluate a model on a given dataset.
+    
+    Args:
+        model_path: Path to the model file
+        data: Full dataset for evaluation
+        args: Training arguments
+        
+    Returns:
+        Dictionary with evaluation metrics
+    """
+    if not os.path.exists(model_path):
+        return None
+        
+    try:
+        from sb3_contrib.ppo_recurrent import RecurrentPPO
+        model = RecurrentPPO.load(model_path)
+        
+        # Create evaluation environment
+        env = TradingEnv(
+            data=data,
+            initial_balance=args.initial_balance,
+            balance_per_lot=args.balance_per_lot,
+            random_start=False
+        )
+
+        # Start progress indicator
+        progress_thread = threading.Thread(
+            target=show_progress_continuous,
+            args=("Evaluating model",)
+        )
+        progress_thread.daemon = True
+        progress_thread.start()
+        
+        try:
+            # Run evaluation
+            obs, _ = env.reset()
+            done = False
+            lstm_states = None
+            
+            while not done:
+                action, lstm_states = model.predict(
+                    obs,
+                    state=lstm_states,
+                    deterministic=True
+                )
+                obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                
+            # Get performance metrics
+            performance = env.metrics.get_performance_summary()
+        finally:
+            # Always stop the progress indicator
+            stop_progress_indicator()
+        
+        # Calculate score using same weights as evaluation callback
+        score = 0.0
+        
+        # Return component (60% weight)
+        returns = performance['return_pct'] / 100
+        score += returns * 0.6
+        
+        # Drawdown penalty (30% weight)
+        max_dd = max(performance['max_drawdown_pct'], performance['max_equity_drawdown_pct']) / 100
+        drawdown_penalty = max(0, 1 - max_dd * 2)
+        score += drawdown_penalty * 0.3
+        
+        # Profit factor bonus (up to 10% extra)
+        pf_bonus = 0.0
+        if performance['profit_factor'] > 1.0:
+            pf_bonus = min(performance['profit_factor'] - 1.0, 2.0) * 0.05
+        score += pf_bonus
+        
+        return {
+            'score': score,
+            'returns': returns,
+            'drawdown': max_dd,
+            'profit_factor': performance['profit_factor'],
+            'win_rate': performance['win_rate'],
+            'total_trades': performance['total_trades'],
+            'metrics': performance
+        }
+        
+    except Exception as e:
+        print(f"Error evaluating model {model_path}: {e}")
+        return None
+
+def compare_models_on_full_dataset(current_model_path: str, previous_model_path: str, 
+                                 full_data: pd.DataFrame, args) -> bool:
+    """
+    Compare current best model against previous period model on full dataset.
+    
+    Args:
+        current_model_path: Path to current best model
+        previous_model_path: Path to previous period model
+        full_data: Complete dataset for evaluation
+        args: Training arguments
+        
+    Returns:
+        True if current model performs better, False otherwise
+    """
+    # Evaluate current model
+    current_metrics = evaluate_model_on_dataset(current_model_path, full_data, args)
+    if not current_metrics:
+        print("Could not evaluate current model")
+        return False
+        
+    # Skip comparison if no previous model exists
+    if not os.path.exists(previous_model_path):
+        print("No previous model to compare against")
+        return True
+        
+    # Evaluate previous model
+    previous_metrics = evaluate_model_on_dataset(previous_model_path, full_data, args)
+    if not previous_metrics:
+        print("Could not evaluate previous model")
+        return True
+        
+    # Print comparison
+    print("\n=== Full Dataset Model Comparison ===")
+    print(f"Current Model:")
+    print(f"  Score: {current_metrics['score']:.4f}")
+    print(f"  Return: {current_metrics['returns']*100:.2f}%")
+    print(f"  Max DD: {current_metrics['drawdown']*100:.2f}%")
+    print(f"  PF: {current_metrics['profit_factor']:.2f}")
+    print(f"  Win Rate: {current_metrics['win_rate']:.2f}%")
+    
+    print(f"\nPrevious Model:")
+    print(f"  Score: {previous_metrics['score']:.4f}")
+    print(f"  Return: {previous_metrics['returns']*100:.2f}%")
+    print(f"  Max DD: {previous_metrics['drawdown']*100:.2f}%")
+    print(f"  PF: {previous_metrics['profit_factor']:.2f}")
+    print(f"  Win Rate: {previous_metrics['win_rate']:.2f}%")
+    
+    # Compare scores
+    return current_metrics['score'] > previous_metrics['score']
+
 def load_training_state(path: str) -> Tuple[int, str]:
     """Load training state from file."""
     if not os.path.exists(path):
@@ -253,11 +393,33 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             print(f"Loading best model from this iteration for next training step")
             model = RecurrentPPO.load(best_model_path)
             
-        # Save the best model as the period model and update training state
-        period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
-        model.save(period_model_path)
-        save_training_state(state_path, training_start + step_size, period_model_path)
-        print(f"Saved best model as period model: {training_start} to {train_end}")
+        # First, get the previous period model path if it exists
+        prev_model_name = f"model_period_{max(0, training_start-step_size)}_{max(0, train_start)}.zip"
+        prev_period_model = os.path.join(f"../results/{args.seed}", prev_model_name)
+        
+        # Compare best model from this iteration against previous period model on full dataset
+        best_model_path = f"../results/{args.seed}/best_balance_model.zip"
+        if os.path.exists(best_model_path):
+            print("\nComparing best model from this iteration against previous period model...")
+            if compare_models_on_full_dataset(best_model_path, prev_period_model, data, args):
+                # Save as new period model if better
+                period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
+                model.save(period_model_path)
+                save_training_state(state_path, training_start + step_size, period_model_path)
+                print(f"Best model outperformed previous - saved as period model: {training_start} to {train_end}")
+            else:
+                # Keep previous period model if current one isn't better
+                if os.path.exists(prev_period_model):
+                    save_training_state(state_path, training_start + step_size, prev_period_model)
+                    print(f"Previous model performed better - keeping {prev_model_name}")
+                else:
+                    # If no previous model exists, use current one
+                    period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
+                    model.save(period_model_path)
+                    save_training_state(state_path, training_start + step_size, period_model_path)
+                    print(f"No previous model found - saved current as period model: {training_start} to {train_end}")
+        else:
+            print("\nNo best model found for this iteration - skipping period model update")
         
         try:
             training_start += step_size
