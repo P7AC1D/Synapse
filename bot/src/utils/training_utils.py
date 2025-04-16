@@ -324,8 +324,10 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         val_data.index = data.index[train_end:val_end]
         
         print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
-        print(f"Validation Period: {val_data.index[0]} to {val_data.index[-1]} ===")
-        print(f"Walk-forward Iteration: {iteration}")
+        training_progress = (training_start + train_size) / total_periods * 100
+        print(f"=== Total Progress: {training_progress:.2f}% ===")
+        print(f"=== Validation Period: {val_data.index[0]} to {val_data.index[-1]} ===")
+        print(f"=== Walk-forward Iteration: {iteration} ===")
         
         env_params = {
             'initial_balance': args.initial_balance,
