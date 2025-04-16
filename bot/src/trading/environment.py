@@ -240,7 +240,7 @@ class TradingEnv(gym.Env, EzPickle):
         
         if self.current_position:
             unrealized_pnl, _ = self.action_handler.manage_position()
-            normalized_pnl = np.clip(unrealized_pnl / self.initial_balance, -1, 1)
+            normalized_pnl = np.clip(unrealized_pnl / self.metrics.balance, -1, 1)
         else:
             normalized_pnl = 0.0
             
