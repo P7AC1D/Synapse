@@ -693,12 +693,27 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     // Calculate final output with temporary weights array
     Print("DEBUG_LSTM: Starting final output calculation");
     Print("DEBUG_LSTM: actor_output_weight dimensions: ", ArrayRange(actor_output_weight, 0), "x", ArrayRange(actor_output_weight, 1));
+    Print("DEBUG_LSTM: Hidden state first 5 values: ", 
+          hidden_state[0], ", ", hidden_state[1], ", ", 
+          hidden_state[2], ", ", hidden_state[3], ", ", hidden_state[4]);
           
-    // Use the correct dimensions for the output matrix multiplication
-    MatrixMultiply(hidden_state, temp_output_weights, output,
-                   1, LSTM_UNITS, 64, ACTION_COUNT);  // Fixed: changed from LSTM_UNITS to 64
+    // The issue is likely that we're not properly connecting the LSTM outputs with the output layer
+    // We need to use only the relevant parts of the hidden state since actor_output_weight is 64x4, not 256x4
+    double reduced_hidden_state[64];
+    for (int i = 0; i < 64; i++) {
+        if (i < LSTM_UNITS) {
+            reduced_hidden_state[i] = hidden_state[i];
+        } else {
+            reduced_hidden_state[i] = 0;
+        }
+    }
+    
+    // Use the correct dimensions and reduced hidden state for the output matrix multiplication
+    MatrixMultiply(reduced_hidden_state, temp_output_weights, output,
+                   1, 64, 64, ACTION_COUNT);  // Fixed: using proper dimensions
                    
-    Print("DEBUG_LSTM: Output size after matrix multiply: ", ArraySize(output));
+    Print("DEBUG_LSTM: Output size after multiply: ", ArraySize(output));
+    Print("DEBUG_LSTM: Raw output values: ", output[0], ", ", output[1], ", ", output[2], ", ", output[3]);
 
     // Add bias and apply softmax
     Print("DEBUG_LSTM: Applying softmax with bias");
