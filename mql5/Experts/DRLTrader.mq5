@@ -83,8 +83,9 @@ int OnInit()
 
     // Initialize feature processor
     FeatureProcessor = new CFeatureProcessor();
-    bool featureInitResult = FeatureProcessor.Init(_Symbol, _Period);
-    if(!featureInitResult)
+    FeatureProcessor.Init(_Symbol, _Period);
+    // Since Init() doesn't return a value, we'll check if feature initialization was successful differently
+    if(FeatureProcessor.IsInitialized() == false)
     {
         Print("DEBUG: Feature processor initialization FAILED");
         return INIT_FAILED;
