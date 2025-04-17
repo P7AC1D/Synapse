@@ -35,6 +35,12 @@ input string ModelGroup = ">>> Model Settings <<<"; // Model Settings
 input bool ResetStatesOnGap = true;                 // Reset LSTM states on timeframe gap
 input int TimeframeMinutes = 15;                    // Trading timeframe in minutes
 
+// Exploration settings
+input string ExplorationGroup = ">>> Exploration Settings <<<"; // Exploration Settings
+input double ExploreRate = 0.10;                              // Exploration rate (0.0-1.0)
+input double BuyBias = 0.05;                                  // Additional probability for BUY actions
+input double SellBias = 0.05;                                 // Additional probability for SELL actions
+
 // Global variables
 CTrade Trade;                        // Trading object
 CFeatureProcessor *FeatureProcessor; // Feature calculation class
@@ -451,6 +457,39 @@ void OnTick()
     // Run LSTM inference
     double lstm_output[];
     RunLSTMInference(features, LSTMState, lstm_output);
+
+    // Apply biases and exploration
+    Print("DEBUG: Original model output - Hold: ", DoubleToString(lstm_output[0], 4),
+          ", Buy: ", DoubleToString(lstm_output[1], 4),
+          ", Sell: ", DoubleToString(lstm_output[2], 4),
+          ", Close: ", DoubleToString(lstm_output[3], 4));
+
+    // Apply action biases to encourage trading
+    lstm_output[1] += BuyBias;  // Add bias to BUY
+    lstm_output[2] += SellBias; // Add bias to SELL
+    
+    // Add exploration via randomness
+    if(MathRand() < MathRand() * ExploreRate * 32768) {
+        // Choose a random action with exploration probability
+        int randomAction = MathRand() % ACTION_COUNT;
+        Print("DEBUG: Exploration triggered - choosing random action: ", randomAction);
+        
+        // Temporarily boost the probability of the random action
+        double boost = 0.3; // Significant boost to ensure selection
+        for(int i = 0; i < ACTION_COUNT; i++) {
+            if(i == randomAction)
+                lstm_output[i] += boost;
+        }
+    }
+    
+    // Re-normalize if needed
+    double sum = 0;
+    for(int i = 0; i < ACTION_COUNT; i++) {
+        sum += lstm_output[i];
+    }
+    for(int i = 0; i < ACTION_COUNT; i++) {
+        lstm_output[i] /= sum;
+    }
 
     // Get action with highest probability
     int action = 0;
