@@ -11,7 +11,7 @@
 // Include required files
 #include <Trade/Trade.mqh>
 #include <Arrays/ArrayDouble.mqh>
-#include <Math/Math.mqh>
+#include <Math/Stat/Math.mqh>
 #include <Trade/SymbolInfo.mqh>
 #include <DRL/features.mqh>
 #include <DRL/model.mqh>
