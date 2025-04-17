@@ -462,7 +462,12 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 if os.path.exists(metrics_path):
                     os.remove(metrics_path)
             else:
-                print("\nNo curr_best model found - continuing with current model")
+                print("\nNo curr_best model found - reloading best model for next iteration")
+                if os.path.exists(best_model_path):
+                    model = RecurrentPPO.load(best_model_path)
+                    print("Loaded best model from previous iterations")
+                else:
+                    print("No best model found - continuing with current model")
                 
             save_training_state(state_path, training_start + step_size, best_model_path)
             
