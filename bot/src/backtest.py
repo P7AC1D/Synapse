@@ -101,20 +101,20 @@ def print_metrics(results: dict):
 
     # Hold Time and Pips Analysis as Table
     print("=== Hold Time and Pips Analysis ===")
-    print("\n| Metric Type   | Average | Median | 90th Percentile |")
-    print("|--------------|---------|---------|----------------|")
+    print("\n| Metric Type   | 1st Pct | 10th Pct | Median | 90th Pct | 99th Pct |")
+    print("|--------------|----------|-----------|---------|-----------|-----------|")
     
     # Winners Hold Time
-    print(f"| Winners Hold | {results.get('win_hold_time', 0.0):7.1f} | {results.get('win_hold_time_median', 0.0):7.1f} | {results.get('win_hold_time_90th', 0.0):14.1f} |")
+    print(f"| Winners Hold | {results.get('win_hold_time_1st', 0.0):8.1f} | {results.get('win_hold_time_10th', 0.0):9.1f} | {results.get('win_hold_time_median', 0.0):7.1f} | {results.get('win_hold_time_90th', 0.0):9.1f} | {results.get('win_hold_time_99th', 0.0):9.1f} |")
     
     # Losers Hold Time
-    print(f"| Losers Hold  | {results.get('loss_hold_time', 0.0):7.1f} | {results.get('loss_hold_time_median', 0.0):7.1f} | {results.get('loss_hold_time_90th', 0.0):14.1f} |")
+    print(f"| Losers Hold  | {results.get('loss_hold_time_1st', 0.0):8.1f} | {results.get('loss_hold_time_10th', 0.0):9.1f} | {results.get('loss_hold_time_median', 0.0):7.1f} | {results.get('loss_hold_time_90th', 0.0):9.1f} | {results.get('loss_hold_time_99th', 0.0):9.1f} |")
     
     # Winners Pips
-    print(f"| Winners Pips | {results.get('avg_win_pips', 0.0):7.1f} | {results.get('median_win_pips', 0.0):7.1f} | {results.get('win_pips_90th', 0.0):14.1f} |")
+    print(f"| Winners Pips | {results.get('win_pips_1st', 0.0):8.1f} | {results.get('win_pips_10th', 0.0):9.1f} | {results.get('median_win_pips', 0.0):7.1f} | {results.get('win_pips_90th', 0.0):9.1f} | {results.get('win_pips_99th', 0.0):9.1f} |")
     
     # Losers Pips
-    print(f"| Losers Pips  | {results.get('avg_loss_pips', 0.0):7.1f} | {results.get('median_loss_pips', 0.0):7.1f} | {results.get('loss_pips_90th', 0.0):14.1f} |")
+    print(f"| Losers Pips  | {results.get('loss_pips_1st', 0.0):8.1f} | {results.get('loss_pips_10th', 0.0):9.1f} | {results.get('median_loss_pips', 0.0):7.1f} | {results.get('loss_pips_90th', 0.0):9.1f} | {results.get('loss_pips_99th', 0.0):9.1f} |")
     
     print("")
 
