@@ -28,7 +28,6 @@ def parse_args():
                        help="Path to the model file (default: ../model/XAUUSDm.zip)")
     return parser.parse_args()
 
-
 def create_export_dirs() -> Tuple[Path, Path]:
     """Create directories for MQL5 export files."""
     # Create mql5 directory structure
@@ -73,7 +72,9 @@ def extract_lstm_params(model: RecurrentPPO) -> Dict[str, np.ndarray]:
             'critic_input_bias': lstm_critic.bias_ih_l0.detach().numpy(),
             'critic_hidden_bias': lstm_critic.bias_hh_l0.detach().numpy(),
             
-            # Output layer parameters
+            # FC and Output layer parameters
+            'actor_fc_weight': lstm_actor.fc1.weight.detach().numpy(),
+            'actor_fc_bias': lstm_actor.fc1.bias.detach().numpy(),
             'actor_output_weight': actor_output_w,
             'actor_output_bias': model.policy.action_net.bias.detach().numpy(),
             'critic_output_weight': model.policy.value_net.weight.detach().numpy(),
@@ -90,7 +91,7 @@ def generate_mql5_array(arr: np.ndarray, name: str, const: bool = True) -> str:
     shape = arr.shape
     
     # Special handling for actor/critic weight matrices
-    is_weight_matrix = any(x in name for x in ["input_weight", "hidden_weight", "output_weight"])
+    is_weight_matrix = any(x in name for x in ["input_weight", "hidden_weight", "output_weight", "fc_weight"])
     
     if len(shape) > 1 and is_weight_matrix:
         # Transpose the weight matrices to match required dimensions
@@ -100,9 +101,12 @@ def generate_mql5_array(arr: np.ndarray, name: str, const: bool = True) -> str:
         elif "hidden_weight" in name:
             # PyTorch: [1024][256] -> MQL5: [256][1024]
             arr = arr.T
+        elif "fc_weight" in name:
+            # PyTorch: [64][256] -> MQL5: [256][64]
+            arr = arr.T
         elif "output_weight" in name:
-            # PyTorch: [4][256] -> MQL5: [256][4]
-            arr = arr.T  # Transpose to match MQL5 matrix layout
+            # PyTorch: [4][64] -> MQL5: [64][4]
+            arr = arr.T
             
         shape = arr.shape  # Get new shape after transpose
         lines = [f"{'const ' if const else ''}double {name}[{shape[0]}][{shape[1]}] = {{"]
@@ -127,122 +131,6 @@ def generate_mql5_array(arr: np.ndarray, name: str, const: bool = True) -> str:
     lines.append("")  # Empty line for readability
     
     return "\n".join(lines)
-
-def generate_dummy_data() -> pd.DataFrame:
-    """Generate dummy data for test cases."""
-    np.random.seed(42)
-    n_samples = 1000  # Much larger sample size for sufficient history
-    
-    # Generate base prices
-    close = np.random.normal(1000, 10, n_samples)
-    
-    # Generate consistent OHLCV data
-    data = pd.DataFrame({
-        'close': close,
-        'open': close + np.random.normal(0, 5, n_samples),
-        'high': close + abs(np.random.normal(0, 10, n_samples)),
-        'low': close - abs(np.random.normal(0, 10, n_samples)),
-        'volume': abs(np.random.normal(1000, 100, n_samples)),
-        'spread': abs(np.random.normal(2, 0.1, n_samples))
-    })
-    
-    # Ensure OHLC relationship is valid
-    data['high'] = np.maximum.reduce([data['high'], data['open'], data['close']])
-    data['low'] = np.minimum.reduce([data['low'], data['open'], data['close']])
-    
-    # Set index as datetime
-    data.index = pd.date_range(start='2025-01-01', periods=n_samples, freq='15min')
-    
-    return data
-
-def generate_test_cases(model: TradeModel, feature_processor: DummyFeatureProcessor,
-                       n_cases: int = 5) -> List[Dict[str, Any]]:
-    """Generate test cases for verification using dummy data."""
-    test_cases = []
-    
-    # Generate dummy data with market format
-    data = generate_dummy_data()
-    
-    # Process features with verbose output
-    print("Processing features...")
-    print("Raw data columns:", list(data.columns))
-    print("Data shape:", data.shape)
-    
-    # Preprocess data and extract features DataFrame
-    features_df, _ = feature_processor.preprocess_data(data)
-    print("Feature processor output shape:", features_df.shape)
-    print("Feature processor columns:", list(features_df.columns))
-    
-    # Add position state columns
-    features_df['position_type'] = 0  # No position
-    features_df['unrealized_pnl'] = 0  # No unrealized P&L
-    
-    # Print final column names for debugging
-    print("Final columns:", list(features_df.columns))
-    
-    # Generate test cases at different points, ensuring enough lookback data
-    min_history = 200  # Use larger history window to ensure enough data after preprocessing
-    
-    # Ensure we have enough data points
-    if len(data) < min_history:
-        raise ValueError(f"Not enough data points. Need at least {min_history}, got {len(data)}")
-    
-    # Calculate valid range for indices, accounting for feature processor's data reduction
-    valid_start = min_history
-    valid_end = len(features_df) - 1  # Use features_df length instead of raw data length
-    
-    if valid_end - valid_start < n_cases:
-        raise ValueError(f"Not enough valid data points after min_history. Need at least {n_cases}, got {valid_end - valid_start}")
-    
-    # Select evenly spaced indices for test cases
-    step = (valid_end - valid_start) // (n_cases - 1)  # Ensure even spacing
-    indices = np.arange(valid_start, valid_end, step)[:n_cases]
-    
-    for idx in indices:
-        try:
-            # Get a window of data
-            # Reset model for this test case
-            model.reset_states()
-            
-            # Get data using full window
-            current_data = data.iloc[idx-min_history:idx+1].copy()
-            
-            # Verify we have enough data
-            if len(current_data) < min_history:
-                raise ValueError(f"Insufficient data window: {len(current_data)} < {min_history}")
-            
-            # Preload states with historical data
-            model.preload_states(current_data.iloc[:-1])  # Use all but last point
-                
-            # Make prediction for current point
-            prediction = model.predict_single(current_data)
-            
-            # Store test case with LSTM state
-            # Get all features and verify correct shape
-            features = features_df.iloc[idx].values
-            if len(features) != 11:
-                raise ValueError(f"Expected 11 features but got {len(features)}")
-            
-            # Set position features to 0
-            features[-2:] = 0.0  # Set position_type and unrealized_pnl to 0
-            
-            # Debug print feature information
-            print(f"Features shape: {features.shape}, size: {len(features)}")
-            
-            test_case = {
-                'features': features.tolist(),
-                'lstm_state': model.lstm_states[0].tolist() if model.lstm_states else np.zeros(256).tolist(),  # Match LSTM_UNITS size
-                'expected_action': prediction['action']
-            }
-            
-            test_cases.append(test_case)
-            
-        except Exception as e:
-            print(f"Error generating test case at index {idx}: {str(e)}")
-            continue
-        
-        
-    return test_cases
 
 def export_weights_mqh(weights: Dict[str, np.ndarray], output_dir: Path) -> None:
     """Export model weights to weights.mqh."""
@@ -292,13 +180,17 @@ def export_model_mqh(model: RecurrentPPO, output_dir: Path) -> None:
         "// Model Architecture Constants",
         f"#define FEATURE_COUNT {model.policy.observation_space.shape[0]}",
         f"#define LSTM_UNITS {model.policy.lstm_actor.hidden_size}",
+        f"#define FC_UNITS 64           // Fully connected layer size",
         f"#define ACTION_COUNT {model.policy.action_space.n}",
         "",
         "// Matrix Dimensions Constants",
         "#define INPUT_WEIGHT_COLS (LSTM_UNITS * 4)  // 1024",
         "#define HIDDEN_WEIGHT_COLS (LSTM_UNITS * 4) // 1024",
-        "#define OUTPUT_WEIGHT_COLS ACTION_COUNT      // 4",
-        "#define OUTPUT_WEIGHT_ROWS LSTM_UNITS       // 256",
+        "#define FC_WEIGHT_COLS FC_UNITS            // 64",
+        "#define FC_WEIGHT_ROWS LSTM_UNITS          // 256",
+        "#define FC_BIAS_SIZE FC_UNITS              // 64",
+        "#define OUTPUT_WEIGHT_COLS ACTION_COUNT     // 4",
+        "#define OUTPUT_WEIGHT_ROWS FC_UNITS        // 64",
         "",
         "// Activation Functions",
         "double custom_tanh(const double x) {",
@@ -309,6 +201,10 @@ def export_model_mqh(model: RecurrentPPO, output_dir: Path) -> None:
         "",
         "double sigmoid(const double x) {",
         "    return 1.0 / (1.0 + MathExp(-x));",
+        "}",
+        "",
+        "double relu(const double x) {",
+        "    return x > 0.0 ? x : 0.0;",
         "}",
         "",
         "#endif  // _DRL_MODEL_H_",
@@ -433,6 +329,8 @@ def export_matrix_mqh(output_dir: Path) -> None:
         "            output[i] = custom_tanh(in_values[i]);",
         "        else if(activation == \"sigmoid\")",
         "            output[i] = sigmoid(in_values[i]);",
+        "        else if(activation == \"relu\")",
+        "            output[i] = relu(in_values[i]);",
         "        else",
         "            output[i] = in_values[i];  // Linear activation",
         "    }",

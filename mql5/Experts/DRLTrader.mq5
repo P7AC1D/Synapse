@@ -383,12 +383,15 @@ void OnTick()
               ArrayRange(actor_input_weight, 0), "x", ArrayRange(actor_input_weight, 1));
         Print("MODEL DEBUG: actor_hidden_weight dimensions: ", 
               ArrayRange(actor_hidden_weight, 0), "x", ArrayRange(actor_hidden_weight, 1));
+        Print("MODEL DEBUG: actor_fc_weight dimensions: ", 
+              ArrayRange(actor_fc_weight, 0), "x", ArrayRange(actor_fc_weight, 1));
         Print("MODEL DEBUG: actor_output_weight dimensions: ", 
               ArrayRange(actor_output_weight, 0), "x", ArrayRange(actor_output_weight, 1));
         
         // Check bias array sizes
         Print("MODEL DEBUG: actor_input_bias size: ", ArraySize(actor_input_bias));
         Print("MODEL DEBUG: actor_hidden_bias size: ", ArraySize(actor_hidden_bias));
+        Print("MODEL DEBUG: actor_fc_bias size: ", ArraySize(actor_fc_bias));
         Print("MODEL DEBUG: actor_output_bias size: ", ArraySize(actor_output_bias));
     }
     
@@ -568,7 +571,8 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     // Create temporary arrays for matrix multiplication operations
     double temp_input_weights[];
     double temp_hidden_weights[];
-    double temp_output_weights[];
+    double temp_fc_weights[];      // FC layer weights
+    double temp_output_weights[];  // Final output weights
     
     // Copy weights to temporary arrays to avoid parameter conversion issues
     ArrayResize(temp_input_weights, ArraySize(actor_input_weight));
@@ -577,7 +581,11 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     ArrayResize(temp_hidden_weights, ArraySize(actor_hidden_weight));
     ArrayCopy(temp_hidden_weights, actor_hidden_weight);
     
-    ArrayResize(temp_output_weights, ArraySize(actor_output_weight));
+    // Split output weights into FC and output layers
+    ArrayResize(temp_fc_weights, FC_WEIGHT_ROWS * FC_WEIGHT_COLS);       // [256][64]
+    ArrayCopy(temp_fc_weights, actor_fc_weight);                        // New weight array
+    
+    ArrayResize(temp_output_weights, OUTPUT_WEIGHT_ROWS * OUTPUT_WEIGHT_COLS); // [64][4]
     ArrayCopy(temp_output_weights, actor_output_weight);
     
     // Actor LSTM - Input transformation
@@ -709,11 +717,46 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
           hidden_state[0], ", ", hidden_state[1], ", ", 
           hidden_state[2], ", ", hidden_state[3], ", ", hidden_state[4]);
           
-    // Use the full hidden state for the output layer
-    Print("DEBUG_LSTM: Using full hidden state for output layer");
-    // Multiply hidden state [1,256] by output weights [256,4]
-    MatrixMultiply(hidden_state, temp_output_weights, output,
-                   1, LSTM_UNITS, OUTPUT_WEIGHT_ROWS, OUTPUT_WEIGHT_COLS);  // Using dimension constants
+    // Two-stage output transformation
+    Print("DEBUG_LSTM: Starting two-stage output transformation");
+    
+    // Stage 1: Hidden state [1,256] -> FC layer [1,64]
+    double fc_output[];
+    Print("DEBUG_LSTM: Starting FC layer transformation");
+    double fc_intermediate[];
+    MatrixMultiply(hidden_state, temp_fc_weights, fc_intermediate,
+                  1, LSTM_UNITS, FC_WEIGHT_ROWS, FC_WEIGHT_COLS);
+    
+    // Add FC layer bias
+    ArrayResize(fc_output, FC_UNITS);
+    Print("DEBUG_LSTM: FC intermediate values (first 5): ",
+          fc_intermediate[0], ", ", fc_intermediate[1], ", ",
+          fc_intermediate[2], ", ", fc_intermediate[3], ", ",
+          fc_intermediate[4]);
+          
+    for(int i = 0; i < FC_UNITS; i++) {
+        fc_output[i] = fc_intermediate[i] + actor_fc_bias[i];
+    }
+    
+    Print("DEBUG_LSTM: FC values after bias (first 5): ",
+          fc_output[0], ", ", fc_output[1], ", ",
+          fc_output[2], ", ", fc_output[3], ", ",
+          fc_output[4]);
+    
+    // Apply ReLU to FC layer
+    ApplyActivation(fc_output, fc_output, FC_UNITS, "relu");
+    
+    Print("DEBUG_LSTM: FC values after ReLU (first 5): ",
+          fc_output[0], ", ", fc_output[1], ", ",
+          fc_output[2], ", ", fc_output[3], ", ",
+          fc_output[4]);
+    
+    Print("DEBUG_LSTM: FC layer size after transform: ", ArraySize(fc_output));
+    
+    // Stage 2: FC layer [1,64] -> Output [1,4]
+    Print("DEBUG_LSTM: Starting output layer transformation");
+    MatrixMultiply(fc_output, temp_output_weights, output,
+                  1, FC_UNITS, OUTPUT_WEIGHT_ROWS, OUTPUT_WEIGHT_COLS);
                    
     Print("DEBUG_LSTM: Output size after multiply: ", ArraySize(output));
     Print("DEBUG_LSTM: Raw output values: ", output[0], ", ", output[1], ", ", output[2], ", ", output[3]);
