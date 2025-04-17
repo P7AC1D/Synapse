@@ -65,7 +65,7 @@ int OnInit()
 
     // Check account type and broker requirements
     Print("DEBUG: Account info - Leverage: 1:", AccountInfoInteger(ACCOUNT_LEVERAGE),
-          ", Stop Out Level: ", AccountInfoInteger(ACCOUNT_MARGIN_SO_SO_LEVEL),
+          ", Stop Out Level: ", AccountInfoInteger(ACCOUNT_MARGIN_SO_MODE),
           ", Allowed Trade Mode: ", AccountInfoInteger(ACCOUNT_TRADE_MODE));
 
     // Check symbol details
@@ -83,8 +83,12 @@ int OnInit()
 
     // Initialize feature processor
     FeatureProcessor = new CFeatureProcessor();
-    bool featureInitResult = FeatureProcessor.Init(_Symbol, _Period);
-    Print("DEBUG: Feature processor initialization ", featureInitResult ? "successful" : "FAILED");
+    if(!FeatureProcessor.Init(_Symbol, _Period))
+    {
+        Print("DEBUG: Feature processor initialization FAILED");
+        return INIT_FAILED;
+    }
+    Print("DEBUG: Feature processor initialization successful");
 
     // Initialize LSTM state array
     ArrayResize(LSTMState, LSTM_UNITS);
