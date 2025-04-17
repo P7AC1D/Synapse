@@ -24,14 +24,16 @@
 #define BARS_TO_FETCH 500
 
 // Input parameters
-input int MaxSpread = 350 // Maximum allowed spread (points)
+input int MaxSpread = 350; // Maximum allowed spread (points)
 
-    sinput string PositionGroup = "Position Sizing"; // >>> Position Sizing <<<
-input double BALANCE_PER_LOT = 2500.0;               // Amount required per 0.01 lot
+// Position sizing settings
+input string PositionGroup = ">>> Position Sizing <<<"; // Position Sizing
+input double BALANCE_PER_LOT = 2500.0;                 // Amount required per 0.01 lot
 
-sinput string ModelGroup = "Model Settings"; // >>> Model Settings <<<
-input bool ResetStatesOnGap = true;          // Reset LSTM states on timeframe gap
-input int TimeframeMinutes = 15;             // Trading timeframe in minutes
+// Model settings
+input string ModelGroup = ">>> Model Settings <<<"; // Model Settings
+input bool ResetStatesOnGap = true;                 // Reset LSTM states on timeframe gap
+input int TimeframeMinutes = 15;                    // Trading timeframe in minutes
 
 // Global variables
 CTrade Trade;                        // Trading object
@@ -63,7 +65,7 @@ int OnInit()
 
     // Check account type and broker requirements
     Print("DEBUG: Account info - Leverage: 1:", AccountInfoInteger(ACCOUNT_LEVERAGE),
-          ", Stop Out Level: ", AccountInfoInteger(ACCOUNT_MARGIN_SO_SO),
+          ", Stop Out Level: ", AccountInfoInteger(ACCOUNT_MARGIN_SO_SO_LEVEL),
           ", Allowed Trade Mode: ", AccountInfoInteger(ACCOUNT_TRADE_MODE));
 
     // Check symbol details
@@ -314,45 +316,45 @@ string ErrorDescription(int errorCode)
 {
     switch (errorCode)
     {
-    case ERR_NO_ERROR:
+    case 0: // ERR_NO_ERROR
         return "No error";
-    case ERR_INVALID_FUNCTION_PARAMETER_VALUE:
+    case 4051: // ERR_INVALID_FUNCTION_PARAMETER_VALUE
         return "Invalid parameter value";
-    case ERR_INVALID_TRADE_PARAMETERS:
+    case 4052: // ERR_INVALID_TRADE_PARAMETERS
         return "Invalid trade parameters";
-    case ERR_SYSTEM_BUSY:
+    case 4022: // ERR_SYSTEM_BUSY
         return "System is busy";
-    case ERR_NO_RESULT:
+    case 4008: // ERR_NO_RESULT
         return "No result";
-    case ERR_INVALID_PRICE:
+    case 4055: // ERR_INVALID_PRICE
         return "Invalid price";
-    case ERR_INVALID_STOPS:
+    case 4056: // ERR_INVALID_STOPS
         return "Invalid stops";
-    case ERR_INVALID_VOLUME:
+    case 4061: // ERR_INVALID_VOLUME
         return "Invalid volume";
-    case ERR_TRADE_DISABLED:
+    case 4109: // ERR_TRADE_DISABLED
         return "Trade is disabled";
-    case ERR_MARKET_CLOSED:
+    case 4060: // ERR_MARKET_CLOSED
         return "Market is closed";
-    case ERR_TRADE_TOO_MANY_ORDERS:
+    case 4062: // ERR_TRADE_TOO_MANY_ORDERS
         return "Too many orders";
-    case ERR_TRADE_CONTEXT_BUSY:
+    case 4059: // ERR_TRADE_CONTEXT_BUSY
         return "Trade context is busy";
-    case ERR_TRADE_EXPERT_DISABLED_BY_SERVER:
+    case 4113: // ERR_TRADE_EXPERT_DISABLED_BY_SERVER
         return "EA trading disabled by server";
-    case ERR_TRADE_EXPIRATION_DENIED:
+    case 4057: // ERR_TRADE_EXPIRATION_DENIED
         return "Expiration is denied";
-    case ERR_TRADE_TOO_MANY_REQUESTS:
+    case 4107: // ERR_TRADE_TOO_MANY_REQUESTS
         return "Too many requests";
-    case ERR_TRADE_HEDGE_PROHIBITED:
+    case 4110: // ERR_TRADE_HEDGE_PROHIBITED
         return "Hedge is prohibited";
-    case ERR_TRADE_PROHIBITED_BY_FIFO:
+    case 4111: // ERR_TRADE_PROHIBITED_BY_FIFO
         return "Prohibited by FIFO";
-    case ERR_TRADE_POSITION_NOT_FOUND:
+    case 4108: // ERR_TRADE_POSITION_NOT_FOUND
         return "Position not found";
-    case ERR_TRADE_IMPOSSIBLE_TO_CLOSE:
+    case 4114: // ERR_TRADE_IMPOSSIBLE_TO_CLOSE
         return "Impossible to close";
-    case ERR_TRADE_NOT_ALLOWED_IN_TESTING:
+    case 4025: // ERR_TRADE_NOT_ALLOWED_IN_TESTING
         return "Not allowed in testing";
     default:
         return "Unknown error " + IntegerToString(errorCode);
