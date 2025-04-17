@@ -709,20 +709,11 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
           hidden_state[0], ", ", hidden_state[1], ", ", 
           hidden_state[2], ", ", hidden_state[3], ", ", hidden_state[4]);
           
-    // The issue is likely that we're not properly connecting the LSTM outputs with the output layer
-    // We need to use only the relevant parts of the hidden state since actor_output_weight is 64x4, not 256x4
-    double reduced_hidden_state[64];
-    for (int i = 0; i < 64; i++) {
-        if (i < LSTM_UNITS) {
-            reduced_hidden_state[i] = hidden_state[i];
-        } else {
-            reduced_hidden_state[i] = 0;
-        }
-    }
-    
-    // Use the correct dimensions and reduced hidden state for the output matrix multiplication
-    MatrixMultiply(reduced_hidden_state, temp_output_weights, output,
-                   1, 64, 64, ACTION_COUNT);  // Fixed: using proper dimensions
+    // Use the full hidden state for the output layer
+    Print("DEBUG_LSTM: Using full hidden state for output layer");
+    // Use proper matrix dimensions matching Python model
+    MatrixMultiply(hidden_state, temp_output_weights, output,
+                   1, LSTM_UNITS, LSTM_UNITS, ACTION_COUNT);  // hidden_state[1,256] x weights[256,4]
                    
     Print("DEBUG_LSTM: Output size after multiply: ", ArraySize(output));
     Print("DEBUG_LSTM: Raw output values: ", output[0], ", ", output[1], ", ", output[2], ", ", output[3]);
