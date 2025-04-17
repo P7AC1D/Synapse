@@ -17,7 +17,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from trading.environment import TradingEnv
 
 class UnifiedEvalCallback(BaseCallback):
-    """Optimized evaluation callback with comprehensive balance and equity tracking.
+    """Specialized evaluation callback for iterative model improvement.
 
     Features:
     - Tracks both balance and equity drawdowns separately
@@ -26,11 +26,12 @@ class UnifiedEvalCallback(BaseCallback):
     - Enhanced model selection based on worst-case drawdown
     - Includes combined dataset evaluation for consistency
 
-    The callback saves models based on:
-    - Validation set performance (60% weight)
-    - Maximum drawdown penalty (30% weight)
-    - Training/validation consistency (10% weight)
-    - Profit factor bonus (up to +20%)
+    Model Selection Process:
+    1. Models with positive returns on both validation and combined sets are saved
+       as curr_best_model.zip
+    2. At each iteration end, curr_best_model is compared against existing best_model
+    3. Better performing model becomes the new best_model.zip
+    4. curr_best_model files are cleaned up after comparison
     """
     def __init__(self, eval_env, train_data, val_data, eval_freq=100000, best_model_save_path=None, 
                  log_path=None, deterministic=True, verbose=0, iteration=0, training_timesteps=200000):
@@ -45,13 +46,6 @@ class UnifiedEvalCallback(BaseCallback):
         self.iteration = iteration
         self.training_timesteps = training_timesteps
 
-        # Track previous best model
-        self.prev_best_model = None
-        if best_model_save_path:
-            model_path = os.path.join(best_model_save_path, "best_model")
-            if os.path.exists(model_path + ".zip"):
-                self.prev_best_model = model_path
-        
         # Store separate datasets
         self.train_data = train_data
         self.val_data = val_data
@@ -204,11 +198,17 @@ class UnifiedEvalCallback(BaseCallback):
 
     def _evaluate_against_previous(self) -> bool:
         """
-        Compare current model against previous best using validation data.
-        Returns True if current model scores better than previous best.
+        Compare current model against best_model.zip using combined dataset.
+        
+        Returns:
+            bool: True if current model scores better than best_model
         """
-        if not self.prev_best_model:
-            return True  # No previous model to compare against
+        if not self.best_model_save_path:
+            return True  # No path to check existing models
+            
+        best_model_path = os.path.join(self.best_model_save_path, "best_model.zip")
+        if not os.path.exists(best_model_path):
+            return True  # No previous best model to compare against
             
         # Get current model performance
         current_metrics = self._evaluate_performance()
@@ -217,7 +217,7 @@ class UnifiedEvalCallback(BaseCallback):
         try:
             # Load and evaluate previous best model
             from sb3_contrib.ppo_recurrent import RecurrentPPO
-            prev_model = RecurrentPPO.load(self.prev_best_model)
+            prev_model = RecurrentPPO.load(best_model_path)
             
             # Store current model temporarily
             temp_model = self.model
@@ -233,23 +233,26 @@ class UnifiedEvalCallback(BaseCallback):
             # Log comparison results
             self.logger.info(f"\nModel Comparison (End of Iteration {self.iteration}):")
             self.logger.info(f"  Current Model Score: {current_score:.4f}")
-            self.logger.info(f"  Previous Best Score: {prev_score:.4f}")
+            self.logger.info(f"  Best Model Score: {prev_score:.4f}")
             
             # Compare scores
             return current_score > prev_score
             
         except Exception as e:
-            self.logger.warning(f"Error comparing with previous model: {e}")
+            self.logger.warning(f"Error comparing with best model: {e}")
             return True  # Default to accepting current model on error
         
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
         """
-        Determine if current model should be saved as best.
+        Determine if current model should be saved as curr_best_model.
         
-        A model is only saved if:
+        A model is saved as curr_best_model if:
         1. Both validation and combined returns are positive
-        2. The score is better than the previous best
-        3. When at end of iteration, must also beat previous best model
+        2. Score is tracked for logging but doesn't prevent saving
+        3. At iteration end, curr_best_model is compared against best_model
+        
+        Returns:
+            bool: True if model should be saved as curr_best_model
         """
         validation = metrics['validation']
         combined = metrics['combined']
@@ -277,9 +280,11 @@ class UnifiedEvalCallback(BaseCallback):
         score = average_return + bonus
         
 
-        if score > self.best_score:
-            self.best_score = score
-            self.best_metrics = metrics
+        # Save if score is positive
+        if validation['return'] > 0 and combined['return'] > 0:
+            if score > self.best_score:
+                self.best_score = score
+                self.best_metrics = metrics
             return True
         return False
     
@@ -499,14 +504,11 @@ class UnifiedEvalCallback(BaseCallback):
             
             # Save model if criteria met
             if should_save and self.best_model_save_path is not None:
-                model_path = os.path.join(self.best_model_save_path, "best_model")
-                metrics_path = os.path.join(self.best_model_save_path, "best_model_metrics.json")
+                model_path = os.path.join(self.best_model_save_path, "curr_best_model")
+                metrics_path = os.path.join(self.best_model_save_path, "curr_best_metrics.json")
                 
                 # Save model
                 self.model.save(model_path)
-                
-                # Update prev_best_model path for next iteration
-                self.prev_best_model = model_path
                 
                 # Load existing metrics if available
                 try:

@@ -270,11 +270,12 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     total_iterations = (total_periods - initial_window) // step_size + 1
     
     state_path = f"../results/{args.seed}/training_state.json"
-    training_start, model_path = load_training_state(state_path)
+    training_start, _ = load_training_state(state_path)
     
-    if model_path and os.path.exists(model_path):
-        print(f"Resuming training from step {training_start}")
-        model = RecurrentPPO.load(model_path)
+    best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
+    if os.path.exists(best_model_path):
+        print(f"Resuming training from step {training_start} with best model")
+        model = RecurrentPPO.load(best_model_path)
     else:
         print("Starting new training")
         training_start = 0
@@ -372,18 +373,25 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 )
                 
                 # Check if we found a best model during training
-                best_model_path = f"../results/{args.seed}/best_model.zip"
-                if os.path.exists(best_model_path):
-                    print("\nFound best model from initial training - using it as first period model")
-                    model = RecurrentPPO.load(best_model_path)
-                else:
-                    print("\nNo best model found during initial training - using final model state")
+                curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
+                best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
                 
-                # Save as first period model
-                period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
-                model.save(period_model_path)
-                save_training_state(state_path, training_start + step_size, period_model_path)
-                print(f"\nSaved as first period model: {training_start} to {train_end}")
+                # Update best model if better curr_best was found
+                if os.path.exists(curr_best_path):
+                    if os.path.exists(best_model_path):
+                        if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
+                            model = RecurrentPPO.load(curr_best_path)
+                            model.save(best_model_path)
+                            print("\nCurrent best model outperformed previous - saved as best model")
+                        else:
+                            model = RecurrentPPO.load(best_model_path)
+                            print("\nKeeping previous best model")
+                    else:
+                        model = RecurrentPPO.load(curr_best_path)
+                        model.save(best_model_path)
+                        print("\nNo previous best model - using current best as first best model")
+                        
+                save_training_state(state_path, training_start + step_size, best_model_path)
             else:
                 print(f"\nContinuing training with existing model...")
                 print(f"Training timesteps: {period_timesteps}")
@@ -430,56 +438,33 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 for result in unified_callback.eval_results:
                     result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
 
-            # Get paths for model files
-            best_model_path = f"../results/{args.seed}/best_model.zip"
-            prev_model_name = f"model_period_{max(0, training_start-step_size)}_{max(0, train_start)}.zip"
-            prev_period_model = os.path.join(f"../results/{args.seed}", prev_model_name)
+            # Compare curr_best against best_model if it exists
+            curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
+            best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
             
-            # Save the model state before any comparisons
-            current_model_state = model
-
-            # Check if we found a best model during training
-            found_best_model = os.path.exists(best_model_path)
-            if found_best_model:
-                print("\nFound best model from training - loading for comparison")
-                model = RecurrentPPO.load(best_model_path)
-            else:
-                print("\nNo best model found during training")
-            
-            # Determine which model to use for next iteration
-            if found_best_model:
-                if os.path.exists(prev_period_model):
-                    print("Comparing best model from this iteration against previous period model...")
-                    if compare_models_on_full_dataset(best_model_path, prev_period_model, data, args):
-                        # Save best model as new period model
-                        period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
-                        model.save(period_model_path)
-                        save_training_state(state_path, training_start + step_size, period_model_path)
-                        print(f"Best model outperformed previous - saved as period model: {training_start} to {train_end}")
+            if os.path.exists(curr_best_path):
+                if os.path.exists(best_model_path):
+                    if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
+                        model = RecurrentPPO.load(curr_best_path)
+                        model.save(best_model_path)
+                        print("\nCurrent best model outperformed previous - saved as best model")
                     else:
-                        # Keep previous model
-                        model = RecurrentPPO.load(prev_period_model)
-                        save_training_state(state_path, training_start + step_size, prev_period_model)
-                        print(f"Previous model performed better - keeping {prev_model_name}")
+                        model = RecurrentPPO.load(best_model_path)
+                        print("\nKeeping previous best model")
                 else:
-                    # Use best model since no previous model exists
-                    period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
-                    model.save(period_model_path)
-                    save_training_state(state_path, training_start + step_size, period_model_path)
-                    print(f"Using best model as period model (no previous model to compare against)")
+                    model = RecurrentPPO.load(curr_best_path)
+                    model.save(best_model_path)
+                    print("\nNo previous best model - using current best as first best model")
+                    
+                # Clean up curr_best files
+                os.remove(curr_best_path)
+                metrics_path = curr_best_path.replace(".zip", "_metrics.json")
+                if os.path.exists(metrics_path):
+                    os.remove(metrics_path)
             else:
-                if os.path.exists(prev_period_model):
-                    # Use previous model since no best model found
-                    model = RecurrentPPO.load(prev_period_model)
-                    save_training_state(state_path, training_start + step_size, prev_period_model)
-                    print(f"\nNo best model found for this iteration - keeping previous model {prev_model_name}")
-                else:
-                    # No best model and no previous model - use current model state
-                    print("\nNo best model found and no previous model exists - using current model state")
-                    model = current_model_state
-                    period_model_path = f"../results/{args.seed}/model_period_{training_start}_{train_end}.zip"
-                    model.save(period_model_path)
-                    save_training_state(state_path, training_start + step_size, period_model_path)
+                print("\nNo curr_best model found - continuing with current model")
+                
+            save_training_state(state_path, training_start + step_size, best_model_path)
             
             # Move to next iteration
             training_start += step_size
@@ -487,5 +472,10 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     except KeyboardInterrupt:
         print("\nTraining interrupted. Progress saved - use same command to resume.")
         return model
+
+    # Load best model for return
+    best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
+    if os.path.exists(best_model_path):
+        model = RecurrentPPO.load(best_model_path)
 
     return model
