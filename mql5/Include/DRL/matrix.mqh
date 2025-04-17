@@ -1,9 +1,9 @@
 // Matrix operations for LSTM computations
-// Generated on: 2025-04-17 11:31:03
+// Generated on: 2025-04-17 12:29:04
 
-#property copyright "Copyright 2024, DRL Trading Bot"
-#property link      "https://github.com/your-repo"
-#property version   "1.00"
+#property copyright 'Copyright 2024, DRL Trading Bot'
+#property link      'https://github.com/your-repo'
+#property version   '1.00'
 
 #ifndef _DRL_MATRIX_H_
 #define _DRL_MATRIX_H_

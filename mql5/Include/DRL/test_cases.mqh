@@ -1,5 +1,9 @@
 // Auto-generated test cases for model verification
-// Generated on: 2025-04-17 11:31:03
+// Generated on: 2025-04-17 12:29:04
+
+#include <Trade/Trade.mqh>
+#include <Math/Math.mqh>
+#include <Arrays/ArrayDouble.mqh>
 
 #property copyright "Copyright 2024, DRL Trading Bot"
 #property link      "https://github.com/your-repo"
@@ -2689,7 +2693,7 @@ const double test_case_4_lstm_state[] = {
 const int test_case_4_action = 2;
 
 // Initialize test cases
-void InitTestCases(TestCase& cases[]) {
+void InitTestCases(TestCase &cases[]) {
     ArrayResize(cases, 5);
 
     // Initialize test case 0

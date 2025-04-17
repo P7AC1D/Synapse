@@ -1,5 +1,8 @@
 // Auto-generated LSTM model architecture
-// Generated on: 2025-04-17 11:31:03
+// Generated on: 2025-04-17 12:29:04
+
+#include <Trade/Trade.mqh>
+#include <Math/Math.mqh>
 
 #property copyright "Copyright 2024, DRL Trading Bot"
 #property link      "https://github.com/your-repo"

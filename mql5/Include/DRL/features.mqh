@@ -1,5 +1,11 @@
 // Feature processing for DRL model
-// Generated on: 2025-04-17 11:31:03
+// Generated on: 2025-04-17 12:29:04
+
+#include <Trade/Trade.mqh>
+#include <Series/Series.mqh>
+#include <Arrays/ArrayDouble.mqh>
+#include <Math/Math.mqh>
+#include <Timeseries/Timeseries.mqh>
 
 #property copyright "Copyright 2024, DRL Trading Bot"
 #property link      "https://github.com/your-repo"
@@ -32,12 +38,17 @@ public:
     }
 
     void ProcessFeatures(double& features[]) {
-        double close[], open[], high[], low[], volume[];
+        double close[];
+        double open[];
+        double high[];
+        double low[];
+        double volume[];
         ArraySetAsSeries(close, true);
         ArraySetAsSeries(open, true);
         ArraySetAsSeries(high, true);
         ArraySetAsSeries(low, true);
         ArraySetAsSeries(volume, true);
+
 
         // Get price data
         CopyClose(_Symbol, _Period, 0, 2, close);
