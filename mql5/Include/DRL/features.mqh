@@ -1,5 +1,5 @@
 // Feature processing for DRL model
-// Generated on: 2025-04-15 03:23:09
+// Generated on: 2025-04-17 11:21:11
 
 #property copyright 'Copyright 2024, DRL Trading Bot'
 #property link      'https://github.com/your-repo'
@@ -24,7 +24,7 @@ private:
     int m_adx_handle;
 
 public:
-    void Init(const string symbol, const ENUM_TIMEFRAME timeframe) {
+    void Init(const string symbol, const ENUM_TIMEFRAMES timeframe) {
         m_atr_handle = iATR(symbol, timeframe, ATR_PERIOD);
         m_rsi_handle = iRSI(symbol, timeframe, RSI_PERIOD, PRICE_CLOSE);
         m_bb_handle = iBands(symbol, timeframe, BOLL_PERIOD, 0, 2, PRICE_CLOSE);
@@ -115,10 +115,6 @@ public:
         features[8] = volume_change;
     }
 
-    int GetATRHandle() const {
-        return m_atr_handle;
-    }
-    
     void Deinit() {
         IndicatorRelease(m_atr_handle);
         IndicatorRelease(m_rsi_handle);

@@ -1,5 +1,5 @@
 // Auto-generated LSTM model architecture
-// Generated on: 2025-04-15 03:23:09
+// Generated on: 2025-04-17 11:21:11
 
 #property copyright 'Copyright 2024, DRL Trading Bot'
 #property link      'https://github.com/your-repo'
@@ -14,7 +14,7 @@
 #define ACTION_COUNT 4
 
 // Activation Functions
-double tanh(const double x) {
+double custom_tanh(const double x) {
     const double ep = MathExp(x);
     const double em = MathExp(-x);
     return (ep - em) / (ep + em);
