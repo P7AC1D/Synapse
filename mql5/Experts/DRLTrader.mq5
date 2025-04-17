@@ -84,13 +84,6 @@ int OnInit()
     // Initialize feature processor
     FeatureProcessor = new CFeatureProcessor();
     FeatureProcessor.Init(_Symbol, _Period);
-    // Since Init() doesn't return a value, we'll check if feature initialization was successful differently
-    if(FeatureProcessor.IsInitialized() == false)
-    {
-        Print("DEBUG: Feature processor initialization FAILED");
-        return INIT_FAILED;
-    }
-    Print("DEBUG: Feature processor initialization successful");
 
     // Initialize LSTM state array
     ArrayResize(LSTMState, LSTM_UNITS);
