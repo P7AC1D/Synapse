@@ -99,22 +99,52 @@ def print_metrics(results: dict):
             print(f"{name}: {value:{format_spec}}")
     print("")
 
-    # Hold Time and Pips Analysis as Table
-    print("=== Hold Time and Pips Analysis ===")
-    print("\n| Metric Type   | 1st Pct  | 10th Pct | Median  | 90th Pct | 99th Pct |")
-    print("|--------------|----------|----------|---------|----------|----------|")
+    # Hold Time and Pips Analysis as DataFrame
+    print("\n=== Hold Time and Pips Analysis ===\n")
     
-    # Winners Hold Time
-    print(f"| Winners Hold |    {results.get('win_hold_time_1st', 0.0):6.1f} |    {results.get('win_hold_time_10th', 0.0):6.1f} |   {results.get('win_hold_time_median', 0.0):6.1f} |    {results.get('win_hold_time_90th', 0.0):6.1f} |    {results.get('win_hold_time_99th', 0.0):6.1f} |")
+    # Create data for the DataFrame
+    data = {
+        'Metric Type': ['Winners Hold', 'Losers Hold', 'Winners Pips', 'Losers Pips'],
+        '1st Pct': [
+            results.get('win_hold_time_1st', 0.0),
+            results.get('loss_hold_time_1st', 0.0),
+            results.get('win_pips_1st', 0.0),
+            results.get('loss_pips_1st', 0.0)
+        ],
+        '10th Pct': [
+            results.get('win_hold_time_10th', 0.0),
+            results.get('loss_hold_time_10th', 0.0),
+            results.get('win_pips_10th', 0.0),
+            results.get('loss_pips_10th', 0.0)
+        ],
+        'Median': [
+            results.get('win_hold_time_median', 0.0),
+            results.get('loss_hold_time_median', 0.0),
+            results.get('median_win_pips', 0.0),
+            results.get('median_loss_pips', 0.0)
+        ],
+        '90th Pct': [
+            results.get('win_hold_time_90th', 0.0),
+            results.get('loss_hold_time_90th', 0.0),
+            results.get('win_pips_90th', 0.0),
+            results.get('loss_pips_90th', 0.0)
+        ],
+        '99th Pct': [
+            results.get('win_hold_time_99th', 0.0),
+            results.get('loss_hold_time_99th', 0.0),
+            results.get('win_pips_99th', 0.0),
+            results.get('loss_pips_99th', 0.0)
+        ]
+    }
     
-    # Losers Hold Time
-    print(f"| Losers Hold  |    {results.get('loss_hold_time_1st', 0.0):6.1f} |    {results.get('loss_hold_time_10th', 0.0):6.1f} |   {results.get('loss_hold_time_median', 0.0):6.1f} |    {results.get('loss_hold_time_90th', 0.0):6.1f} |    {results.get('loss_hold_time_99th', 0.0):6.1f} |")
+    df = pd.DataFrame(data)
+    df = df.set_index('Metric Type')
     
-    # Winners Pips
-    print(f"| Winners Pips |    {results.get('win_pips_1st', 0.0):6.1f} |    {results.get('win_pips_10th', 0.0):6.1f} |   {results.get('median_win_pips', 0.0):6.1f} |    {results.get('win_pips_90th', 0.0):6.1f} |    {results.get('win_pips_99th', 0.0):6.1f} |")
-    
-    # Losers Pips
-    print(f"| Losers Pips  |   {results.get('loss_pips_1st', 0.0):6.1f} |   {results.get('loss_pips_10th', 0.0):6.1f} |  {results.get('median_loss_pips', 0.0):6.1f} |   {results.get('loss_pips_90th', 0.0):6.1f} |   {results.get('loss_pips_99th', 0.0):6.1f} |")
+    # Format all numeric columns to 1 decimal place
+    for col in df.columns:
+        df[col] = df[col].map('{:,.1f}'.format)
+        
+    print(df.to_string())
     
     print("")
 
