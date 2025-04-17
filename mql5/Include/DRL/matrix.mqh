@@ -1,15 +1,15 @@
 // Matrix operations for LSTM computations
-// Generated on: 2025-04-17 11:21:11
+// Generated on: 2025-04-17 11:31:03
 
-#property copyright 'Copyright 2024, DRL Trading Bot'
-#property link      'https://github.com/your-repo'
-#property version   '1.00'
+#property copyright "Copyright 2024, DRL Trading Bot"
+#property link      "https://github.com/your-repo"
+#property version   "1.00"
 
 #ifndef _DRL_MATRIX_H_
 #define _DRL_MATRIX_H_
 
 // Matrix multiplication: C = A * B
-void MatrixMultiply(const double &a[], const double &b[], double &c[],
+void MatrixMultiply(const double& a[], const double& b[], double& c[],
                     const int a_rows, const int a_cols,
                     const int b_rows, const int b_cols) {
     if(a_cols != b_rows)
@@ -28,7 +28,7 @@ void MatrixMultiply(const double &a[], const double &b[], double &c[],
 }
 
 // Vector addition: C = A + B
-void VectorAdd(const double &a[], const double &b[], double &c[], const int size) {
+void VectorAdd(const double& a[], const double& b[], double& c[], const int size) {
     ArrayResize(c, size);
     for(int i=0; i<size; i++) {
         c[i] = a[i] + b[i];
@@ -36,7 +36,7 @@ void VectorAdd(const double &a[], const double &b[], double &c[], const int size
 }
 
 // Apply activation function element-wise
-void ApplyActivation(const double &input[], double &output[],
+void ApplyActivation(const double& input[], double& output[],
                      const int size, const string activation) {
     ArrayResize(output, size);
     for(int i=0; i<size; i++) {

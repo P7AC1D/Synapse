@@ -1,9 +1,9 @@
 // Feature processing for DRL model
-// Generated on: 2025-04-17 11:21:11
+// Generated on: 2025-04-17 11:31:03
 
-#property copyright 'Copyright 2024, DRL Trading Bot'
-#property link      'https://github.com/your-repo'
-#property version   '1.00'
+#property copyright "Copyright 2024, DRL Trading Bot"
+#property link      "https://github.com/your-repo"
+#property version   "1.00"
 
 #ifndef _DRL_FEATURES_H_
 #define _DRL_FEATURES_H_
@@ -31,7 +31,7 @@ public:
         m_adx_handle = iADX(symbol, timeframe, ATR_PERIOD);
     }
 
-    void ProcessFeatures(double &features[]) {
+    void ProcessFeatures(double& features[]) {
         double close[], open[], high[], low[], volume[];
         ArraySetAsSeries(close, true);
         ArraySetAsSeries(open, true);

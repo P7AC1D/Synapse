@@ -1,9 +1,9 @@
 // Auto-generated test cases for model verification
-// Generated on: 2025-04-17 11:21:11
+// Generated on: 2025-04-17 11:31:03
 
-#property copyright 'Copyright 2024, DRL Trading Bot'
-#property link      'https://github.com/your-repo'
-#property version   '1.00'
+#property copyright "Copyright 2024, DRL Trading Bot"
+#property link      "https://github.com/your-repo"
+#property version   "1.00"
 
 #ifndef _DRL_TEST_CASES_H_
 #define _DRL_TEST_CASES_H_
@@ -2689,7 +2689,7 @@ const double test_case_4_lstm_state[] = {
 const int test_case_4_action = 2;
 
 // Initialize test cases
-void InitTestCases(TestCase &cases[]) {
+void InitTestCases(TestCase& cases[]) {
     ArrayResize(cases, 5);
 
     // Initialize test case 0
