@@ -1,5 +1,5 @@
 // Feature processing for DRL model
-// Generated on: 2025-04-17 12:49:53
+// Generated on: 2025-04-17 12:54:37
 
 #include <Trade/Trade.mqh>
 #include <Arrays/ArrayDouble.mqh>
@@ -40,7 +40,7 @@ public:
         double open[];
         double high[];
         double low[];
-        double volume[];
+        long volume[];
         ArraySetAsSeries(close, true);
         ArraySetAsSeries(open, true);
         ArraySetAsSeries(high, true);
@@ -107,7 +107,7 @@ public:
         // Calculate volume change
         double volume_change = 0.0;
         if(volume[1] > 0) {
-            volume_change = (volume[0] - volume[1]) / volume[1];
+            volume_change = ((double)volume[0] - (double)volume[1]) / (double)volume[1];
             volume_change = MathMax(MathMin(volume_change, 1.0), -1.0);
         }
 

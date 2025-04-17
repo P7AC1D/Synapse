@@ -1,5 +1,5 @@
 // Matrix operations for LSTM computations
-// Generated on: 2025-04-17 12:49:53
+// Generated on: 2025-04-17 12:54:37
 
 #property copyright "Copyright 2024, DRL Trading Bot"
 #property link      "https://github.com/your-repo"
@@ -36,8 +36,8 @@ void VectorAdd(const double &a[], const double &b[], double &c[], const int size
 }
 
 // Apply activation function element-wise
-void ApplyActivation(const double &input[], double &output[],
-                    const int size, const string activation) {
+void ApplyActivation(double &input[], double &output[],
+                    const int size, string activation) {
     ArrayResize(output, size);
     for(int i=0; i<size; i++) {
         if(activation == "tanh")
