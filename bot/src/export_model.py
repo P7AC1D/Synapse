@@ -49,10 +49,21 @@ def extract_lstm_params(model: RecurrentPPO) -> Dict[str, np.ndarray]:
         lstm_critic = model.policy.lstm_critic
         
         # Extract weights and biases
+        # Extract and print shapes before converting
+        actor_input_w = lstm_actor.weight_ih_l0.detach().numpy()
+        actor_hidden_w = lstm_actor.weight_hh_l0.detach().numpy()
+        actor_output_w = model.policy.action_net.weight.detach().numpy()
+        
+        print("PyTorch shapes:")
+        print(f"actor_input_weight: {actor_input_w.shape}")
+        print(f"actor_hidden_weight: {actor_hidden_w.shape}")
+        print(f"actor_output_weight: {actor_output_w.shape}")
+        
+        # Create weights dictionary
         weights = {
             # Actor LSTM parameters
-            'actor_input_weight': lstm_actor.weight_ih_l0.detach().numpy(),
-            'actor_hidden_weight': lstm_actor.weight_hh_l0.detach().numpy(),
+            'actor_input_weight': actor_input_w,
+            'actor_hidden_weight': actor_hidden_w,
             'actor_input_bias': lstm_actor.bias_ih_l0.detach().numpy(),
             'actor_hidden_bias': lstm_actor.bias_hh_l0.detach().numpy(),
             
@@ -63,7 +74,7 @@ def extract_lstm_params(model: RecurrentPPO) -> Dict[str, np.ndarray]:
             'critic_hidden_bias': lstm_critic.bias_hh_l0.detach().numpy(),
             
             # Output layer parameters
-            'actor_output_weight': model.policy.action_net.weight.detach().numpy(),
+            'actor_output_weight': actor_output_w,
             'actor_output_bias': model.policy.action_net.bias.detach().numpy(),
             'critic_output_weight': model.policy.value_net.weight.detach().numpy(),
             'critic_output_bias': model.policy.value_net.bias.detach().numpy()
@@ -75,31 +86,44 @@ def extract_lstm_params(model: RecurrentPPO) -> Dict[str, np.ndarray]:
         raise ValueError(f"Failed to extract LSTM parameters: {e}")
 
 def generate_mql5_array(arr: np.ndarray, name: str, const: bool = True) -> str:
-    """Generate MQL5 array declaration."""
+    """Generate MQL5 array declaration with proper 2D dimensions."""
     shape = arr.shape
-    flat = arr.flatten()
     
-    # Format each number with high precision
-    formatted = [f"{x:.10f}" for x in flat]
+    # Special handling for actor/critic weight matrices
+    is_weight_matrix = any(x in name for x in ["input_weight", "hidden_weight", "output_weight"])
     
-    # Build array declaration
-    lines = [f"{'const ' if const else ''}double {name}[] = {{"]
-    
-    # Format numbers in rows
-    if len(shape) > 1:
-        # 2D array - group by rows
-        row_length = shape[1]
-        for i in range(0, len(formatted), row_length):
-            row = formatted[i:i + row_length]
-            lines.append("    " + ", ".join(row) + ",")
+    if len(shape) > 1 and is_weight_matrix:
+        # Transpose the weight matrices to match required dimensions
+        if "input_weight" in name:
+            # PyTorch: [1024][11] -> MQL5: [11][1024]
+            arr = arr.T
+        elif "hidden_weight" in name:
+            # PyTorch: [1024][256] -> MQL5: [256][1024]
+            arr = arr.T
+        elif "output_weight" in name:
+            # PyTorch: [4][64] -> MQL5: [64][4]
+            arr = arr.T
+            
+        shape = arr.shape  # Get new shape after transpose
+        lines = [f"{'const ' if const else ''}double {name}[{shape[0]}][{shape[1]}] = {{"]
+        
+        # Format each row
+        for i in range(shape[0]):
+            row = [f"{x:.10f}" for x in arr[i]]
+            if i < shape[0] - 1:
+                lines.append("    {" + ", ".join(row) + "},")
+            else:
+                lines.append("    {" + ", ".join(row) + "}")
     else:
-        # 1D array - one number per line for readability
-        lines.extend(f"    {x}," for x in formatted)
-    
+        # 1D array for bias vectors and other arrays
+        flat = arr.flatten()
+        formatted = [f"{x:.10f}" for x in flat]
+        
+        lines = [f"{'const ' if const else ''}double {name}[] = {{"]
+        lines.append("    " + ", ".join(formatted))
+        
     lines.append("};")
-    
-    # Add shape information as comment
-    lines.append(f"// Shape: {shape}")
+    lines.append(f"// Original shape before transpose: {arr.T.shape if len(shape) > 1 and is_weight_matrix else shape}")
     lines.append("")  # Empty line for readability
     
     return "\n".join(lines)
