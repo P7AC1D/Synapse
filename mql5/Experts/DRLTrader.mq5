@@ -552,17 +552,29 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
           ", forget_gate: ", ArraySize(forget_gate),
           ", output: ", ArraySize(output),
           ", ACTION_COUNT: ", ACTION_COUNT);
-
-    // Actor LSTM - Input transformation
-    double flat_input_weights[];
-    PrepareWeightsArray(actor_input_weight, flat_input_weights, FEATURE_COUNT, LSTM_UNITS * 4);
+          
+    // Create temporary arrays for matrix multiplication operations
+    double temp_input_weights[];
+    double temp_hidden_weights[];
+    double temp_output_weights[];
     
+    // Copy weights to temporary arrays to avoid parameter conversion issues
+    ArrayResize(temp_input_weights, ArraySize(actor_input_weight));
+    ArrayCopy(temp_input_weights, actor_input_weight);
+    
+    ArrayResize(temp_hidden_weights, ArraySize(actor_hidden_weight));
+    ArrayCopy(temp_hidden_weights, actor_hidden_weight);
+    
+    ArrayResize(temp_output_weights, ArraySize(actor_output_weight));
+    ArrayCopy(temp_output_weights, actor_output_weight);
+    
+    // Actor LSTM - Input transformation
     double actor_input[];
     if (FEATURE_COUNT > 0 && LSTM_UNITS > 0) {
         Print("DEBUG_LSTM: Feature count: ", ArraySize(features), 
               ", FEATURE_COUNT: ", FEATURE_COUNT);
               
-        MatrixMultiply(features, flat_input_weights, actor_input,
+        MatrixMultiply(features, temp_input_weights, actor_input,
                       1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS * 4);
                    
         Print("DEBUG_LSTM: actor_input size after multiply: ", ArraySize(actor_input));
@@ -572,15 +584,12 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     }
     
     // Actor LSTM - Hidden transformation
-    double flat_hidden_weights[];
-    PrepareWeightsArray(actor_hidden_weight, flat_hidden_weights, LSTM_UNITS, LSTM_UNITS * 4);
-    
     double actor_hidden_transform[];
     if (LSTM_UNITS > 0) {
         Print("DEBUG_LSTM: State size: ", ArraySize(state),
               ", LSTM_UNITS: ", LSTM_UNITS);
         
-        MatrixMultiply(state, flat_hidden_weights, actor_hidden_transform,
+        MatrixMultiply(state, temp_hidden_weights, actor_hidden_transform,
                       1, LSTM_UNITS, LSTM_UNITS, LSTM_UNITS * 4);
                    
         Print("DEBUG_LSTM: actor_hidden_transform size after multiply: ", ArraySize(actor_hidden_transform));
