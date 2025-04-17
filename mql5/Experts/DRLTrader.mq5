@@ -364,6 +364,26 @@ string ErrorDescription(int errorCode)
 //+------------------------------------------------------------------+
 void OnTick()
 {
+    // New debug section to verify model dimensions
+    if (FirstTick) {
+        Print("MODEL DEBUG: FEATURE_COUNT=", FEATURE_COUNT, 
+              ", LSTM_UNITS=", LSTM_UNITS, 
+              ", ACTION_COUNT=", ACTION_COUNT);
+        
+        // Check weight array dimensions
+        Print("MODEL DEBUG: actor_input_weight dimensions: ", 
+              ArrayRange(actor_input_weight, 0), "x", ArrayRange(actor_input_weight, 1));
+        Print("MODEL DEBUG: actor_hidden_weight dimensions: ", 
+              ArrayRange(actor_hidden_weight, 0), "x", ArrayRange(actor_hidden_weight, 1));
+        Print("MODEL DEBUG: actor_output_weight dimensions: ", 
+              ArrayRange(actor_output_weight, 0), "x", ArrayRange(actor_output_weight, 1));
+        
+        // Check bias array sizes
+        Print("MODEL DEBUG: actor_input_bias size: ", ArraySize(actor_input_bias));
+        Print("MODEL DEBUG: actor_hidden_bias size: ", ArraySize(actor_hidden_bias));
+        Print("MODEL DEBUG: actor_output_bias size: ", ArraySize(actor_output_bias));
+    }
+    
     // Skip if spread is too high
     if (SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) > MaxSpread)
     {
@@ -484,6 +504,9 @@ void OnTick()
 //+------------------------------------------------------------------+
 void RunLSTMInference(const double &features[], double &state[], double &output[])
 {
+    Print("DEBUG_LSTM: Starting RunLSTMInference with feature count: ", ArraySize(features), 
+          ", state size: ", ArraySize(state));
+          
     // Temporary arrays for LSTM gates
     double input_gate[];
     double forget_gate[];
@@ -493,62 +516,155 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
 
     // Initialize arrays
     int hidden_size = LSTM_UNITS;
+    Print("DEBUG_LSTM: Hidden size (LSTM_UNITS): ", hidden_size);
+    
     ArrayResize(input_gate, hidden_size);
     ArrayResize(forget_gate, hidden_size);
     ArrayResize(cell_state, hidden_size);
     ArrayResize(output_gate, hidden_size);
     ArrayResize(hidden_state, hidden_size);
     ArrayResize(output, ACTION_COUNT);
+    
+    Print("DEBUG_LSTM: Arrays resized - input_gate: ", ArraySize(input_gate),
+          ", forget_gate: ", ArraySize(forget_gate),
+          ", output: ", ArraySize(output),
+          ", ACTION_COUNT: ", ACTION_COUNT);
 
     // Actor LSTM
     // Input transformation
+    Print("DEBUG_LSTM: Starting matrix multiply for actor_input");
+    Print("DEBUG_LSTM: Feature count: ", ArraySize(features), 
+          ", FEATURE_COUNT: ", FEATURE_COUNT,
+          ", actor_input_weight first dimension: ", ArrayRange(actor_input_weight, 0));
+          
     double actor_input[];
     MatrixMultiply(features, actor_input_weight, actor_input,
                    1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS);
+                   
+    Print("DEBUG_LSTM: actor_input size after multiply: ", ArraySize(actor_input));
+    
+    Print("DEBUG_LSTM: Starting matrix multiply for actor_hidden_transform");
+    Print("DEBUG_LSTM: State size: ", ArraySize(state),
+          ", LSTM_UNITS: ", LSTM_UNITS,
+          ", actor_hidden_weight first dimension: ", ArrayRange(actor_hidden_weight, 0));
+          
     double actor_hidden_transform[];
     MatrixMultiply(state, actor_hidden_weight, actor_hidden_transform,
                    1, LSTM_UNITS, LSTM_UNITS, LSTM_UNITS * 4);
+                   
+    Print("DEBUG_LSTM: actor_hidden_transform size after multiply: ", ArraySize(actor_hidden_transform));
 
     // Calculate gates
+    Print("DEBUG_LSTM: Starting gate calculations for ", LSTM_UNITS, " units");
     for (int i = 0; i < LSTM_UNITS; i++)
     {
+        if(i % 10 == 0) Print("DEBUG_LSTM: Processing gate calculations for unit ", i);
+        
+        // Debug bounds checks
+        if(i >= ArraySize(actor_input) || i >= ArraySize(actor_hidden_transform) || 
+           i >= ArraySize(actor_hidden_bias)) {
+            Print("ERROR_LSTM: Index out of bounds at forget_gate calculation, i=", i, 
+                  ", actor_input size: ", ArraySize(actor_input),
+                  ", actor_hidden_transform size: ", ArraySize(actor_hidden_transform),
+                  ", actor_hidden_bias size: ", ArraySize(actor_hidden_bias));
+            return;
+        }
+        
         int idx = i;
         forget_gate[i] = sigmoid(actor_input[idx] +
                                  actor_hidden_transform[idx] +
                                  actor_hidden_bias[idx]);
 
+        // Debug bounds checks for input_gate
         idx += LSTM_UNITS;
+        if(idx >= ArraySize(actor_input) || idx >= ArraySize(actor_hidden_transform) || 
+           i >= ArraySize(actor_input_bias)) {
+            Print("ERROR_LSTM: Index out of bounds at input_gate calculation, idx=", idx, ", i=", i,
+                  ", actor_input size: ", ArraySize(actor_input),
+                  ", actor_hidden_transform size: ", ArraySize(actor_hidden_transform),
+                  ", actor_input_bias size: ", ArraySize(actor_input_bias));
+            return;
+        }
+        
         input_gate[i] = sigmoid(actor_input[idx] +
                                 actor_hidden_transform[idx] +
-                                actor_input_bias[idx]);
+                                actor_input_bias[i]);
 
+        // Debug bounds checks for cell_state
         idx += LSTM_UNITS;
+        if(idx >= ArraySize(actor_input) || idx >= ArraySize(actor_hidden_transform) || 
+           i >= ArraySize(actor_input_bias)) {
+            Print("ERROR_LSTM: Index out of bounds at cell_state calculation, idx=", idx, ", i=", i,
+                  ", actor_input size: ", ArraySize(actor_input),
+                  ", actor_hidden_transform size: ", ArraySize(actor_hidden_transform),
+                  ", actor_input_bias size: ", ArraySize(actor_input_bias));
+            return;
+        }
+        
         cell_state[i] = custom_tanh(actor_input[idx] +
                                     actor_hidden_transform[idx] +
-                                    actor_input_bias[idx]);
+                                    actor_input_bias[i]);
 
+        // Debug bounds checks for output_gate
         idx += LSTM_UNITS;
+        if(idx >= ArraySize(actor_input) || idx >= ArraySize(actor_hidden_transform) || 
+           i >= ArraySize(actor_hidden_bias)) {
+            Print("ERROR_LSTM: Index out of bounds at output_gate calculation, idx=", idx, ", i=", i,
+                  ", actor_input size: ", ArraySize(actor_input),
+                  ", actor_hidden_transform size: ", ArraySize(actor_hidden_transform),
+                  ", actor_hidden_bias size: ", ArraySize(actor_hidden_bias));
+            return;
+        }
+        
         output_gate[i] = sigmoid(actor_input[idx] +
                                  actor_hidden_transform[idx] +
-                                 actor_hidden_bias[idx]);
+                                 actor_hidden_bias[i]);
     }
 
     // Update cell and hidden states
+    Print("DEBUG_LSTM: Updating cell and hidden states");
     for (int i = 0; i < LSTM_UNITS; i++)
     {
+        if(i % 10 == 0) Print("DEBUG_LSTM: Updating state for unit ", i);
+        
+        if(i >= ArraySize(forget_gate) || i >= ArraySize(state) || 
+           i >= ArraySize(input_gate) || i >= ArraySize(cell_state)) {
+            Print("ERROR_LSTM: Index out of bounds at state update, i=", i,
+                  ", forget_gate size: ", ArraySize(forget_gate),
+                  ", state size: ", ArraySize(state),
+                  ", input_gate size: ", ArraySize(input_gate),
+                  ", cell_state size: ", ArraySize(cell_state));
+            return;
+        }
+        
         cell_state[i] = forget_gate[i] * state[i] +
                         input_gate[i] * cell_state[i];
         hidden_state[i] = output_gate[i] * custom_tanh(cell_state[i]);
     }
 
     // Update LSTM state for next iteration
+    Print("DEBUG_LSTM: Copying hidden state to state array");
     ArrayCopy(state, hidden_state);
 
     // Calculate final output
+    Print("DEBUG_LSTM: Starting final output calculation");
+    Print("DEBUG_LSTM: hidden_state size: ", ArraySize(hidden_state),
+          ", actor_output_weight dimensions: ", ArrayRange(actor_output_weight, 0), "x", ArrayRange(actor_output_weight, 1));
+          
     MatrixMultiply(hidden_state, actor_output_weight, output,
                    1, LSTM_UNITS, LSTM_UNITS, ACTION_COUNT);
+                   
+    Print("DEBUG_LSTM: Output size after matrix multiply: ", ArraySize(output));
 
     // Add bias and apply softmax
+    Print("DEBUG_LSTM: Applying softmax with bias");
+    if(ArraySize(output) != ACTION_COUNT || ArraySize(actor_output_bias) < ACTION_COUNT) {
+        Print("ERROR_LSTM: Array size mismatch before softmax - output size: ", ArraySize(output),
+              ", actor_output_bias size: ", ArraySize(actor_output_bias),
+              ", ACTION_COUNT: ", ACTION_COUNT);
+        return;
+    }
+    
     double sum = 0;
     for (int i = 0; i < ACTION_COUNT; i++)
     {
@@ -557,6 +673,7 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     }
 
     // Normalize probabilities
+    Print("DEBUG_LSTM: Normalizing probabilities, sum=", sum);
     if (sum > 0)
     {
         for (int i = 0; i < ACTION_COUNT; i++)
@@ -564,4 +681,6 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
             output[i] /= sum;
         }
     }
+    
+    Print("DEBUG_LSTM: LSTM inference completed successfully");
 }
