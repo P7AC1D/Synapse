@@ -506,41 +506,20 @@ int GetArrayIndex(const int row, const int col, const int cols) {
     return row * cols + col;
 }
 
-// Helper function to flatten 2D array to 1D
-void Flatten2DArray(const double &arr[][], double &flat[], const int rows, const int cols) {
-    ArrayResize(flat, rows * cols);
-    for(int i = 0; i < rows; i++) {
-        for(int j = 0; j < cols; j++) {
-            flat[GetArrayIndex(i, j, cols)] = arr[i][j];
-        }
-    }
+// Convert a flattened 1D array index to a row
+int GetRow(const int index, const int cols) {
+    return index / cols;
 }
 
-// Helper functions for handling 2D arrays
-double GetMatrixValue(const double &matrix[], int row, int col, int cols) {
-    return matrix[row * cols + col];
+// Convert a flattened 1D array index to a column
+int GetCol(const int index, const int cols) {
+    return index % cols;
 }
 
-// Helper functions for array handling
-int GetArrayIndex(const int row, const int col, const int cols) {
-    return row * cols + col;
-}
-
-// Get value from 1D array representing a 2D matrix
-double GetMatrixValue(const double &matrix[], int row, int col, int cols) {
-    return matrix[row * cols + col];
-}
-
-// Flatten weights before matrix multiplication
-void PrepareWeightsForMultiply(double &flatWeights[], int inputDim, int outputDim) {
-    // First check if we need to create a flat array
-    if(ArraySize(flatWeights) != inputDim * outputDim) {
-        ArrayResize(flatWeights, inputDim * outputDim);
-    }
-    
-    // Then copy the weight values (specific to your weights format)
-    // This assumes your weights are stored in a flat array format
-    // If needed, add specific code to flatten 2D weights
+// Create a new function for our custom flattening operation
+void PrepareWeightsArray(const double &sourceArray[], double &targetArray[], const int inputDim, const int outputDim) {
+    ArrayResize(targetArray, inputDim * outputDim);
+    ArrayCopy(targetArray, sourceArray);
 }
 
 //+------------------------------------------------------------------+
@@ -574,18 +553,17 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
           ", output: ", ArraySize(output),
           ", ACTION_COUNT: ", ACTION_COUNT);
 
-    // Prepare flattened weights for matrix multiplication
-    Print("DEBUG_LSTM: Preparing weight arrays for matrix multiply");
-    
     // Actor LSTM - Input transformation
+    double flat_input_weights[];
+    PrepareWeightsArray(actor_input_weight, flat_input_weights, FEATURE_COUNT, LSTM_UNITS * 4);
+    
     double actor_input[];
     if (FEATURE_COUNT > 0 && LSTM_UNITS > 0) {
         Print("DEBUG_LSTM: Feature count: ", ArraySize(features), 
               ", FEATURE_COUNT: ", FEATURE_COUNT);
-        
-        // Directly use the weight arrays as they are already in the correct format
-        MatrixMultiply(features, actor_input_weight, actor_input,
-                       1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS * 4);
+              
+        MatrixMultiply(features, flat_input_weights, actor_input,
+                      1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS * 4);
                    
         Print("DEBUG_LSTM: actor_input size after multiply: ", ArraySize(actor_input));
     } else {
@@ -594,14 +572,16 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     }
     
     // Actor LSTM - Hidden transformation
+    double flat_hidden_weights[];
+    PrepareWeightsArray(actor_hidden_weight, flat_hidden_weights, LSTM_UNITS, LSTM_UNITS * 4);
+    
     double actor_hidden_transform[];
     if (LSTM_UNITS > 0) {
         Print("DEBUG_LSTM: State size: ", ArraySize(state),
               ", LSTM_UNITS: ", LSTM_UNITS);
         
-        // Directly use the weight arrays as they are already in the correct format
-        MatrixMultiply(state, actor_hidden_weight, actor_hidden_transform,
-                       1, LSTM_UNITS, LSTM_UNITS, LSTM_UNITS * 4);
+        MatrixMultiply(state, flat_hidden_weights, actor_hidden_transform,
+                      1, LSTM_UNITS, LSTM_UNITS, LSTM_UNITS * 4);
                    
         Print("DEBUG_LSTM: actor_hidden_transform size after multiply: ", ArraySize(actor_hidden_transform));
     } else {
@@ -609,7 +589,7 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
         return;
     }
 
-    // Calculate gates - keep existing code
+    // Calculate gates
     Print("DEBUG_LSTM: Starting gate calculations for ", LSTM_UNITS, " units");
     for (int i = 0; i < LSTM_UNITS; i++)
     {
@@ -704,7 +684,7 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     // Calculate final output with flattened arrays
     Print("DEBUG_LSTM: Starting final output calculation");
     double flat_output_weights[];
-    Flatten2DArray(actor_output_weight, flat_output_weights, LSTM_UNITS, ACTION_COUNT);
+    PrepareWeightsArray(actor_output_weight, flat_output_weights, LSTM_UNITS, ACTION_COUNT);
           
     MatrixMultiply(hidden_state, flat_output_weights, output,
                    1, LSTM_UNITS, LSTM_UNITS, ACTION_COUNT);
@@ -739,4 +719,3 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     
     Print("DEBUG_LSTM: LSTM inference completed successfully");
 }
-```
