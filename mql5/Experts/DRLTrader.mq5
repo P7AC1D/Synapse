@@ -692,9 +692,11 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
 
     // Calculate final output with temporary weights array
     Print("DEBUG_LSTM: Starting final output calculation");
+    Print("DEBUG_LSTM: actor_output_weight dimensions: ", ArrayRange(actor_output_weight, 0), "x", ArrayRange(actor_output_weight, 1));
           
+    // Use the correct dimensions for the output matrix multiplication
     MatrixMultiply(hidden_state, temp_output_weights, output,
-                   1, LSTM_UNITS, LSTM_UNITS, ACTION_COUNT);
+                   1, LSTM_UNITS, 64, ACTION_COUNT);  // Fixed: changed from LSTM_UNITS to 64
                    
     Print("DEBUG_LSTM: Output size after matrix multiply: ", ArraySize(output));
 
