@@ -16,6 +16,12 @@
 #define LSTM_UNITS 256
 #define ACTION_COUNT 4
 
+// Matrix Dimensions Constants
+#define INPUT_WEIGHT_COLS (LSTM_UNITS * 4)  // 1024
+#define HIDDEN_WEIGHT_COLS (LSTM_UNITS * 4) // 1024
+#define OUTPUT_WEIGHT_COLS ACTION_COUNT      // 4
+#define OUTPUT_WEIGHT_ROWS LSTM_UNITS       // 256
+
 // Activation Functions
 double custom_tanh(const double x) {
     const double ep = MathExp(x);

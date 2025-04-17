@@ -587,7 +587,7 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
               ", FEATURE_COUNT: ", FEATURE_COUNT);
               
         MatrixMultiply(features, temp_input_weights, actor_input,
-                      1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS * 4);
+                      1, FEATURE_COUNT, FEATURE_COUNT, INPUT_WEIGHT_COLS);
                    
         Print("DEBUG_LSTM: actor_input size after multiply: ", ArraySize(actor_input));
     } else {
@@ -602,7 +602,7 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
               ", LSTM_UNITS: ", LSTM_UNITS);
         
         MatrixMultiply(state, temp_hidden_weights, actor_hidden_transform,
-                      1, LSTM_UNITS, LSTM_UNITS, LSTM_UNITS * 4);
+                      1, LSTM_UNITS, LSTM_UNITS, HIDDEN_WEIGHT_COLS);
                    
         Print("DEBUG_LSTM: actor_hidden_transform size after multiply: ", ArraySize(actor_hidden_transform));
     } else {
@@ -711,9 +711,9 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
           
     // Use the full hidden state for the output layer
     Print("DEBUG_LSTM: Using full hidden state for output layer");
-    // Use proper matrix dimensions matching Python model
+    // Multiply hidden state [1,256] by output weights [256,4]
     MatrixMultiply(hidden_state, temp_output_weights, output,
-                   1, LSTM_UNITS, LSTM_UNITS, ACTION_COUNT);  // hidden_state[1,256] x weights[256,4]
+                   1, LSTM_UNITS, OUTPUT_WEIGHT_ROWS, OUTPUT_WEIGHT_COLS);  // Using dimension constants
                    
     Print("DEBUG_LSTM: Output size after multiply: ", ArraySize(output));
     Print("DEBUG_LSTM: Raw output values: ", output[0], ", ", output[1], ", ", output[2], ", ", output[3]);

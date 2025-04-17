@@ -101,8 +101,8 @@ def generate_mql5_array(arr: np.ndarray, name: str, const: bool = True) -> str:
             # PyTorch: [1024][256] -> MQL5: [256][1024]
             arr = arr.T
         elif "output_weight" in name:
-            # PyTorch: [4][64] -> MQL5: [64][4]
-            arr = arr.T
+            # PyTorch: [4][256] -> MQL5: [256][4]
+            arr = arr.T  # Transpose to match MQL5 matrix layout
             
         shape = arr.shape  # Get new shape after transpose
         lines = [f"{'const ' if const else ''}double {name}[{shape[0]}][{shape[1]}] = {{"]
@@ -293,6 +293,12 @@ def export_model_mqh(model: RecurrentPPO, output_dir: Path) -> None:
         f"#define FEATURE_COUNT {model.policy.observation_space.shape[0]}",
         f"#define LSTM_UNITS {model.policy.lstm_actor.hidden_size}",
         f"#define ACTION_COUNT {model.policy.action_space.n}",
+        "",
+        "// Matrix Dimensions Constants",
+        "#define INPUT_WEIGHT_COLS (LSTM_UNITS * 4)  // 1024",
+        "#define HIDDEN_WEIGHT_COLS (LSTM_UNITS * 4) // 1024",
+        "#define OUTPUT_WEIGHT_COLS ACTION_COUNT      // 4",
+        "#define OUTPUT_WEIGHT_ROWS LSTM_UNITS       // 256",
         "",
         "// Activation Functions",
         "double custom_tanh(const double x) {",
