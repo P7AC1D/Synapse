@@ -521,6 +521,28 @@ double GetMatrixValue(const double &matrix[], int row, int col, int cols) {
     return matrix[row * cols + col];
 }
 
+// Helper functions for array handling
+int GetArrayIndex(const int row, const int col, const int cols) {
+    return row * cols + col;
+}
+
+// Get value from 1D array representing a 2D matrix
+double GetMatrixValue(const double &matrix[], int row, int col, int cols) {
+    return matrix[row * cols + col];
+}
+
+// Flatten weights before matrix multiplication
+void PrepareWeightsForMultiply(double &flatWeights[], int inputDim, int outputDim) {
+    // First check if we need to create a flat array
+    if(ArraySize(flatWeights) != inputDim * outputDim) {
+        ArrayResize(flatWeights, inputDim * outputDim);
+    }
+    
+    // Then copy the weight values (specific to your weights format)
+    // This assumes your weights are stored in a flat array format
+    // If needed, add specific code to flatten 2D weights
+}
+
 //+------------------------------------------------------------------+
 //| Run LSTM inference                                                 |
 //+------------------------------------------------------------------+
@@ -552,29 +574,42 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
           ", output: ", ArraySize(output),
           ", ACTION_COUNT: ", ACTION_COUNT);
 
-    // Actor LSTM
-    // Input transformation
-    Print("DEBUG_LSTM: Starting matrix multiply for actor_input");
-    Print("DEBUG_LSTM: Feature count: ", ArraySize(features), 
-          ", FEATURE_COUNT: ", FEATURE_COUNT);
-          
-    double actor_input[];
-    MatrixMultiply(features, actor_input_weight, actor_input,
-                   1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS * 4);
-                   
-    Print("DEBUG_LSTM: actor_input size after multiply: ", ArraySize(actor_input));
+    // Prepare flattened weights for matrix multiplication
+    Print("DEBUG_LSTM: Preparing weight arrays for matrix multiply");
     
-    Print("DEBUG_LSTM: Starting matrix multiply for actor_hidden_transform");
-    Print("DEBUG_LSTM: State size: ", ArraySize(state),
-          ", LSTM_UNITS: ", LSTM_UNITS);
-          
-    double actor_hidden_transform[];
-    MatrixMultiply(state, actor_hidden_weight, actor_hidden_transform,
-                   1, LSTM_UNITS, LSTM_UNITS, LSTM_UNITS * 4);
+    // Actor LSTM - Input transformation
+    double actor_input[];
+    if (FEATURE_COUNT > 0 && LSTM_UNITS > 0) {
+        Print("DEBUG_LSTM: Feature count: ", ArraySize(features), 
+              ", FEATURE_COUNT: ", FEATURE_COUNT);
+        
+        // Directly use the weight arrays as they are already in the correct format
+        MatrixMultiply(features, actor_input_weight, actor_input,
+                       1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS * 4);
                    
-    Print("DEBUG_LSTM: actor_hidden_transform size after multiply: ", ArraySize(actor_hidden_transform));
+        Print("DEBUG_LSTM: actor_input size after multiply: ", ArraySize(actor_input));
+    } else {
+        Print("ERROR_LSTM: Invalid dimensions for feature processing");
+        return;
+    }
+    
+    // Actor LSTM - Hidden transformation
+    double actor_hidden_transform[];
+    if (LSTM_UNITS > 0) {
+        Print("DEBUG_LSTM: State size: ", ArraySize(state),
+              ", LSTM_UNITS: ", LSTM_UNITS);
+        
+        // Directly use the weight arrays as they are already in the correct format
+        MatrixMultiply(state, actor_hidden_weight, actor_hidden_transform,
+                       1, LSTM_UNITS, LSTM_UNITS, LSTM_UNITS * 4);
+                   
+        Print("DEBUG_LSTM: actor_hidden_transform size after multiply: ", ArraySize(actor_hidden_transform));
+    } else {
+        Print("ERROR_LSTM: Invalid dimensions for hidden state processing");
+        return;
+    }
 
-    // Calculate gates
+    // Calculate gates - keep existing code
     Print("DEBUG_LSTM: Starting gate calculations for ", LSTM_UNITS, " units");
     for (int i = 0; i < LSTM_UNITS; i++)
     {
@@ -704,3 +739,4 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     
     Print("DEBUG_LSTM: LSTM inference completed successfully");
 }
+```
