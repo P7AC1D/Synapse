@@ -14,8 +14,25 @@ with careful management of temporal dependencies and exploration strategies.
 import os
 import json
 import pandas as pd
-from datetime import datetime
-from typing import Tuple, Dict, Any
+from datetime import datetime, timedelta
+from typing import Tuple, Dict, Any, List
+import time
+"""
+Training utilities for PPO-LSTM model with walk-forward optimization.
+
+This module provides functions and configurations for training a PPO-LSTM model
+using walk-forward optimization. It includes:
+- Model architecture and hyperparameter configurations
+- Training state management
+- Model evaluation and comparison functions
+- Walk-forward training loop implementation
+
+The implementation is optimized for sparse reward scenarios in financial trading,
+with careful management of temporal dependencies and exploration strategies.
+"""
+import os
+import json
+import pandas as pd
 import threading
 from utils.progress import show_progress_continuous, stop_progress_indicator
 from stable_baselines3.common.monitor import Monitor
@@ -62,7 +79,24 @@ MODEL_KWARGS = {
     "use_sde": False,               # No stochastic dynamics
 }
 
-def save_training_state(path: str, training_start: int, model_path: str) -> None:
+def format_time_remaining(seconds: float) -> str:
+    """Convert seconds to days, hours, minutes format."""
+    td = timedelta(seconds=int(seconds))
+    days = td.days
+    hours = td.seconds // 3600
+    minutes = (td.seconds % 3600) // 60
+    
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0 or days > 0:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    
+    return " ".join(parts)
+
+def save_training_state(path: str, training_start: int, model_path: str, 
+                       iteration_time: float = None, total_iterations: int = None) -> None:
     """
     Save current training state to file for resumable training.
     
@@ -70,12 +104,37 @@ def save_training_state(path: str, training_start: int, model_path: str) -> None
         path: Path to save state file
         training_start: Current training window start index
         model_path: Path to current best model
+        iteration_time: Time taken for last iteration in seconds
+        total_iterations: Total number of iterations planned
     """
-    state = {
-        'training_start': training_start,
-        'model_path': model_path,
-        'timestamp': datetime.now().isoformat()
-    }
+    try:
+        with open(path, 'r') as f:
+            state = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        state = {
+            'training_start': training_start,
+            'model_path': model_path,
+            'timestamp': datetime.now().isoformat(),
+            'iteration_times': [],
+            'avg_iteration_time': 0.0,
+            'completed_iterations': 0,
+            'total_iterations': total_iterations
+        }
+    
+    state['training_start'] = training_start
+    state['model_path'] = model_path
+    state['timestamp'] = datetime.now().isoformat()
+    
+    if iteration_time is not None:
+        state['iteration_times'].append(iteration_time)
+        # Keep only last 5 iterations for moving average
+        state['iteration_times'] = state['iteration_times'][-5:]
+        state['avg_iteration_time'] = sum(state['iteration_times']) / len(state['iteration_times'])
+        state['completed_iterations'] = state.get('completed_iterations', 0) + 1
+    
+    if total_iterations is not None:
+        state['total_iterations'] = total_iterations
+    
     with open(path, 'w') as f:
         json.dump(state, f)
 
@@ -217,7 +276,7 @@ def compare_models_on_full_dataset(current_model_path: str, previous_model_path:
     # Compare scores
     return current_metrics['score'] > previous_metrics['score']
 
-def load_training_state(path: str) -> Tuple[int, str]:
+def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     """
     Load training state for resuming interrupted training.
     
@@ -225,14 +284,17 @@ def load_training_state(path: str) -> Tuple[int, str]:
         path: Path to state file
         
     Returns:
-        Tuple of (training_start_index, model_path)
-        Returns (0, None) if no state file exists
+        Tuple of (training_start_index, model_path, state_dict)
+        Returns (0, None, {}) if no state file exists
     """
     if not os.path.exists(path):
-        return 0, None
-    with open(path, 'r') as f:
-        state = json.load(f)
-    return state['training_start'], state['model_path']
+        return 0, None, {}
+    try:
+        with open(path, 'r') as f:
+            state = json.load(f)
+        return state['training_start'], state['model_path'], state
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0, None, {}
 
 def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
@@ -270,7 +332,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     total_iterations = (total_periods - initial_window) // step_size + 1
     
     state_path = f"../results/{args.seed}/training_state.json"
-    training_start, _ = load_training_state(state_path)
+    training_start, _, state = load_training_state(state_path)
     
     best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
     if os.path.exists(best_model_path):
@@ -292,6 +354,15 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     try:
         while training_start + initial_window <= total_periods:
             iteration = training_start // step_size
+            iteration_start_time = time.time()
+            
+            # Display timing estimate if we have data
+            if state.get('avg_iteration_time'):
+                remaining_iterations = total_iterations - state.get('completed_iterations', 0)
+                estimated_time = remaining_iterations * state['avg_iteration_time']
+                print(f"\nEstimated time remaining: {format_time_remaining(estimated_time)}")
+                print(f"Average iteration time: {state['avg_iteration_time']/60:.1f} minutes")
+                print(f"Completed iterations: {state['completed_iterations']}/{total_iterations}")
             
             # Calculate window boundaries using validation size parameter
             val_size = int(initial_window * args.validation_size)
@@ -469,7 +540,10 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 else:
                     print("No best model found - continuing with current model")
                 
-            save_training_state(state_path, training_start + step_size, best_model_path)
+            # Calculate iteration time and save state
+            iteration_time = time.time() - iteration_start_time
+            save_training_state(state_path, training_start + step_size, best_model_path,
+                              iteration_time=iteration_time, total_iterations=total_iterations)
             
             # Move to next iteration
             training_start += step_size
