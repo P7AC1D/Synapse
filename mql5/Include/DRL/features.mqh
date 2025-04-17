@@ -1,11 +1,9 @@
 // Feature processing for DRL model
-// Generated on: 2025-04-17 12:29:04
+// Generated on: 2025-04-17 12:49:53
 
 #include <Trade/Trade.mqh>
-// Replace Series.mqh with other standard files
 #include <Arrays/ArrayDouble.mqh>
 #include <Math/Stat/Math.mqh>
-// Remove Timeseries reference
 
 #property copyright "Copyright 2024, DRL Trading Bot"
 #property link      "https://github.com/your-repo"
@@ -49,12 +47,12 @@ public:
         ArraySetAsSeries(low, true);
         ArraySetAsSeries(volume, true);
 
+
         // Get price data
         CopyClose(_Symbol, _Period, 0, 2, close);
         CopyOpen(_Symbol, _Period, 0, 1, open);
         CopyHigh(_Symbol, _Period, 0, 1, high);
         CopyLow(_Symbol, _Period, 0, 1, low);
-        // Fix CopyVolume call
         CopyTickVolume(_Symbol, _Period, 0, 2, volume);
 
         // Calculate returns
