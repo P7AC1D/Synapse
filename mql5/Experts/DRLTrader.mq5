@@ -690,12 +690,10 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     Print("DEBUG_LSTM: Copying hidden state to state array");
     ArrayCopy(state, hidden_state);
 
-    // Calculate final output with flattened arrays
+    // Calculate final output with temporary weights array
     Print("DEBUG_LSTM: Starting final output calculation");
-    double flat_output_weights[];
-    PrepareWeightsArray(actor_output_weight, flat_output_weights, LSTM_UNITS, ACTION_COUNT);
           
-    MatrixMultiply(hidden_state, flat_output_weights, output,
+    MatrixMultiply(hidden_state, temp_output_weights, output,
                    1, LSTM_UNITS, LSTM_UNITS, ACTION_COUNT);
                    
     Print("DEBUG_LSTM: Output size after matrix multiply: ", ArraySize(output));
