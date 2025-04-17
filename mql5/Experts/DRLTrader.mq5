@@ -84,6 +84,7 @@ int OnInit()
     // Initialize feature processor
     FeatureProcessor = new CFeatureProcessor();
     FeatureProcessor.Init(_Symbol, _Period);
+    Print("DEBUG: Feature processor initialized");
 
     // Initialize LSTM state array
     ArrayResize(LSTMState, LSTM_UNITS);
@@ -500,6 +501,26 @@ void OnTick()
     FirstTick = false;
 }
 
+// Helper function to convert 2D index to 1D array index
+int GetArrayIndex(const int row, const int col, const int cols) {
+    return row * cols + col;
+}
+
+// Helper function to flatten 2D array to 1D
+void Flatten2DArray(const double &arr[][], double &flat[], const int rows, const int cols) {
+    ArrayResize(flat, rows * cols);
+    for(int i = 0; i < rows; i++) {
+        for(int j = 0; j < cols; j++) {
+            flat[GetArrayIndex(i, j, cols)] = arr[i][j];
+        }
+    }
+}
+
+// Helper functions for handling 2D arrays
+double GetMatrixValue(const double &matrix[], int row, int col, int cols) {
+    return matrix[row * cols + col];
+}
+
 //+------------------------------------------------------------------+
 //| Run LSTM inference                                                 |
 //+------------------------------------------------------------------+
@@ -535,19 +556,17 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     // Input transformation
     Print("DEBUG_LSTM: Starting matrix multiply for actor_input");
     Print("DEBUG_LSTM: Feature count: ", ArraySize(features), 
-          ", FEATURE_COUNT: ", FEATURE_COUNT,
-          ", actor_input_weight first dimension: ", ArrayRange(actor_input_weight, 0));
+          ", FEATURE_COUNT: ", FEATURE_COUNT);
           
     double actor_input[];
     MatrixMultiply(features, actor_input_weight, actor_input,
-                   1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS);
+                   1, FEATURE_COUNT, FEATURE_COUNT, LSTM_UNITS * 4);
                    
     Print("DEBUG_LSTM: actor_input size after multiply: ", ArraySize(actor_input));
     
     Print("DEBUG_LSTM: Starting matrix multiply for actor_hidden_transform");
     Print("DEBUG_LSTM: State size: ", ArraySize(state),
-          ", LSTM_UNITS: ", LSTM_UNITS,
-          ", actor_hidden_weight first dimension: ", ArrayRange(actor_hidden_weight, 0));
+          ", LSTM_UNITS: ", LSTM_UNITS);
           
     double actor_hidden_transform[];
     MatrixMultiply(state, actor_hidden_weight, actor_hidden_transform,
@@ -647,12 +666,12 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     Print("DEBUG_LSTM: Copying hidden state to state array");
     ArrayCopy(state, hidden_state);
 
-    // Calculate final output
+    // Calculate final output with flattened arrays
     Print("DEBUG_LSTM: Starting final output calculation");
-    Print("DEBUG_LSTM: hidden_state size: ", ArraySize(hidden_state),
-          ", actor_output_weight dimensions: ", ArrayRange(actor_output_weight, 0), "x", ArrayRange(actor_output_weight, 1));
+    double flat_output_weights[];
+    Flatten2DArray(actor_output_weight, flat_output_weights, LSTM_UNITS, ACTION_COUNT);
           
-    MatrixMultiply(hidden_state, actor_output_weight, output,
+    MatrixMultiply(hidden_state, flat_output_weights, output,
                    1, LSTM_UNITS, LSTM_UNITS, ACTION_COUNT);
                    
     Print("DEBUG_LSTM: Output size after matrix multiply: ", ArraySize(output));
