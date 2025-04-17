@@ -15,9 +15,19 @@ from typing import Dict, List, Tuple, Any
 import torch
 from sb3_contrib.ppo_recurrent import RecurrentPPO
 
-from config import MODEL_PATH
 from trade_model import TradeModel
 from trading.dummy_processor import DummyFeatureProcessor
+
+import argparse
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Export PPO-LSTM model to MQL5 format.")
+    parser.add_argument("--model-path", 
+                       default="../model/XAUUSDm.zip",
+                       help="Path to the model file (default: ../model/XAUUSDm.zip)")
+    return parser.parse_args()
+
 
 def create_export_dirs() -> Tuple[Path, Path]:
     """Create directories for MQL5 export files."""
@@ -536,6 +546,7 @@ def export_features_mqh(feature_processor: DummyFeatureProcessor, output_dir: Pa
 def main():
     """Main export function."""
     print("Starting model export process...")
+    args = parse_args()
     
     try:
         # Create export directories
@@ -543,8 +554,8 @@ def main():
         print(f"Created export directories at {include_dir}")
         
         # Load model
-        print(f"Loading model from {MODEL_PATH}...")
-        trade_model = TradeModel(MODEL_PATH)
+        print(f"Loading model from {args.model_path}...")
+        trade_model = TradeModel(args.model_path)
         model = trade_model.model
         if model is None:
             raise ValueError("Failed to load model")
