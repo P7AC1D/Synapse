@@ -55,79 +55,64 @@ def generate_test_cases(model: TradeModel, feature_processor: DummyFeatureProces
     # Generate dummy data with market format
     data = generate_dummy_data()
     
-    # Process features with verbose output
-    print("Processing features...")
-    print("Raw data columns:", list(data.columns))
-    print("Data shape:", data.shape)
-    
-    # Preprocess data and extract features DataFrame
+    # Process features
     features_df, _ = feature_processor.preprocess_data(data)
-    print("Feature processor output shape:", features_df.shape)
-    print("Feature processor columns:", list(features_df.columns))
     
     # Add position state columns
     features_df['position_type'] = 0  # No position
     features_df['unrealized_pnl'] = 0  # No unrealized P&L
     
-    # Print final column names for debugging
-    print("Final columns:", list(features_df.columns))
-    
-    # Generate test cases at different points, ensuring enough lookback data
-    min_history = 200  # Use larger history window to ensure enough data after preprocessing
-    
-    # Ensure we have enough data points
+    # Generate sequential test cases to verify state handling
+    min_history = 200
     if len(data) < min_history:
         raise ValueError(f"Not enough data points. Need at least {min_history}, got {len(data)}")
     
-    # Calculate valid range for indices, accounting for feature processor's data reduction
+    # Calculate valid range for indices
     valid_start = min_history
-    valid_end = len(features_df) - 1  # Use features_df length instead of raw data length
+    valid_end = len(features_df) - 1
     
     if valid_end - valid_start < n_cases:
         raise ValueError(f"Not enough valid data points after min_history. Need at least {n_cases}, got {valid_end - valid_start}")
     
-    # Select evenly spaced indices for test cases
-    step = (valid_end - valid_start) // (n_cases - 1)  # Ensure even spacing
-    indices = np.arange(valid_start, valid_end, step)[:n_cases]
+    # Select consecutive indices for state continuity testing
+    start_idx = valid_start + 50  # Start well after valid_start for stability
+    indices = range(start_idx, start_idx + n_cases)
     
+    # Initialize model state
+    model.reset_states()
+    
+    # Preload states with initial history
+    initial_data = data.iloc[start_idx-min_history:start_idx].copy()
+    model.preload_states(initial_data)
+    
+    # Generate test cases maintaining state continuity
     for idx in indices:
         try:
-            # Get a window of data
-            # Reset model for this test case
-            model.reset_states()
+            # Get current data point
+            current_data = data.iloc[idx:idx+1].copy()
             
-            # Get data using full window
-            current_data = data.iloc[idx-min_history:idx+1].copy()
-            
-            # Verify we have enough data
-            if len(current_data) < min_history:
-                raise ValueError(f"Insufficient data window: {len(current_data)} < {min_history}")
-            
-            # Preload states with historical data
-            model.preload_states(current_data.iloc[:-1])  # Use all but last point
-                
-            # Make prediction for current point
+            # Make prediction and capture current state
             prediction = model.predict_single(current_data)
+            current_state = model.lstm_states[0].copy() if model.lstm_states else np.zeros(256)
             
-            # Store test case with LSTM state
-            # Get all features and verify correct shape
+            # Get features for current point
             features = features_df.iloc[idx].values
+            
+            # Verify feature shape
             if len(features) != 11:
                 raise ValueError(f"Expected 11 features but got {len(features)}")
             
-            # Set position features to 0
-            features[-2:] = 0.0  # Set position_type and unrealized_pnl to 0
-            
-            # Debug print feature information
-            print(f"Features shape: {features.shape}, size: {len(features)}")
+            # Clear position features
+            features[-2:] = 0.0
             
             test_case = {
                 'features': features.tolist(),
-                'lstm_state': model.lstm_states[0].tolist() if model.lstm_states else np.zeros(256).tolist(),  # Match LSTM_UNITS size
+                'lstm_state': current_state.tolist(),
                 'expected_action': prediction['action']
             }
             
             test_cases.append(test_case)
+            print(f"Generated test case {len(test_cases)} with action {prediction['action']}")
             
         except Exception as e:
             print(f"Error generating test case at index {idx}: {str(e)}")

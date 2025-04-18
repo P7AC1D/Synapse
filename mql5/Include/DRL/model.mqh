@@ -1,5 +1,5 @@
 // Auto-generated LSTM model architecture
-// Generated on: 2025-04-18 05:05:25
+// Generated on: 2025-04-18 11:34:20
 
 #include <Trade/Trade.mqh>
 #include <Math/Stat/Math.mqh>

@@ -92,10 +92,18 @@ int OnInit()
     FeatureProcessor.Init(_Symbol, _Period);
     Print("DEBUG: Feature processor initialized");
 
-    // Initialize LSTM state array
-    ArrayResize(LSTMState, LSTM_UNITS);
+    // Initialize LSTM state array for both hidden and cell states
+    ArrayResize(LSTMState, 2 * LSTM_UNITS);  // Double size for [hidden_state, cell_state]
+    if(ArraySize(LSTMState) != 2 * LSTM_UNITS) {
+        Print("ERROR: Failed to initialize LSTM state array - expected size ", 
+              2 * LSTM_UNITS, ", got ", ArraySize(LSTMState));
+        return INIT_FAILED;
+    }
+    
+    // Initialize both hidden and cell states to zero
     ArrayInitialize(LSTMState, 0);
-    Print("DEBUG: LSTM state initialized with ", LSTM_UNITS, " units");
+    Print("DEBUG: LSTM state initialized with ", LSTM_UNITS, 
+          " units (", ArraySize(LSTMState), " total elements)");
 
     // Initialize position tracking to match Python's None state
     CurrentPosition.direction = 0;
@@ -418,7 +426,13 @@ void OnTick()
         if (timeDiff > (TimeframeMinutes * 2 * 60))
         {
             Print("DEBUG: Significant data gap detected (", timeDiff / 60.0, " minutes), resetting LSTM states");
+            if(ArraySize(LSTMState) != 2 * LSTM_UNITS) {
+                Print("ERROR: Invalid state array size during reset - expected ", 
+                      2 * LSTM_UNITS, ", got ", ArraySize(LSTMState));
+                return;
+            }
             ArrayInitialize(LSTMState, 0);
+            Print("DEBUG: Reset LSTM states after gap (", ArraySize(LSTMState), " total elements)");
         }
     }
 
@@ -550,22 +564,33 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     Print("DEBUG_LSTM: Starting RunLSTMInference with feature count: ", ArraySize(features), 
           ", state size: ", ArraySize(state));
           
-    // Temporary arrays for LSTM gates
+    // Split state into hidden and cell states (each LSTM_UNITS long)
+    // Original shape is (2, 1, 256) where first dim is [hidden_state, cell_state]
+    double hidden_state[];  // First half of state array
+    double next_cell_state[]; // Next cell state to be computed
+    double current_cell_state[]; // Second half of state array
     double input_gate[];
     double forget_gate[];
-    double cell_state[];
+    double cell_candidate[];
     double output_gate[];
-    double hidden_state[];
-
-    // Initialize arrays
+    
     int hidden_size = LSTM_UNITS;
     Print("DEBUG_LSTM: Hidden size (LSTM_UNITS): ", hidden_size);
     
+    // Initialize all arrays
+    ArrayResize(hidden_state, hidden_size);
+    ArrayResize(next_cell_state, hidden_size);
+    ArrayResize(current_cell_state, hidden_size);
     ArrayResize(input_gate, hidden_size);
     ArrayResize(forget_gate, hidden_size);
-    ArrayResize(cell_state, hidden_size);
+    ArrayResize(cell_candidate, hidden_size);
     ArrayResize(output_gate, hidden_size);
-    ArrayResize(hidden_state, hidden_size);
+    
+    // Split state into hidden and cell states
+    for(int i = 0; i < LSTM_UNITS; i++) {
+        hidden_state[i] = state[i];
+        current_cell_state[i] = state[i + LSTM_UNITS];
+    }
     ArrayResize(output, ACTION_COUNT);
     
     Print("DEBUG_LSTM: Arrays resized - input_gate: ", ArraySize(input_gate),
@@ -664,9 +689,9 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
             return;
         }
         
-        cell_state[i] = custom_tanh(actor_input[idx] +
-                                    actor_hidden_transform[idx] +
-                                    actor_input_bias[i]);
+        cell_candidate[i] = custom_tanh(actor_input[idx] +
+                                      actor_hidden_transform[idx] +
+                                      actor_input_bias[i]);
 
         // Debug bounds checks for output_gate
         idx += LSTM_UNITS;
@@ -680,32 +705,36 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
         }
         
         output_gate[i] = sigmoid(actor_input[idx] +
-                                 actor_hidden_transform[idx] +
-                                 actor_hidden_bias[i]);
+                               actor_hidden_transform[idx] +
+                               actor_hidden_bias[i]);
     }
 
     // Update cell and hidden states
     Print("DEBUG_LSTM: Updating cell and hidden states");
     for (int i = 0; i < LSTM_UNITS; i++)
     {
-        if(i >= ArraySize(forget_gate) || i >= ArraySize(state) || 
-           i >= ArraySize(input_gate) || i >= ArraySize(cell_state)) {
+        if(i >= ArraySize(forget_gate) || i >= ArraySize(current_cell_state) || 
+           i >= ArraySize(input_gate) || i >= ArraySize(cell_candidate)) {
             Print("ERROR_LSTM: Index out of bounds at state update, i=", i,
                   ", forget_gate size: ", ArraySize(forget_gate),
-                  ", state size: ", ArraySize(state),
+                  ", current_cell_state size: ", ArraySize(current_cell_state),
                   ", input_gate size: ", ArraySize(input_gate),
-                  ", cell_state size: ", ArraySize(cell_state));
+                  ", cell_candidate size: ", ArraySize(cell_candidate));
             return;
         }
         
-        cell_state[i] = forget_gate[i] * state[i] +
-                        input_gate[i] * cell_state[i];
-        hidden_state[i] = output_gate[i] * custom_tanh(cell_state[i]);
+        // Update cell state using LSTM equations
+        next_cell_state[i] = forget_gate[i] * current_cell_state[i] +
+                            input_gate[i] * cell_candidate[i];
+        hidden_state[i] = output_gate[i] * custom_tanh(next_cell_state[i]);
     }
 
-    // Update LSTM state for next iteration
-    Print("DEBUG_LSTM: Copying hidden state to state array");
-    ArrayCopy(state, hidden_state);
+    // Update LSTM state for next iteration by concatenating hidden_state and next_cell_state
+    Print("DEBUG_LSTM: Copying updated states to state array");
+    for(int i = 0; i < LSTM_UNITS; i++) {
+        state[i] = hidden_state[i];              // First half: hidden state
+        state[i + LSTM_UNITS] = next_cell_state[i];  // Second half: cell state
+    }
 
     // Calculate final output with temporary weights array
     Print("DEBUG_LSTM: Starting final output calculation");
