@@ -1,5 +1,5 @@
 // Feature processing for DRL model
-// Generated on: 2025-04-18 04:45:45
+// Generated on: 2025-04-18 05:05:25
 
 #include <Trade/Trade.mqh>
 #include <Arrays/ArrayDouble.mqh>
@@ -76,8 +76,36 @@ public:
         // Normalize RSI to [-1, 1]
         double norm_rsi = rsi[0] / 50.0 - 1.0;
 
-        // Normalize ATR
-        double norm_atr = 2.0 * (atr[0] / close[0]) - 1.0;
+        // Normalize ATR using historical window
+        double atr_window[], close_history[];
+        ArraySetAsSeries(atr_window, true);
+        ArraySetAsSeries(close_history, true);
+
+        // Copy historical data for ATR normalization
+        int history_window = 100;  // Match Python's historical window
+        CopyBuffer(m_atr_handle, 0, 0, history_window, atr_window);
+        CopyClose(_Symbol, _Period, 0, history_window, close_history);
+
+        // Calculate ATR/close ratios
+        double atr_close_ratios[];
+        ArrayResize(atr_close_ratios, history_window);
+        double min_ratio = DBL_MAX;
+        double max_ratio = -DBL_MAX;
+
+        for(int i=0; i<history_window; i++) {
+            if(close_history[i] > 0) {
+                double ratio = atr_window[i] / close_history[i];
+                atr_close_ratios[i] = ratio;
+                min_ratio = MathMin(min_ratio, ratio);
+                max_ratio = MathMax(max_ratio, ratio);
+            }
+        }
+
+        // Current ATR/close ratio
+        double current_ratio = atr[0] / close[0];
+
+        // Normalize using historical min/max
+        double norm_atr = 2.0 * (current_ratio - min_ratio) / (max_ratio - min_ratio + 1e-8) - 1.0;
 
         // Calculate volatility breakout
         double band_range = bb_upper[0] - bb_lower[0];
