@@ -651,7 +651,7 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
         
         input_gate[i] = sigmoid(actor_input[idx] +
                                 actor_hidden_transform[idx] +
-                                actor_input_bias[i]);
+                                actor_input_bias[idx]);
 
         // Debug bounds checks for cell_state
         idx += LSTM_UNITS;
@@ -731,10 +731,16 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
         return;
     }
     
+    // Find maximum value first for numerical stability
+    double max_val = output[0] + actor_output_bias[0];
+    for (int i = 1; i < ACTION_COUNT; i++) {
+        max_val = MathMax(max_val, output[i] + actor_output_bias[i]);
+    }
+
+    // Apply softmax with the stability trick
     double sum = 0;
-    for (int i = 0; i < ACTION_COUNT; i++)
-    {
-        output[i] = MathExp(output[i] + actor_output_bias[i]);
+    for (int i = 0; i < ACTION_COUNT; i++) {
+        output[i] = MathExp(output[i] + actor_output_bias[i] - max_val);
         sum += output[i];
     }
 
