@@ -144,12 +144,12 @@ public:
         features[0] = returns;
         features[1] = norm_rsi;
         features[2] = norm_atr;
-        features[3] = volatility_breakout;
-        features[4] = trend_strength;
-        features[5] = candle_pattern;
-        features[6] = sin_time;
-        features[7] = cos_time;
-        features[8] = volume_change;
+        features[3] = volume_change;
+        features[4] = volatility_breakout;
+        features[5] = trend_strength;
+        features[6] = candle_pattern;
+        features[7] = sin_time;
+        features[8] = cos_time;
     }
 
     void Deinit() {
