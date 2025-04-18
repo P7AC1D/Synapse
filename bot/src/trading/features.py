@@ -98,6 +98,18 @@ class FeatureProcessor:
             # Calculate technical indicators using TA-Lib
             atr, rsi, (upper_band, lower_band), trend_strength = self._calculate_indicators(high, low, close)
             
+            # Compare current ATR to its own moving average
+            window_size = 20  # Consider changing to match MQL5 if needed
+            atr_sma = pd.Series(atr).rolling(window_size, min_periods=1).mean().values
+            atr_ratio = atr / (atr_sma + 1e-8)  # How volatile is it compared to recent history?
+
+            # Scale from typical ATR/SMA ratio range [0.5, 2.0] to [-1, 1]
+            min_expected_ratio = 0.5
+            max_expected_ratio = 2.0
+            expected_range = max_expected_ratio - min_expected_ratio
+            atr_norm = 2 * (atr_ratio - min_expected_ratio) / expected_range - 1
+            atr_norm = np.clip(atr_norm, -1, 1)  # Ensure values stay within bounds
+            
             # Returns and time features
             returns = np.diff(close) / close[:-1]
             returns = np.insert(returns, 0, 0)
@@ -139,9 +151,8 @@ class FeatureProcessor:
             # Create features with preserved index
             features = {
                 'returns': returns,
-                'rsi': rsi / 50 - 1,  # Normalize to [-1, 1]
-                'atr': 2 * (atr / close - np.nanmin(atr / close)) / 
-                      (np.nanmax(atr / close) - np.nanmin(atr / close) + 1e-8) - 1,
+                'rsi': rsi / 50 - 1,
+                'atr': atr_norm,
                 'volatility_breakout': volatility_breakout,
                 'trend_strength': trend_strength,
                 'candle_pattern': candle_pattern,
