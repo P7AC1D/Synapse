@@ -20,28 +20,122 @@ from trading.dummy_processor import DummyFeatureProcessor
 
 import argparse
 
-def generate_test_cases(trade_model: TradeModel, feature_processor: DummyFeatureProcessor) -> List[Dict[str, Any]]:
-    """Generate test cases for model verification."""
+def generate_dummy_data() -> pd.DataFrame:
+    """Generate dummy data for test cases."""
+    np.random.seed(42)
+    n_samples = 1000  # Much larger sample size for sufficient history
+    
+    # Generate base prices
+    close = np.random.normal(1000, 10, n_samples)
+    
+    # Generate consistent OHLCV data
+    data = pd.DataFrame({
+        'close': close,
+        'open': close + np.random.normal(0, 5, n_samples),
+        'high': close + abs(np.random.normal(0, 10, n_samples)),
+        'low': close - abs(np.random.normal(0, 10, n_samples)),
+        'volume': abs(np.random.normal(1000, 100, n_samples)),
+        'spread': abs(np.random.normal(2, 0.1, n_samples))
+    })
+    
+    # Ensure OHLC relationship is valid
+    data['high'] = np.maximum.reduce([data['high'], data['open'], data['close']])
+    data['low'] = np.minimum.reduce([data['low'], data['open'], data['close']])
+    
+    # Set index as datetime
+    data.index = pd.date_range(start='2025-01-01', periods=n_samples, freq='15min')
+    
+    return data
+
+def generate_test_cases(model: TradeModel, feature_processor: DummyFeatureProcessor,
+                       n_cases: int = 5) -> List[Dict[str, Any]]:
+    """Generate test cases for verification using dummy data."""
     test_cases = []
     
-    # Initialize empty LSTM state
-    lstm_state = np.zeros(trade_model.model.policy.lstm_actor.hidden_size, dtype=np.float32)
+    # Generate dummy data with market format
+    data = generate_dummy_data()
     
-    # Generate base features using feature processor
-    base_features = np.zeros(9)  # Same size as in ProcessFeatures
+    # Process features with verbose output
+    print("Processing features...")
+    print("Raw data columns:", list(data.columns))
+    print("Data shape:", data.shape)
     
-    # Add position features
-    features = np.concatenate([base_features, [0.0, 0.0]])  # Add position size and profit
+    # Preprocess data and extract features DataFrame
+    features_df, _ = feature_processor.preprocess_data(data)
+    print("Feature processor output shape:", features_df.shape)
+    print("Feature processor columns:", list(features_df.columns))
     
-    # Create test case
-    test_case = {
-        'features': features.tolist(),
-        'lstm_state': lstm_state.tolist(),
-        'expected_action': 0  # Default to HOLD action
-    }
+    # Add position state columns
+    features_df['position_type'] = 0  # No position
+    features_df['unrealized_pnl'] = 0  # No unrealized P&L
     
-    test_cases.append(test_case)
+    # Print final column names for debugging
+    print("Final columns:", list(features_df.columns))
+    
+    # Generate test cases at different points, ensuring enough lookback data
+    min_history = 200  # Use larger history window to ensure enough data after preprocessing
+    
+    # Ensure we have enough data points
+    if len(data) < min_history:
+        raise ValueError(f"Not enough data points. Need at least {min_history}, got {len(data)}")
+    
+    # Calculate valid range for indices, accounting for feature processor's data reduction
+    valid_start = min_history
+    valid_end = len(features_df) - 1  # Use features_df length instead of raw data length
+    
+    if valid_end - valid_start < n_cases:
+        raise ValueError(f"Not enough valid data points after min_history. Need at least {n_cases}, got {valid_end - valid_start}")
+    
+    # Select evenly spaced indices for test cases
+    step = (valid_end - valid_start) // (n_cases - 1)  # Ensure even spacing
+    indices = np.arange(valid_start, valid_end, step)[:n_cases]
+    
+    for idx in indices:
+        try:
+            # Get a window of data
+            # Reset model for this test case
+            model.reset_states()
+            
+            # Get data using full window
+            current_data = data.iloc[idx-min_history:idx+1].copy()
+            
+            # Verify we have enough data
+            if len(current_data) < min_history:
+                raise ValueError(f"Insufficient data window: {len(current_data)} < {min_history}")
+            
+            # Preload states with historical data
+            model.preload_states(current_data.iloc[:-1])  # Use all but last point
+                
+            # Make prediction for current point
+            prediction = model.predict_single(current_data)
+            
+            # Store test case with LSTM state
+            # Get all features and verify correct shape
+            features = features_df.iloc[idx].values
+            if len(features) != 11:
+                raise ValueError(f"Expected 11 features but got {len(features)}")
+            
+            # Set position features to 0
+            features[-2:] = 0.0  # Set position_type and unrealized_pnl to 0
+            
+            # Debug print feature information
+            print(f"Features shape: {features.shape}, size: {len(features)}")
+            
+            test_case = {
+                'features': features.tolist(),
+                'lstm_state': model.lstm_states[0].tolist() if model.lstm_states else np.zeros(256).tolist(),  # Match LSTM_UNITS size
+                'expected_action': prediction['action']
+            }
+            
+            test_cases.append(test_case)
+            
+        except Exception as e:
+            print(f"Error generating test case at index {idx}: {str(e)}")
+            continue
+        
+        
     return test_cases
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -203,11 +297,14 @@ def export_model_mqh(model: RecurrentPPO, output_dir: Path) -> None:
         f"#define LSTM_UNITS {model.policy.lstm_actor.hidden_size}",
         f"#define ACTION_COUNT {model.policy.action_space.n}",
         "",
+        "// LSTM Gate Constants",
+        "#define GATES_PER_UNIT 4  // input, forget, cell, output gates",
+        "",
         "// Matrix Dimensions Constants",
-        "#define INPUT_WEIGHT_COLS (LSTM_UNITS * 4)  // 1024",
-        "#define HIDDEN_WEIGHT_COLS (LSTM_UNITS * 4) // 1024",
-        "#define OUTPUT_WEIGHT_COLS ACTION_COUNT     // 4",
-        "#define OUTPUT_WEIGHT_ROWS LSTM_UNITS      // 256",
+        "#define INPUT_WEIGHT_COLS (LSTM_UNITS * GATES_PER_UNIT)   // input weights: [feature_count][lstm_units * 4]", 
+        "#define HIDDEN_WEIGHT_COLS (LSTM_UNITS * GATES_PER_UNIT)  // hidden weights: [lstm_units][lstm_units * 4]",
+        "#define OUTPUT_WEIGHT_COLS ACTION_COUNT           // output weights: [lstm_units][action_count]",
+        "#define OUTPUT_WEIGHT_ROWS LSTM_UNITS            // output directly from LSTM to actions",
         "",
         "// Activation Functions",
         "double custom_tanh(const double x) {",

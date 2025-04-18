@@ -1,5 +1,5 @@
 // Auto-generated LSTM model architecture
-// Generated on: 2025-04-18 04:33:43
+// Generated on: 2025-04-18 04:45:45
 
 #include <Trade/Trade.mqh>
 #include <Math/Stat/Math.mqh>
@@ -16,11 +16,14 @@
 #define LSTM_UNITS 256
 #define ACTION_COUNT 4
 
+// LSTM Gate Constants
+#define GATES_PER_UNIT 4  // input, forget, cell, output gates
+
 // Matrix Dimensions Constants
-#define INPUT_WEIGHT_COLS (LSTM_UNITS * 4)  // 1024
-#define HIDDEN_WEIGHT_COLS (LSTM_UNITS * 4) // 1024
-#define OUTPUT_WEIGHT_COLS ACTION_COUNT     // 4
-#define OUTPUT_WEIGHT_ROWS LSTM_UNITS      // 256
+#define INPUT_WEIGHT_COLS (LSTM_UNITS * GATES_PER_UNIT)   // input weights: [feature_count][lstm_units * 4]
+#define HIDDEN_WEIGHT_COLS (LSTM_UNITS * GATES_PER_UNIT)  // hidden weights: [lstm_units][lstm_units * 4]
+#define OUTPUT_WEIGHT_COLS ACTION_COUNT           // output weights: [lstm_units][action_count]
+#define OUTPUT_WEIGHT_ROWS LSTM_UNITS            // output directly from LSTM to actions
 
 // Activation Functions
 double custom_tanh(const double x) {
