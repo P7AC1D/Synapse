@@ -67,18 +67,30 @@ class DummyFeatureProcessor(FeatureProcessor):
             )
             volume_pct = np.clip(volume_pct, -1, 1)
 
-            # Create features DataFrame
+            # Calculate ATR relative to its moving average
+            window_size = 20
+            atr_sma = np.convolve(atr, np.ones(window_size)/window_size, mode='valid')
+            atr_sma = np.pad(atr_sma, (window_size-1, 0), mode='edge')
+            atr_ratio = atr / (atr_sma + 0.00000001)
+
+            # Map ATR ratio from [0.5, 2.0] to [-1, 1] (same as MQL5)
+            min_expected_ratio = 0.5
+            max_expected_ratio = 2.0
+            expected_range = max_expected_ratio - min_expected_ratio
+            norm_atr = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0
+            norm_atr = np.clip(norm_atr, -1, 1)
+
+            # Create features DataFrame in same order as MQL5
             features = {
                 'returns': returns,
                 'rsi': rsi / 50 - 1,
-                'atr': 2 * (atr / close - np.nanmin(atr / close)) / 
-                      (np.nanmax(atr / close) - np.nanmin(atr / close) + 1e-8) - 1,
+                'atr': norm_atr,
+                'volume_change': volume_pct,
                 'volatility_breakout': volatility_breakout,
                 'trend_strength': trend_strength,
                 'candle_pattern': candle_pattern,
                 'sin_time': sin_time,
-                'cos_time': cos_time,
-                'volume_change': volume_pct
+                'cos_time': cos_time
             }
             
             features_df = pd.DataFrame(features, index=data.index)
