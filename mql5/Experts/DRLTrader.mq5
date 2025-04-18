@@ -456,11 +456,21 @@ void OnTick()
     double lstm_output[];
     RunLSTMInference(features, LSTMState, lstm_output);
 
+    // Add this after the LSTM inference
+    Print("DEBUG: LSTM state sample: ", LSTMState[0], ", ", LSTMState[1], ", ", LSTMState[2]);
+
     // Log raw model output
     Print("DEBUG: Raw model output - Hold: ", DoubleToString(lstm_output[0], 4),
           ", Buy: ", DoubleToString(lstm_output[1], 4),
           ", Sell: ", DoubleToString(lstm_output[2], 4),
           ", Close: ", DoubleToString(lstm_output[3], 4));
+
+    // Log these values in a format you can easily analyze
+    Print("RAW_OUTPUT: ", TimeToString(currentBarTime), ",", 
+          DoubleToString(lstm_output[0], 5), ",", 
+          DoubleToString(lstm_output[1], 5), ",",
+          DoubleToString(lstm_output[2], 5), ",",
+          DoubleToString(lstm_output[3], 5));
 
     // Get action with highest probability without any modifications
     int action = 0;
