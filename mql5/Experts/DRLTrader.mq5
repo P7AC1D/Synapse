@@ -613,8 +613,6 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     Print("DEBUG_LSTM: Starting gate calculations for ", LSTM_UNITS, " units");
     for (int i = 0; i < LSTM_UNITS; i++)
     {
-        if(i % 10 == 0) Print("DEBUG_LSTM: Processing gate calculations for unit ", i);
-        
         // Debug bounds checks
         if(i >= ArraySize(actor_input) || i >= ArraySize(actor_hidden_transform) || 
            i >= ArraySize(actor_hidden_bias)) {
@@ -680,8 +678,6 @@ void RunLSTMInference(const double &features[], double &state[], double &output[
     Print("DEBUG_LSTM: Updating cell and hidden states");
     for (int i = 0; i < LSTM_UNITS; i++)
     {
-        if(i % 10 == 0) Print("DEBUG_LSTM: Updating state for unit ", i);
-        
         if(i >= ArraySize(forget_gate) || i >= ArraySize(state) || 
            i >= ArraySize(input_gate) || i >= ArraySize(cell_state)) {
             Print("ERROR_LSTM: Index out of bounds at state update, i=", i,
