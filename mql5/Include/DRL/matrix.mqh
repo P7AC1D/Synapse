@@ -1,5 +1,5 @@
 // Matrix operations for LSTM computations
-// Generated on: 2025-04-17 18:44:26
+// Generated on: 2025-04-18 04:33:43
 
 #property copyright "Copyright 2024, DRL Trading Bot"
 #property link      "https://github.com/your-repo"
@@ -44,6 +44,8 @@ void ApplyActivation(const double &in_values[], double &output[],
             output[i] = custom_tanh(in_values[i]);
         else if(activation == "sigmoid")
             output[i] = sigmoid(in_values[i]);
+        else if(activation == "relu")
+            output[i] = relu(in_values[i]);
         else
             output[i] = in_values[i];  // Linear activation
     }

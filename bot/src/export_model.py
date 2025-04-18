@@ -20,12 +20,35 @@ from trading.dummy_processor import DummyFeatureProcessor
 
 import argparse
 
+def generate_test_cases(trade_model: TradeModel, feature_processor: DummyFeatureProcessor) -> List[Dict[str, Any]]:
+    """Generate test cases for model verification."""
+    test_cases = []
+    
+    # Initialize empty LSTM state
+    lstm_state = np.zeros(trade_model.model.policy.lstm_actor.hidden_size, dtype=np.float32)
+    
+    # Generate base features using feature processor
+    base_features = np.zeros(9)  # Same size as in ProcessFeatures
+    
+    # Add position features
+    features = np.concatenate([base_features, [0.0, 0.0]])  # Add position size and profit
+    
+    # Create test case
+    test_case = {
+        'features': features.tolist(),
+        'lstm_state': lstm_state.tolist(),
+        'expected_action': 0  # Default to HOLD action
+    }
+    
+    test_cases.append(test_case)
+    return test_cases
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Export PPO-LSTM model to MQL5 format.")
     parser.add_argument("--model-path", 
-                       default="../model/XAUUSDm.zip",
-                       help="Path to the model file (default: ../model/XAUUSDm.zip)")
+                       default="bot/model/XAUUSDm.zip",
+                       help="Path to the model file (default: bot/model/XAUUSDm.zip)")
     return parser.parse_args()
 
 def create_export_dirs() -> Tuple[Path, Path]:
@@ -72,9 +95,7 @@ def extract_lstm_params(model: RecurrentPPO) -> Dict[str, np.ndarray]:
             'critic_input_bias': lstm_critic.bias_ih_l0.detach().numpy(),
             'critic_hidden_bias': lstm_critic.bias_hh_l0.detach().numpy(),
             
-            # FC and Output layer parameters
-            'actor_fc_weight': lstm_actor.fc1.weight.detach().numpy(),
-            'actor_fc_bias': lstm_actor.fc1.bias.detach().numpy(),
+            # Output layer parameters
             'actor_output_weight': actor_output_w,
             'actor_output_bias': model.policy.action_net.bias.detach().numpy(),
             'critic_output_weight': model.policy.value_net.weight.detach().numpy(),
@@ -180,17 +201,13 @@ def export_model_mqh(model: RecurrentPPO, output_dir: Path) -> None:
         "// Model Architecture Constants",
         f"#define FEATURE_COUNT {model.policy.observation_space.shape[0]}",
         f"#define LSTM_UNITS {model.policy.lstm_actor.hidden_size}",
-        f"#define FC_UNITS 64           // Fully connected layer size",
         f"#define ACTION_COUNT {model.policy.action_space.n}",
         "",
         "// Matrix Dimensions Constants",
         "#define INPUT_WEIGHT_COLS (LSTM_UNITS * 4)  // 1024",
         "#define HIDDEN_WEIGHT_COLS (LSTM_UNITS * 4) // 1024",
-        "#define FC_WEIGHT_COLS FC_UNITS            // 64",
-        "#define FC_WEIGHT_ROWS LSTM_UNITS          // 256",
-        "#define FC_BIAS_SIZE FC_UNITS              // 64",
         "#define OUTPUT_WEIGHT_COLS ACTION_COUNT     // 4",
-        "#define OUTPUT_WEIGHT_ROWS FC_UNITS        // 64",
+        "#define OUTPUT_WEIGHT_ROWS LSTM_UNITS      // 256",
         "",
         "// Activation Functions",
         "double custom_tanh(const double x) {",
