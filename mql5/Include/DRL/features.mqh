@@ -76,36 +76,33 @@ public:
         // Normalize RSI to [-1, 1]
         double norm_rsi = rsi[0] / 50.0 - 1.0;
 
-        // Normalize ATR using historical window
-        double atr_window[], close_history[];
-        ArraySetAsSeries(atr_window, true);
-        ArraySetAsSeries(close_history, true);
+        // ATR normalized by its own moving average (same as Python implementation)
+        double atr_values[], close_values[];
+        ArraySetAsSeries(atr_values, true);
+        ArraySetAsSeries(close_values, true);
+        CopyBuffer(m_atr_handle, 0, 0, 100, atr_values);  // Get more values for SMA calculation
+        CopyClose(_Symbol, _Period, 0, 1, close_values);
 
-        // Copy historical data for ATR normalization
-        int history_window = 100;  // Match Python's historical window
-        CopyBuffer(m_atr_handle, 0, 0, history_window, atr_window);
-        CopyClose(_Symbol, _Period, 0, history_window, close_history);
-
-        // Calculate ATR/close ratios
-        double atr_close_ratios[];
-        ArrayResize(atr_close_ratios, history_window);
-        double min_ratio = DBL_MAX;
-        double max_ratio = -DBL_MAX;
-
-        for(int i=0; i<history_window; i++) {
-            if(close_history[i] > 0) {
-                double ratio = atr_window[i] / close_history[i];
-                atr_close_ratios[i] = ratio;
-                min_ratio = MathMin(min_ratio, ratio);
-                max_ratio = MathMax(max_ratio, ratio);
-            }
+        // Calculate ATR SMA (same window size as Python)
+        int window_size = 20;
+        double atr_sma = 0;
+        int count = 0;
+        for(int i=0; i<MathMin(window_size, ArraySize(atr_values)); i++) {
+            if(!MathIsValidNumber(atr_values[i])) continue;
+            atr_sma += atr_values[i];
+            count++;
         }
+        atr_sma = (count > 0) ? atr_sma / count : atr_values[0];
 
-        // Current ATR/close ratio
-        double current_ratio = atr[0] / close[0];
+        // Calculate ATR relative to its SMA
+        double atr_ratio = atr_values[0] / (atr_sma + 0.00000001);
 
-        // Normalize using historical min/max
-        double norm_atr = 2.0 * (current_ratio - min_ratio) / (max_ratio - min_ratio + 1e-8) - 1.0;
+        // Use same scaling as Python [0.5, 2.0] -> [-1, 1]
+        double min_expected_ratio = 0.5;
+        double max_expected_ratio = 2.0;
+        double expected_range = max_expected_ratio - min_expected_ratio;
+        double norm_atr = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
+        norm_atr = MathMax(MathMin(norm_atr, 1.0), -1.0);  // Clip to [-1, 1]
 
         // Calculate volatility breakout
         double band_range = bb_upper[0] - bb_lower[0];
