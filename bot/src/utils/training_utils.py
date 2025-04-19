@@ -96,7 +96,7 @@ def format_time_remaining(seconds: float) -> str:
     return " ".join(parts)
 
 def save_training_state(path: str, training_start: int, model_path: str, 
-                       iteration_time: float = None, total_iterations: int = None) -> None:
+                       iteration_time: float = None, total_iterations: int = None, step_size: int = None) -> None:
     """
     Save current training state to file for resumable training.
     
@@ -106,6 +106,7 @@ def save_training_state(path: str, training_start: int, model_path: str,
         model_path: Path to current best model
         iteration_time: Time taken for last iteration in seconds
         total_iterations: Total number of iterations planned
+        step_size: Step size for calculating completed iterations
     """
     try:
         with open(path, 'r') as f:
@@ -117,7 +118,6 @@ def save_training_state(path: str, training_start: int, model_path: str,
             'timestamp': datetime.now().isoformat(),
             'iteration_times': [],
             'avg_iteration_time': 0.0,
-            'completed_iterations': 0,
             'total_iterations': total_iterations
         }
     
@@ -130,7 +130,10 @@ def save_training_state(path: str, training_start: int, model_path: str,
         # Keep only last 5 iterations for moving average
         state['iteration_times'] = state['iteration_times'][-5:]
         state['avg_iteration_time'] = sum(state['iteration_times']) / len(state['iteration_times'])
-        state['completed_iterations'] = state.get('completed_iterations', 0) + 1
+    
+    # Calculate completed iterations from current training_start position
+    if step_size is not None:
+        state['completed_iterations'] = training_start // step_size
     
     if total_iterations is not None:
         state['total_iterations'] = total_iterations
@@ -543,7 +546,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             # Calculate iteration time and save state
             iteration_time = time.time() - iteration_start_time
             save_training_state(state_path, training_start + step_size, best_model_path,
-                              iteration_time=iteration_time, total_iterations=total_iterations)
+                          iteration_time=iteration_time, total_iterations=total_iterations,
+                          step_size=step_size)
             
             # Move to next iteration
             training_start += step_size
