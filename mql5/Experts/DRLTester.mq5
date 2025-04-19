@@ -1,3 +1,5 @@
+mql5 / Experts / DRLTester.mq5
+
 //+------------------------------------------------------------------+
 //|                                                    DRLTester.mq5    |
 //|                                   Copyright 2024, DRL Trading Bot   |
@@ -8,13 +10,19 @@
 #property version "1.00"
 #property strict
 
+#include <Trade/Trade.mqh>
+#include <Arrays/ArrayDouble.mqh>
 #include <DRL/model.mqh>
 #include <DRL/test_cases.mqh>
 #include <DRL/features.mqh>
+#include <DRL/matrix.mqh>
+#include <DRL/weights.mqh>
 
-// State and test case arrays
-double CurrentState[];
-TestCase TestCases[];
+                 // Global variables for test tracking
+                 double g_CurrentState[];
+TestCase g_TestCases[];
+int g_PassedTests = 0;
+int g_TotalTests = 0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                      |
@@ -24,200 +32,83 @@ int OnInit()
   Print("Starting LSTM inference test...");
 
   // Initialize test cases
-  InitTestCases(TestCases);
-  Print("Loaded ", ArraySize(TestCases), " test cases");
+  InitTestCases(g_TestCases);
+  g_TotalTests = TEST_CASE_COUNT;
+  Print("Loaded ", g_TotalTests, " test cases");
 
   // Initialize LSTM state array
-  ArrayResize(CurrentState, 2 * LSTM_UNITS); // [hidden_state, cell_state]
-
-  for (int i = 0; i < TEST_CASE_COUNT; i++)
+  if (ArrayResize(g_CurrentState, 2 * LSTM_UNITS) != 2 * LSTM_UNITS)
   {
-    Print("Testing case ", i);
-
-    // Copy state from test case
-    ArrayCopy(CurrentState, TestCases[i].lstm_state);
-
-    // Get features from test case
-    double features[];
-    ArrayCopy(features, TestCases[i].features);
-
-    // Run LSTM inference
-    double output[];
-    RunLSTMInference(features, CurrentState, output);
-
-    // Get predicted action
-    int predicted_action = 0;
-    double max_prob = output[0];
-
-    for (int j = 1; j < ACTION_COUNT; j++)
-    {
-      if (output[j] > max_prob)
-      {
-        max_prob = output[j];
-        predicted_action = j;
-      }
-    }
-
-    // Compare with expected action
-    bool passed = predicted_action == TestCases[i].expected_action;
-    Print("Test case ", i,
-          ": Expected=", TestCases[i].expected_action,
-          ", Got=", predicted_action,
-          ", Result=", (passed ? "PASS" : "FAIL"));
-
-    // Log state transitions for debugging
-    string state_debug = "Final state samples: ";
-    for (int k = 0; k < 3; k++)
-    {
-      state_debug += DoubleToString(CurrentState[k], 8);
-      if (k < 2)
-        state_debug += ", ";
-    }
-    Print(state_debug);
-
-    // Log output probabilities
-    string probs = "Action probabilities: ";
-    for (int k = 0; k < ACTION_COUNT; k++)
-    {
-      probs += DoubleToString(output[k], 4);
-      if (k < ACTION_COUNT - 1)
-        probs += ", ";
-    }
-    Print(probs);
-
-    if (!passed)
-    {
-      Print("WARNING: Test case ", i, " failed!");
-    }
+    Print("ERROR: Failed to initialize LSTM state array");
+    return INIT_FAILED;
   }
+  ArrayInitialize(g_CurrentState, 0);
 
-  Print("LSTM inference test completed");
-  return (INIT_SUCCEEDED);
-}
-
-//+------------------------------------------------------------------+
-//| Expert deinitialization function                                   |
-//+------------------------------------------------------------------+
-void OnDeinit(const int reason)
-{
-  // Cleanup
-}
-
-//+------------------------------------------------------------------+
-//| Expert tick function                                               |
-//+------------------------------------------------------------------+
-void OnTick(){
-    // This is a test EA, no trading functionality needed
-}
-
-    < / write_file >
-
-    <write_file> mql5 / Experts / DRLTester.mq5
-
-//+------------------------------------------------------------------+
-//|                                                    DRLTester.mq5    |
-//|                                   Copyright 2024, DRL Trading Bot   |
-//|                                     https://github.com/your-repo    |
-//+------------------------------------------------------------------+
-#property copyright "Copyright 2024, DRL Trading Bot"
-#property link "https://github.com/your-repo"
-#property version "1.00"
-#property strict
-
-#include <DRL/model.mqh>
-#include <DRL/test_cases.mqh>
-#include <DRL/features.mqh>
-
-                                  // State and test case arrays
-                                  double CurrentState[];
-TestCase TestCases[];
-
-//+------------------------------------------------------------------+
-//| Expert initialization function                                      |
-//+------------------------------------------------------------------+
-int OnInit()
-{
-  Print("Starting LSTM inference test...");
-
-  // Initialize test cases
-  InitTestCases(TestCases);
-  Print("Loaded ", ArraySize(TestCases), " test cases");
-
-  // Initialize LSTM state array
-  ArrayResize(CurrentState, 2 * LSTM_UNITS); // [hidden_state, cell_state]
-
+  // Run test cases
   for (int i = 0; i < TEST_CASE_COUNT; i++)
   {
-    Print("Testing case ", i);
+    Print("\n=== Testing case ", i, " ===");
 
-    // Copy state from test case
-    ArrayCopy(CurrentState, TestCases[i].lstm_state);
-
-    // Get features from test case
+    // Copy test case data
     double features[];
-    ArrayCopy(features, TestCases[i].features);
+    ArrayCopy(features, g_TestCases[i].features);
+    ArrayCopy(g_CurrentState, g_TestCases[i].lstm_state);
 
-    // Run LSTM inference
+    // Log input state
+    Print("Initial state sample: ",
+          DoubleToString(g_CurrentState[0], 8), ", ",
+          DoubleToString(g_CurrentState[1], 8));
+
+    // Run inference
     double output[];
-    RunLSTMInference(features, CurrentState, output);
+    RunLSTMInference(features, g_CurrentState, output);
 
-    // Get predicted action
-    int predicted_action = 0;
+    // Find predicted action
+    int predicted = 0;
     double max_prob = output[0];
-
     for (int j = 1; j < ACTION_COUNT; j++)
     {
       if (output[j] > max_prob)
       {
         max_prob = output[j];
-        predicted_action = j;
+        predicted = j;
       }
     }
 
-    // Compare with expected action
-    bool passed = predicted_action == TestCases[i].expected_action;
-    Print("Test case ", i,
-          ": Expected=", TestCases[i].expected_action,
-          ", Got=", predicted_action,
-          ", Result=", (passed ? "PASS" : "FAIL"));
+    // Compare with expected
+    bool passed = (predicted == g_TestCases[i].expected_action);
+    if (passed)
+      g_PassedTests++;
 
-    // Log state transitions for debugging
-    string state_debug = "Final state samples: ";
-    for (int k = 0; k < 3; k++)
-    {
-      state_debug += DoubleToString(CurrentState[k], 8);
-      if (k < 2)
-        state_debug += ", ";
-    }
-    Print(state_debug);
+    // Log results
+    Print("Results: Expected=", g_TestCases[i].expected_action,
+          ", Got=", predicted,
+          ", ", (passed ? "PASS" : "FAIL"));
 
-    // Log output probabilities
-    string probs = "Action probabilities: ";
-    for (int k = 0; k < ACTION_COUNT; k++)
-    {
-      probs += DoubleToString(output[k], 4);
-      if (k < ACTION_COUNT - 1)
-        probs += ", ";
-    }
-    Print(probs);
+    // Log final state
+    Print("Final state sample: ",
+          DoubleToString(g_CurrentState[0], 8), ", ",
+          DoubleToString(g_CurrentState[1], 8));
 
+    // On failure, log full feature vector
     if (!passed)
     {
-      Print("WARNING: Test case ", i, " failed!");
-      // Log detailed feature values
-      string feature_debug = "Features: ";
+      Print("Features:");
       for (int k = 0; k < ArraySize(features); k++)
       {
-        feature_debug += DoubleToString(features[k], 6);
-        if (k < ArraySize(features) - 1)
-          feature_debug += ", ";
+        Print("  [", k, "]: ", DoubleToString(features[k], 8));
       }
-      Print(feature_debug);
     }
   }
 
-  Print("LSTM inference test completed");
-  return (INIT_SUCCEEDED);
+  // Print summary
+  Print("\n=== Summary ===");
+  Print("Total tests: ", g_TotalTests);
+  Print("Passed: ", g_PassedTests);
+  Print("Success rate: ",
+        DoubleToString(100.0 * g_PassedTests / g_TotalTests, 2), "%");
+
+  return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
@@ -225,9 +116,8 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-  // Cleanup
-  ArrayFree(CurrentState);
-  ArrayFree(TestCases);
+  ArrayFree(g_CurrentState);
+  ArrayFree(g_TestCases);
 }
 
 //+------------------------------------------------------------------+
@@ -235,5 +125,5 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-  // This is a test EA, no trading functionality needed
+  // Test EA - no trading functionality needed
 }
