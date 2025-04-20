@@ -1,5 +1,10 @@
 #include "model_wrapper.h"
+#include <algorithm>
+#include <iterator>
+#include <stdexcept>
+#include <iostream>
 #include <fstream>
+#include <sstream>
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
@@ -67,16 +72,11 @@ std::vector<float> ModelWrapper::process_features(const std::vector<double>& raw
 }
 
 torch::Tensor ModelWrapper::normalize_features(const std::vector<float>& features) {
-    std::vector<float> normalized;
-    normalized.reserve(features.size());
-    
-    for (size_t i = 0; i < features.size(); ++i) {
-        normalized.push_back((features[i] - feature_means[i]) / feature_stds[i]);
-    }
-    
-    return torch::from_blob(normalized.data(), 
-                          {1, 1, static_cast<int64_t>(normalized.size())},
-                          torch::kFloat).clone().to(device);
+    // Features are already normalized in the Python environment (TradingEnv)
+    // Just convert to tensor with proper shape for the model
+    return torch::from_blob(const_cast<float*>(features.data()), 
+                           {static_cast<int64_t>(features.size())}, 
+                           torch::kFloat).clone();
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor>
@@ -86,17 +86,19 @@ ModelWrapper::predict(const torch::Tensor& features,
     torch::NoGradGuard no_grad;
     
     try {
-        // Normalize features
-        auto normalized_features = normalize_features(
-            std::vector<float>(features.data_ptr<float>(),
-                             features.data_ptr<float>() + feature_count)
-        );
+        // Features are already normalized in the TradingEnv, so we can use them directly
+        // Just ensure proper shape for the model input: [1, 1, feature_count]
+        auto features_reshaped = features.view({1, 1, -1});
+        
+        // Ensure hidden states have the correct dtype for maximum precision
+        auto hidden_state_f32 = hidden_state.to(torch::kFloat32);
+        auto cell_state_f32 = cell_state.to(torch::kFloat32);
         
         // Prepare inputs for the model
         std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(normalized_features);
-        inputs.push_back(hidden_state);
-        inputs.push_back(cell_state);
+        inputs.push_back(features_reshaped);
+        inputs.push_back(hidden_state_f32);
+        inputs.push_back(cell_state_f32);
         
         // Forward pass
         auto output = module.forward(inputs).toTuple();
@@ -111,4 +113,40 @@ ModelWrapper::predict(const torch::Tensor& features,
     } catch (const std::exception& e) {
         throw std::runtime_error("Prediction failed: " + std::string(e.what()));
     }
+}
+
+torch::Tensor ModelWrapper::get_initial_hidden_state() {
+    torch::NoGradGuard no_grad;
+    
+    try {
+        // Try to call the model's get_initial_state method
+        std::vector<torch::jit::IValue> inputs = {1}; // batch_size = 1
+        auto states = module.get_method("get_initial_state")(inputs).toTuple();
+        return states->elements()[0].toTensor();
+    } catch (const std::exception& e) {
+        // Fallback: create zeros tensor with expected dimensions
+        // Assumed dimensions: [num_layers(2), batch_size(1), hidden_size(256)]
+        return torch::zeros({2, 1, 256}, torch::kFloat32);
+    }
+}
+
+torch::Tensor ModelWrapper::get_initial_cell_state() {
+    torch::NoGradGuard no_grad;
+    
+    try {
+        // Try to call the model's get_initial_state method
+        std::vector<torch::jit::IValue> inputs = {1}; // batch_size = 1
+        auto states = module.get_method("get_initial_state")(inputs).toTuple();
+        return states->elements()[1].toTensor();
+    } catch (const std::exception& e) {
+        // Fallback: create zeros tensor with expected dimensions
+        // Assumed dimensions: [num_layers(2), batch_size(1), hidden_size(256)]
+        return torch::zeros({2, 1, 256}, torch::kFloat32);
+    }
+}
+
+int ModelWrapper::get_action(const torch::Tensor& action_probs) {
+    // Get the index of the maximum probability
+    auto max_idx = action_probs.argmax(-1).item<int>();
+    return max_idx;
 }

@@ -49,24 +49,70 @@ def convert_to_native_types(value: Any) -> Union[float, int, List, Dict]:
 class LSTMWrapper(torch.nn.Module):
     """Wrapper class to make the LSTM model compatible with TorchScript.
     
-    This wrapper handles the specific architecture of SB3's RecurrentPPO with:
-    - 2 LSTM layers with hidden size 256
-    - Policy MLP extractor [128, 64]
-    - Action network from 64 dimensions to action space
+    This wrapper provides an exact match to SB3's RecurrentPPO architecture to improve
+    prediction consistency between the original model and TorchScript.
     """
     
     def __init__(self, policy):
         super().__init__()
         # Extract essential components from the policy
         self.lstm = policy.lstm_actor
-        self.mlp_extractor = policy.mlp_extractor.policy_net  # Policy network after LSTM
+        self.mlp_extractor = policy.mlp_extractor.policy_net
         self.action_net = policy.action_net
         self.hidden_size = policy.lstm_actor.hidden_size
         self.num_layers = policy.lstm_actor.num_layers
         
-    def forward(self, features, hidden_state, cell_state):
+        # Create shallow copies to ensure deterministic behavior
+        self._copy_lstm_weights(policy.lstm_actor)
+        self._copy_mlp_weights(policy.mlp_extractor.policy_net)
+        self._copy_action_weights(policy.action_net)
+        
+        # Set model to eval mode for consistent behavior
+        self.eval()
+    
+    def _copy_lstm_weights(self, source_lstm):
+        """Create exact copy of LSTM weights to ensure deterministic behavior."""
+        for name, param in source_lstm.named_parameters():
+            if param.requires_grad:
+                # Force exact copy by detaching and requiring no gradient
+                param_copy = param.detach().clone()
+                param_copy.requires_grad = False
+                # Get the target parameter in our LSTM
+                target_param = dict(self.lstm.named_parameters())[name]
+                # Copy the data
+                target_param.data.copy_(param_copy.data)
+    
+    def _copy_mlp_weights(self, source_mlp):
+        """Create exact copy of MLP weights."""
+        for name, param in source_mlp.named_parameters():
+            if param.requires_grad:
+                param_copy = param.detach().clone()
+                param_copy.requires_grad = False
+                target_param = dict(self.mlp_extractor.named_parameters())[name]
+                target_param.data.copy_(param_copy.data)
+    
+    def _copy_action_weights(self, source_action):
+        """Create exact copy of action network weights."""
+        for name, param in source_action.named_parameters():
+            if param.requires_grad:
+                param_copy = param.detach().clone()
+                param_copy.requires_grad = False
+                target_param = dict(self.action_net.named_parameters())[name]
+                target_param.data.copy_(param_copy.data)
+        
+    @torch.jit.export
+    def get_initial_state(self, batch_size: int = 1):
+        """Return initialized hidden and cell states."""
+        return (
+            torch.zeros(self.num_layers, batch_size, self.hidden_size, dtype=torch.float32),
+            torch.zeros(self.num_layers, batch_size, self.hidden_size, dtype=torch.float32)
+        )
+        
+    def forward(self, features: torch.Tensor, 
+                hidden_state: torch.Tensor, 
+                cell_state: torch.Tensor):
         """
-        Forward pass through the model.
+        Forward pass through the model with exact SB3 processing.
         
         Args:
             features: Input features [batch_size, seq_len, feature_dim]
@@ -76,18 +122,17 @@ class LSTMWrapper(torch.nn.Module):
         Returns:
             tuple: (action_probs, new_hidden_state, new_cell_state)
         """
-        # Run LSTM
+        # Run LSTM with exact same hidden state format as SB3
         lstm_out, (new_hidden, new_cell) = self.lstm(
             features, (hidden_state, cell_state)
         )
         
-        # Extract features from the LSTM output and reshape
-        # The LSTM output is [batch_size, seq_len, hidden_size]
-        # We need to flatten it to [batch_size * seq_len, hidden_size]
-        lstm_features = lstm_out.view(-1, self.hidden_size)
+        # Extract last timestep features (SB3 behavior for RecurrentPPO)
+        # The shape is [batch_size, seq_len, hidden_size], we want the last timestep
+        last_timestep = lstm_out[:, -1, :]
         
         # Pass through policy network layers
-        policy_features = self.mlp_extractor(lstm_features)
+        policy_features = self.mlp_extractor(last_timestep)
         
         # Get action probabilities
         action_logits = self.action_net(policy_features)
