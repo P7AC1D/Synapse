@@ -92,9 +92,32 @@ bool RecurrentPPOModel::Initialize(const string modelPath, const ModelSettings &
     m_modelPath = modelPath;
     m_settings = settings;
     
+    // Check if file exists first
+    if(!FileIsExist(modelPath, FILE_COMMON)) {
+        m_lastError = StringFormat("Model file not found: %s - Please check if the file exists in the MQL5 Data Folder", modelPath);
+        Print(m_lastError);
+        return false;
+    }
+    
+    Print("Trying to load ONNX model from: ", modelPath);
+    
     // Initialize ONNXRuntime
     if(!m_runtime.Initialize(modelPath)) {
         m_lastError = "Failed to initialize ONNXRuntime: " + m_runtime.LastError();
+        Print(m_lastError);
+        
+        // Add more diagnostic information
+        Print("ONNX Runtime initialization failed. This could be due to:");
+        Print("1. Missing or incompatible ONNX Runtime DLL");
+        Print("2. API version mismatch - your MT5 is using a newer ONNX Runtime than expected");
+        Print("3. Incorrect model path: ", modelPath);
+        
+        // Suggest potential solutions
+        Print("Possible solutions:");
+        Print("- Place the correct version of onnxruntime.dll in your MT5 terminal 'terminal_dir/MQL5/Libraries/' folder");
+        Print("- Use the CPU provider version of ONNX Runtime");
+        Print("- Verify that your model is compatible with the ONNX Runtime version you're using");
+        
         return false;
     }
     
