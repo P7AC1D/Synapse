@@ -42,7 +42,7 @@ public:
         model_path = path;
         settings = model_settings;
         
-        // Check if model file exists
+        // Check if model file exists in terminal's data folder
         if(!FileIsExist(path)) {
             last_error = "Model file not found: " + path;
             return false;
