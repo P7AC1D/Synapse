@@ -11,11 +11,11 @@
 // Include required files
 #include <Trade/Trade.mqh>
 #include <Trade/SymbolInfo.mqh>
-#include <JAson.mqh>  // JSON parsing library
 
 // Constants
 #define MAGIC_NUMBER 20240417
 #define STOP_LOSS_PIPS 1500.0
+#define ERR_FUNCTION_NOT_ALLOWED_IN_TESTING_MODE 4806
 
 // Input parameters
 input string ApiGroup = ">>> API Settings <<<";
@@ -40,7 +40,6 @@ int adx_period = 14;
 
 // Global variables
 CTrade Trade;                   // Trading object
-CJAVal json;                    // JSON parser
 string last_error = "";         // Last error message
 
 // HTTP request related
@@ -168,36 +167,85 @@ bool CollectHistoricalData(int bars_to_collect) {
 //| Build JSON request for API                                        |
 //+------------------------------------------------------------------+
 string BuildApiRequest() {
-    CJAVal request;
-    int data_size = ArraySize(close_prices);
+    string json = "{";
     
-    // Create arrays for data
-    request["timestamp"].IsArray(true);
-    request["open"].IsArray(true);
-    request["high"].IsArray(true);
-    request["low"].IsArray(true);
-    request["close"].IsArray(true);
-    request["volume"].IsArray(true);
+    // Arrays for data
+    json += "\"timestamp\":[";
+    json += BuildJsonArray(time_values, true);
+    json += "],";
     
-    // Add data to arrays
-    for (int i = 0; i < data_size; i++) {
-        // Convert datetime to unix timestamp
-        datetime current_time = time_values[i];
-        long timestamp = (long)current_time;
-        
-        request["timestamp"].Add(timestamp);
-        request["open"].Add(open_prices[i]);
-        request["high"].Add(high_prices[i]);
-        request["low"].Add(low_prices[i]);
-        request["close"].Add(close_prices[i]);
-        request["volume"].Add((double)volume_values[i]);
+    json += "\"open\":[";
+    json += BuildJsonArray(open_prices);
+    json += "],";
+    
+    json += "\"high\":[";
+    json += BuildJsonArray(high_prices);
+    json += "],";
+    
+    json += "\"low\":[";
+    json += BuildJsonArray(low_prices);
+    json += "],";
+    
+    json += "\"close\":[";
+    json += BuildJsonArray(close_prices);
+    json += "],";
+    
+    json += "\"volume\":[";
+    json += BuildJsonArray(volume_values);
+    json += "],";
+    
+    // Symbol
+    json += "\"symbol\":\"" + _Symbol + "\"";
+    
+    json += "}";
+    return json;
+}
+
+//+------------------------------------------------------------------+
+//| Helper function to build JSON arrays                              |
+//+------------------------------------------------------------------+
+string BuildJsonArray(const double &arr[], bool isTimestamp=false) {
+    string result = "";
+    int size = ArraySize(arr);
+    
+    for(int i = 0; i < size; i++) {
+        if(isTimestamp) {
+            result += IntegerToString((long)arr[i]);
+        } else {
+            result += DoubleToString(arr[i], 8);
+        }
+        if(i < size - 1) result += ",";
     }
     
-    // Add symbol
-    request["symbol"] = _Symbol;
+    return result;
+}
+
+string BuildJsonArray(const datetime &arr[], bool isTimestamp=true) {
+    string result = "";
+    int size = ArraySize(arr);
     
-    // Convert to JSON string
-    return request.Serialize();
+    for(int i = 0; i < size; i++) {
+        if(isTimestamp) {
+            result += IntegerToString((long)arr[i]);
+        } else {
+            result += "\"" + TimeToString(arr[i]) + "\"";
+        }
+        if(i < size - 1) result += ",";
+    }
+    
+    return result;
+}
+
+string BuildJsonArray(const long &arr[]) {
+    string result = "";
+    int size = ArraySize(arr);
+    
+    for(int i = 0; i < size; i++) {
+        result += IntegerToString(arr[i]);
+        if(i < size - 1) result += ",";
+    }
+    
+    return result;
 }
 
 //+------------------------------------------------------------------+
@@ -206,52 +254,65 @@ string BuildApiRequest() {
 bool GetPrediction(string &action, string &description) {
     // Build API request
     string request_body = BuildApiRequest();
+    char request[];
     char result[];
     string result_headers;
+    
+    // Convert request string to char array
+    StringToCharArray(request_body, request, 0, StringLen(request_body));
     
     // Setup headers
     string headers = "Content-Type: application/json\r\n";
     
     // Make POST request to API
+    ResetLastError();
     int res = WebRequest(
-        "POST",
-        ApiUrl + "/predict",
-        headers,
-        http_timeout,
-        request_body,
-        result,
-        result_headers
+        "POST",                // method
+        ApiUrl + "/predict",   // URL
+        headers,              // headers
+        5000,                // timeout
+        request,             // request data
+        result,              // response data
+        result_headers       // response headers
     );
     
-    if (res == -1) {
+    if(res == -1) {
         int error_code = GetLastError();
-        last_error = StringFormat("HTTP request failed with error %d: %s", error_code, ErrorDescription(error_code));
-        Print(last_error);
+        string error_desc = "HTTP request failed with error " + IntegerToString(error_code);
         
-        // WebRequest requires URL be added to allowed URLs
-        if (error_code == ERR_FUNCTION_NOT_ALLOWED_IN_TESTING_MODE) {
-            Print("Make sure URL is added to 'Tools' -> 'Options' -> 'Expert Advisors' -> 'Allow WebRequest'");
+        switch(error_code) {
+            case ERR_FUNCTION_NOT_ALLOWED:
+                error_desc += "\nMake sure URL is added to 'Tools' -> 'Options' -> 'Expert Advisors' -> 'Allow WebRequest'";
+                break;
         }
         
+        last_error = error_desc;
+        Print(last_error);
         return false;
     }
     
     // Parse response
     string response = CharArrayToString(result);
-    CJAVal json_response;
     
-    if (!json_response.Deserialize(response)) {
-        last_error = "Failed to parse JSON response: " + response;
-        Print(last_error);
-        return false;
+    // Parse JSON response manually since MQL5 doesn't have a built-in JSON parser
+    if(StringFind(response, "\"action\"") >= 0 && StringFind(response, "\"description\"") >= 0) {
+        // Extract action
+        int action_start = StringFind(response, "\"action\":\"") + 9;
+        int action_end = StringFind(response, "\"", action_start);
+        action = StringSubstr(response, action_start, action_end - action_start);
+        
+        // Extract description
+        int desc_start = StringFind(response, "\"description\":\"") + 14;
+        int desc_end = StringFind(response, "\"", desc_start);
+        description = StringSubstr(response, desc_start, desc_end - desc_start);
+        
+        Print("API Prediction: Action=", action, ", Description=", description);
+        return true;
     }
     
-    // Extract prediction
-    action = json_response["action"].ToStr();
-    description = json_response["description"].ToStr();
-    
-    Print("API Prediction: Action=", action, ", Description=", description);
-    return true;
+    last_error = "Failed to parse JSON response: " + response;
+    Print(last_error);
+    return false;
 }
 
 //+------------------------------------------------------------------+
@@ -397,14 +458,29 @@ int OnInit() {
         return INIT_FAILED;
     }
     
-    // Set up HTTP headers
-    http_headers = "Content-Type: application/json\r\n";
+    // Check if URL is allowed for web requests
+    string terminal_path = TerminalInfoString(TERMINAL_PATH);
+    string config_path = terminal_path + "\\config\\webserver.ini";
     
-    // Check if URL is allowed
-    if(!WebRequestEnabled()) {
-        Print("Web requests not allowed. Please enable in Tools > Options > Expert Advisors > Allow WebRequest for URL:");
-        Print(ApiUrl);
-        return INIT_FAILED;
+    if(FileIsExist(config_path)) {
+        int file_handle = FileOpen(config_path, FILE_READ|FILE_TXT);
+        if(file_handle != INVALID_HANDLE) {
+            bool url_found = false;
+            while(!FileIsEnding(file_handle)) {
+                string line = FileReadString(file_handle);
+                if(StringFind(line, ApiUrl) >= 0) {
+                    url_found = true;
+                    break;
+                }
+            }
+            FileClose(file_handle);
+            
+            if(!url_found) {
+                Print("Web requests not allowed. Please enable in Tools > Options > Expert Advisors > Allow WebRequest for URL:");
+                Print(ApiUrl);
+                return INIT_FAILED;
+            }
+        }
     }
     
     // Initialize trade object
