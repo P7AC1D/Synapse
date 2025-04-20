@@ -7,9 +7,7 @@
 #property link      "https://github.com/your-repo"
 
 // A minimal ONNX Runtime wrapper for MQL5
-// Based on ONNXRuntime C API: https://onnxruntime.ai/docs/api/c-api.html
-
-#include <Object.mqh>
+// Based on ONNXRuntime C API: https://onnxruntime.ai/docs/api-c-api.html
 
 //+------------------------------------------------------------------+
 //| Constants for ONNX Runtime                                       |
@@ -31,31 +29,31 @@
 //+------------------------------------------------------------------+
 #import "onnxruntime.dll"
 // Session management
-int OrtCreateEnv(int logLevel, const string logId, void *&env);
-int OrtReleaseEnv(void *env);
-int OrtCreateSessionOptions(void *&options);
-int OrtReleaseSessionOptions(void *options);
-int OrtCreateSession(void *env, const string modelPath, void *options, void *&session);
-int OrtReleaseSession(void *session);
+int OrtCreateEnv(int logLevel, string logId, long& env);
+int OrtReleaseEnv(long env);
+int OrtCreateSessionOptions(long& options);
+int OrtReleaseSessionOptions(long options);
+int OrtCreateSession(long env, string modelPath, long options, long& session);
+int OrtReleaseSession(long session);
 
 // Input/Output management
-int OrtCreateCpuMemoryInfo(int allocType, int memType, void *&memInfo);
-int OrtReleaseMemoryInfo(void *memInfo);
-int OrtCreateTensorWithDataAsOrtValue(void *memInfo, float &data[], ulong[] shape, int shapeLen, int dtype, void *&tensor);
-int OrtReleaseTensor(void *tensor);
-int OrtGetTensorMutableData(void *tensor, void *&data);
-int OrtCreateAllocator(void *session, void *memInfo, void *&allocator);
-int OrtReleaseAllocator(void *allocator);
+int OrtCreateCpuMemoryInfo(int allocType, int memType, long& memInfo);
+int OrtReleaseMemoryInfo(long memInfo);
+int OrtCreateTensorWithDataAsOrtValue(long memInfo, float& data[], long& shape[], int shapeLen, int dtype, long& tensor);
+int OrtReleaseTensor(long tensor);
+int OrtGetTensorMutableData(long tensor, long& data);
+int OrtCreateAllocator(long session, long memInfo, long& allocator);
+int OrtReleaseAllocator(long allocator);
 
 // Running inference
-int OrtGetInputCount(void *session, int &count);
-int OrtGetOutputCount(void *session, int &count);
-int OrtGetInputName(void *session, int index, void *allocator, void *&name);
-int OrtGetOutputName(void *session, int index, void *allocator, void *&name);
-int OrtFree(void *ptr);
-int OrtCreateRunOptions(void *&options);
-int OrtReleaseRunOptions(void *options);
-int OrtRun(void *session, void *runOptions, void *inputNames[], void *inputs[], int inputCount, void *outputNames[], void *outputs[], int outputCount);
+int OrtGetInputCount(long session, int& count);
+int OrtGetOutputCount(long session, int& count);
+int OrtGetInputName(long session, int index, long allocator, string& name);
+int OrtGetOutputName(long session, int index, long allocator, string& name);
+int OrtFree(long ptr);
+int OrtCreateRunOptions(long& options);
+int OrtReleaseRunOptions(long options);
+int OrtRun(long session, long runOptions, string& inputNames[], long& inputs[], int inputCount, string& outputNames[], long& outputs[], int outputCount);
 #import
 
 //+------------------------------------------------------------------+
@@ -63,11 +61,11 @@ int OrtRun(void *session, void *runOptions, void *inputNames[], void *inputs[], 
 //+------------------------------------------------------------------+
 class ONNXRuntime : public CObject {
 private:
-    void *m_env;
-    void *m_session;
-    void *m_memInfo;
-    void *m_allocator;
-    void *m_runOptions;
+    long m_env;
+    long m_session;
+    long m_memInfo;
+    long m_allocator;
+    long m_runOptions;
     
     string m_modelPath;
     bool m_initialized;
@@ -88,13 +86,13 @@ public:
     void Cleanup();
     
     // Inference
-    bool RunInference(float &inputData[], float &outputData[], int inputDims[], int outputDims[]);
+    bool RunInference(float &inputData[], float &outputData[], int &inputDims[], int &outputDims[]);
     
     // LSTM state management
     bool RunInferenceWithLSTM(
         float &inputData[], float &lstmH[], float &lstmC[],
         float &outputProbs[], float &newLstmH[], float &newLstmC[],
-        int inputDims[], int lstmDims[], int outputDims[]
+        int &inputDims[], int &lstmDims[], int &outputDims[]
     );
     
     // Getters
@@ -139,7 +137,7 @@ bool ONNXRuntime::Initialize(const string modelPath) {
         return false;
     }
     
-    void *sessionOptions;
+    long sessionOptions;
     status = OrtCreateSessionOptions(sessionOptions);
     if(status != ORT_OK) {
         m_lastError = "Failed to create session options: " + IntegerToString(status);
@@ -203,7 +201,7 @@ bool ONNXRuntime::Initialize(const string modelPath) {
     
     // Get input/output names
     for(int i = 0; i < m_inputCount; i++) {
-        void *namePtr;
+        string namePtr;
         status = OrtGetInputName(m_session, i, m_allocator, namePtr);
         if(status != ORT_OK) {
             m_lastError = "Failed to get input name: " + IntegerToString(status);
@@ -211,13 +209,13 @@ bool ONNXRuntime::Initialize(const string modelPath) {
             return false;
         }
         
-        // Convert name pointer to string
-        m_inputNames[i] = (string)namePtr;
-        OrtFree(namePtr);
+        m_inputNames[i] = namePtr;
+        long ptr = StringToInteger(namePtr); // Fix string to number conversion
+        if(ptr != 0) OrtFree(ptr);
     }
     
     for(int i = 0; i < m_outputCount; i++) {
-        void *namePtr;
+        string namePtr;
         status = OrtGetOutputName(m_session, i, m_allocator, namePtr);
         if(status != ORT_OK) {
             m_lastError = "Failed to get output name: " + IntegerToString(status);
@@ -225,9 +223,9 @@ bool ONNXRuntime::Initialize(const string modelPath) {
             return false;
         }
         
-        // Convert name pointer to string
-        m_outputNames[i] = (string)namePtr;
-        OrtFree(namePtr);
+        m_outputNames[i] = namePtr;
+        long ptr = StringToInteger(namePtr); // Fix string to number conversion
+        if(ptr != 0) OrtFree(ptr);
     }
     
     m_initialized = true;
@@ -269,15 +267,15 @@ void ONNXRuntime::Cleanup() {
 //+------------------------------------------------------------------+
 //| Run model inference with standard inputs/outputs                 |
 //+------------------------------------------------------------------+
-bool ONNXRuntime::RunInference(float &inputData[], float &outputData[], int inputDims[], int outputDims[]) {
+bool ONNXRuntime::RunInference(float &inputData[], float &outputData[], int &inputDims[], int &outputDims[]) {
     if(!m_initialized) {
         m_lastError = "ONNXRuntime not initialized";
         return false;
     }
     
     // Create input tensor
-    void *inputTensor = NULL;
-    ulong inputShape[];
+    long inputTensor = NULL;
+    long inputShape[];
     ArrayResize(inputShape, ArraySize(inputDims));
     for(int i = 0; i < ArraySize(inputDims); i++) {
         inputShape[i] = inputDims[i];
@@ -294,8 +292,8 @@ bool ONNXRuntime::RunInference(float &inputData[], float &outputData[], int inpu
     }
     
     // Create output tensor
-    void *outputTensor = NULL;
-    ulong outputShape[];
+    long outputTensor = NULL;
+    long outputShape[];
     ArrayResize(outputShape, ArraySize(outputDims));
     for(int i = 0; i < ArraySize(outputDims); i++) {
         outputShape[i] = outputDims[i];
@@ -313,10 +311,10 @@ bool ONNXRuntime::RunInference(float &inputData[], float &outputData[], int inpu
     }
     
     // Run inference
-    void *inputNames[] = {m_inputNames[0]};
-    void *outputNames[] = {m_outputNames[0]};
-    void *inputs[] = {inputTensor};
-    void *outputs[] = {outputTensor};
+    string inputNames[] = {m_inputNames[0]};
+    string outputNames[] = {m_outputNames[0]};
+    long inputs[] = {inputTensor};
+    long outputs[] = {outputTensor};
     
     status = OrtRun(
         m_session, m_runOptions, 
@@ -342,7 +340,7 @@ bool ONNXRuntime::RunInference(float &inputData[], float &outputData[], int inpu
 bool ONNXRuntime::RunInferenceWithLSTM(
     float &inputData[], float &lstmH[], float &lstmC[],
     float &outputProbs[], float &newLstmH[], float &newLstmC[],
-    int inputDims[], int lstmDims[], int outputDims[]
+    int &inputDims[], int &lstmDims[], int &outputDims[]
 ) {
     if(!m_initialized) {
         m_lastError = "ONNXRuntime not initialized";
@@ -350,8 +348,8 @@ bool ONNXRuntime::RunInferenceWithLSTM(
     }
     
     // Create input observation tensor
-    void *inputTensor = NULL;
-    ulong inputShape[];
+    long inputTensor = NULL;
+    long inputShape[];
     ArrayResize(inputShape, ArraySize(inputDims));
     for(int i = 0; i < ArraySize(inputDims); i++) {
         inputShape[i] = inputDims[i];
@@ -368,8 +366,8 @@ bool ONNXRuntime::RunInferenceWithLSTM(
     }
     
     // Create LSTM H state tensor
-    void *lstmHTensor = NULL;
-    ulong lstmHShape[];
+    long lstmHTensor = NULL;
+    long lstmHShape[];
     ArrayResize(lstmHShape, ArraySize(lstmDims));
     for(int i = 0; i < ArraySize(lstmDims); i++) {
         lstmHShape[i] = lstmDims[i];
@@ -387,7 +385,7 @@ bool ONNXRuntime::RunInferenceWithLSTM(
     }
     
     // Create LSTM C state tensor
-    void *lstmCTensor = NULL;
+    long lstmCTensor = NULL;
     status = OrtCreateTensorWithDataAsOrtValue(
         m_memInfo, lstmC, lstmHShape, ArraySize(lstmDims), 
         ORT_TENSOR_ELEMENT_TYPE_FLOAT, lstmCTensor
@@ -401,8 +399,8 @@ bool ONNXRuntime::RunInferenceWithLSTM(
     }
     
     // Create output probabilities tensor
-    void *outputTensor = NULL;
-    ulong outputShape[];
+    long outputTensor = NULL;
+    long outputShape[];
     ArrayResize(outputShape, ArraySize(outputDims));
     for(int i = 0; i < ArraySize(outputDims); i++) {
         outputShape[i] = outputDims[i];
@@ -422,7 +420,7 @@ bool ONNXRuntime::RunInferenceWithLSTM(
     }
     
     // Create new LSTM H state tensor
-    void *newLstmHTensor = NULL;
+    long newLstmHTensor = NULL;
     status = OrtCreateTensorWithDataAsOrtValue(
         m_memInfo, newLstmH, lstmHShape, ArraySize(lstmDims), 
         ORT_TENSOR_ELEMENT_TYPE_FLOAT, newLstmHTensor
@@ -438,7 +436,7 @@ bool ONNXRuntime::RunInferenceWithLSTM(
     }
     
     // Create new LSTM C state tensor
-    void *newLstmCTensor = NULL;
+    long newLstmCTensor = NULL;
     status = OrtCreateTensorWithDataAsOrtValue(
         m_memInfo, newLstmC, lstmHShape, ArraySize(lstmDims), 
         ORT_TENSOR_ELEMENT_TYPE_FLOAT, newLstmCTensor
@@ -455,10 +453,10 @@ bool ONNXRuntime::RunInferenceWithLSTM(
     }
     
     // Run inference
-    void *inputNames[] = {m_inputNames[0], m_inputNames[1], m_inputNames[2]};
-    void *outputNames[] = {m_outputNames[0], m_outputNames[1], m_outputNames[2]};
-    void *inputs[] = {inputTensor, lstmHTensor, lstmCTensor};
-    void *outputs[] = {outputTensor, newLstmHTensor, newLstmCTensor};
+    string inputNames[] = {m_inputNames[0], m_inputNames[1], m_inputNames[2]};
+    string outputNames[] = {m_outputNames[0], m_outputNames[1], m_outputNames[2]};
+    long inputs[] = {inputTensor, lstmHTensor, lstmCTensor};
+    long outputs[] = {outputTensor, newLstmHTensor, newLstmCTensor};
     
     status = OrtRun(
         m_session, m_runOptions, 

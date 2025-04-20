@@ -19,7 +19,7 @@
 
 // Input parameters
 input string ModelGroup = ">>> Model Settings <<<";
-input string ModelPath = "C:\\Dev\\drl\\mql5\\Models\\XAUUSDm.onnx";  // Path to ONNX model
+input string ModelPath = "Models\\XAUUSDm.onnx";  // Path to ONNX model (relative to MQL5 folder)
 input int SequenceLength = 500;                    // Number of bars for sequence input
 input int LSTMHiddenSize = 256;                    // LSTM hidden state size, changed from 64 to 256
 input int LSTMNumLayers = 2;                       // Number of LSTM layers, changed from 1 to 2
