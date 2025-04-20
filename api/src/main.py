@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import numpy as np
 import pandas as pd
@@ -81,9 +82,11 @@ async def predict(data: MarketData):
         # Validate input data length
         min_bars = 100  # Minimum required bars for prediction
         if len(data.timestamp) < min_bars:
-            raise HTTPException(
+            error_msg = f"Insufficient data: provided {len(data.timestamp)} bars, minimum required is {min_bars}"
+            logger.error(error_msg)
+            return JSONResponse(
                 status_code=400,
-                detail=f"Insufficient data: provided {len(data.timestamp)} bars, minimum required is {min_bars}"
+                content={"detail": error_msg}
             )
 
         # Convert input data to DataFrame and add spread column
