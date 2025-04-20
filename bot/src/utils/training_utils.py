@@ -131,9 +131,11 @@ def save_training_state(path: str, training_start: int, model_path: str,
         state['iteration_times'] = state['iteration_times'][-5:]
         state['avg_iteration_time'] = sum(state['iteration_times']) / len(state['iteration_times'])
     
-    # Calculate completed iterations from current training_start position
+    # Calculate completed iterations based on current iteration
     if step_size is not None:
-        state['completed_iterations'] = training_start // step_size
+        current_iteration = training_start // step_size
+        # We count the current iteration as completed since we're saving at the end
+        state['completed_iterations'] = current_iteration
     
     if total_iterations is not None:
         state['total_iterations'] = total_iterations
