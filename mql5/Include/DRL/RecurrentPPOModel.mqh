@@ -6,7 +6,8 @@
 #property copyright "Copyright 2024, DRL Trading Bot"
 #property link      "https://github.com/your-repo"
 
-#include <DRL/ONNXRuntime.mqh>
+// We don't need the custom ONNXRuntime.mqh anymore - using built-in MQL5 ONNX functions
+// #include <DRL/ONNXRuntime.mqh>
 
 //+------------------------------------------------------------------+
 //| Model settings struct                                             |
@@ -24,7 +25,7 @@ struct ModelSettings {
 //+------------------------------------------------------------------+
 class RecurrentPPOModel : public CObject {
 private:
-    ONNXRuntime m_runtime;
+    long m_modelHandle;        // Handle to the ONNX model
     string m_modelPath;
     bool m_initialized;
     string m_lastError;
@@ -33,8 +34,8 @@ private:
     ModelSettings m_settings;
     
     // LSTM state
-    float m_lstmHidden[];
-    float m_lstmCell[];
+    matrixf m_lstmHidden;      // Using matrixf for LSTM hidden state
+    matrixf m_lstmCell;        // Using matrixf for LSTM cell state
     bool m_hasState;
 
 public:
@@ -64,6 +65,7 @@ public:
 //+------------------------------------------------------------------+
 RecurrentPPOModel::RecurrentPPOModel() {
     m_initialized = false;
+    m_modelHandle = INVALID_HANDLE;
     m_modelPath = "";
     m_lastError = "";
     m_hasState = false;
@@ -101,30 +103,85 @@ bool RecurrentPPOModel::Initialize(const string modelPath, const ModelSettings &
     
     Print("Trying to load ONNX model from: ", modelPath);
     
-    // Initialize ONNXRuntime
-    if(!m_runtime.Initialize(modelPath)) {
-        m_lastError = "Failed to initialize ONNXRuntime: " + m_runtime.LastError();
+    // Create the ONNX model using the official MQL5 function
+    m_modelHandle = OnnxCreate(modelPath, ONNX_DEBUG_LOGS);
+    
+    if(m_modelHandle == INVALID_HANDLE) {
+        m_lastError = "Failed to initialize ONNX model: " + (string)GetLastError();
         Print(m_lastError);
         
         // Add more diagnostic information
-        Print("ONNX Runtime initialization failed. This could be due to:");
-        Print("1. Missing or incompatible ONNX Runtime DLL");
-        Print("2. API version mismatch - your MT5 is using a newer ONNX Runtime than expected");
+        Print("ONNX model initialization failed. This could be due to:");
+        Print("1. Invalid ONNX model format");
+        Print("2. Incompatible ONNX Runtime version");
         Print("3. Incorrect model path: ", modelPath);
         
         // Suggest potential solutions
         Print("Possible solutions:");
-        Print("- Place the correct version of onnxruntime.dll in your MT5 terminal 'terminal_dir/MQL5/Libraries/' folder");
-        Print("- Use the CPU provider version of ONNX Runtime");
-        Print("- Verify that your model is compatible with the ONNX Runtime version you're using");
+        Print("- Make sure the model is in a valid ONNX format");
+        Print("- Place the model file in the Terminal/MQL5/Files/ directory");
+        Print("- Check the MetaTrader 5 log for detailed error messages");
         
         return false;
+    }
+    
+    // Define input shape - shape is [batch_size, seq_len, features]
+    long inputShape[] = {1, m_settings.sequenceLength, m_settings.numFeatures};
+    if(!OnnxSetInputShape(m_modelHandle, 0, inputShape)) {
+        m_lastError = "Failed to set input shape: " + (string)GetLastError();
+        Print(m_lastError);
+        Cleanup();
+        return false;
+    }
+    
+    // Define output shape for actions - shape is [batch_size, num_actions]
+    long outputShape[] = {1, m_settings.numActions};
+    if(!OnnxSetOutputShape(m_modelHandle, 0, outputShape)) {
+        m_lastError = "Failed to set output shape: " + (string)GetLastError();
+        Print(m_lastError);
+        Cleanup();
+        return false;
+    }
+    
+    // If using LSTM, your model will need additional input/output shapes for the LSTM states
+    // For LSTM hidden state - shape is [num_layers, batch_size, hidden_size]
+    long lstmHiddenShape[] = {m_settings.lstmLayers, 1, m_settings.lstmHiddenSize};
+    
+    // Set additional input shapes for LSTM state if available in your model
+    // Input index 1 for hidden state
+    if(!OnnxSetInputShape(m_modelHandle, 1, lstmHiddenShape)) {
+        m_lastError = "Failed to set LSTM hidden state input shape: " + (string)GetLastError();
+        Print(m_lastError);
+        // This might not be a critical error if your model doesn't use LSTM state as input
+    }
+    
+    // Input index 2 for cell state
+    if(!OnnxSetInputShape(m_modelHandle, 2, lstmHiddenShape)) {
+        m_lastError = "Failed to set LSTM cell state input shape: " + (string)GetLastError();
+        Print(m_lastError);
+        // This might not be a critical error if your model doesn't use LSTM state as input
+    }
+    
+    // Set additional output shapes for the new LSTM state if available in your model
+    // Output index 1 for new hidden state
+    if(!OnnxSetOutputShape(m_modelHandle, 1, lstmHiddenShape)) {
+        m_lastError = "Failed to set LSTM hidden state output shape: " + (string)GetLastError();
+        Print(m_lastError);
+        // This might not be a critical error if your model doesn't output LSTM state
+    }
+    
+    // Output index 2 for new cell state
+    if(!OnnxSetOutputShape(m_modelHandle, 2, lstmHiddenShape)) {
+        m_lastError = "Failed to set LSTM cell state output shape: " + (string)GetLastError();
+        Print(m_lastError);
+        // This might not be a critical error if your model doesn't output LSTM state
     }
     
     // Initialize LSTM states
     ResetLSTMState();
     
     m_initialized = true;
+    Print("ONNX model initialized successfully with handle: ", m_modelHandle);
     return true;
 }
 
@@ -132,7 +189,10 @@ bool RecurrentPPOModel::Initialize(const string modelPath, const ModelSettings &
 //| Clean up resources                                               |
 //+------------------------------------------------------------------+
 void RecurrentPPOModel::Cleanup() {
-    m_runtime.Cleanup();
+    if(m_modelHandle != INVALID_HANDLE) {
+        OnnxRelease(m_modelHandle);
+        m_modelHandle = INVALID_HANDLE;
+    }
     m_initialized = false;
     ResetLSTMState();
 }
@@ -141,14 +201,14 @@ void RecurrentPPOModel::Cleanup() {
 //| Reset LSTM state                                                 |
 //+------------------------------------------------------------------+
 void RecurrentPPOModel::ResetLSTMState() {
-    // Resize and initialize LSTM hidden and cell states to zeros
-    ArrayResize(m_lstmHidden, 
-                m_settings.lstmLayers * 1 * m_settings.lstmHiddenSize);
-    ArrayResize(m_lstmCell, 
-                m_settings.lstmLayers * 1 * m_settings.lstmHiddenSize);
-                
-    ArrayInitialize(m_lstmHidden, 0.0);
-    ArrayInitialize(m_lstmCell, 0.0);
+    // Create matrices for the LSTM state
+    m_lstmHidden.Resize(m_settings.lstmLayers, m_settings.lstmHiddenSize);
+    m_lstmCell.Resize(m_settings.lstmLayers, m_settings.lstmHiddenSize);
+    
+    // Initialize to zeros
+    m_lstmHidden.Fill(0.0);
+    m_lstmCell.Fill(0.0);
+    
     m_hasState = false;
 }
 
@@ -176,47 +236,66 @@ bool RecurrentPPOModel::Predict(
         return false;
     }
     
-    // Prepare dimensions of input/output tensors
-    int inputDims[3] = {1, m_settings.sequenceLength, m_settings.numFeatures};
-    int lstmDims[4] = {1, m_settings.lstmLayers, 1, m_settings.lstmHiddenSize};
-    int outputDims[2] = {1, m_settings.numActions};
+    // Create input matrix from observation data
+    matrixf inputMatrix;
+    inputMatrix.Resize(1, m_settings.sequenceLength * m_settings.numFeatures); // Flatten input for now
     
-    // Create output arrays
-    float outputProbs[];
-    float newLstmH[];
-    float newLstmC[];
+    // Copy data to the input matrix
+    for(int i = 0; i < obsSize; i++) {
+        inputMatrix[0][i] = observationData[i];
+    }
     
-    ArrayResize(outputProbs, m_settings.numActions);
-    ArrayResize(newLstmH, m_settings.lstmLayers * 1 * m_settings.lstmHiddenSize);
-    ArrayResize(newLstmC, m_settings.lstmLayers * 1 * m_settings.lstmHiddenSize);
+    // Reshape the matrix to the expected dimensions [1, seq_len, features]
+    inputMatrix.Reshape(1, m_settings.sequenceLength, m_settings.numFeatures);
     
-    // Run inference with LSTM state
-    if(!m_runtime.RunInferenceWithLSTM(
-        observationData, m_lstmHidden, m_lstmCell,
-        outputProbs, newLstmH, newLstmC,
-        inputDims, lstmDims, outputDims
-    )) {
-        m_lastError = "Inference failed: " + m_runtime.LastError();
+    // Create output matrices
+    matrixf outputProbs;      // For action probabilities
+    matrixf newLstmHidden;    // For the new LSTM hidden state
+    matrixf newLstmCell;      // For the new LSTM cell state
+    
+    // Create input array for OnnxRun - we need to pass the model all required inputs
+    matrixf inputs[];
+    ArrayResize(inputs, 3); // Observation + hidden state + cell state
+    
+    // Set the input matrices
+    inputs[0] = inputMatrix;  // Observation data
+    inputs[1] = m_lstmHidden; // LSTM hidden state
+    inputs[2] = m_lstmCell;   // LSTM cell state
+    
+    // Create output array for OnnxRun
+    matrixf outputs[];
+    ArrayResize(outputs, 3); // Probabilities + new hidden state + new cell state
+    
+    // Run inference using official OnnxRun function
+    if(!OnnxRun(m_modelHandle, ONNX_VERBOSE_LOGS, inputs, outputs)) {
+        m_lastError = "Inference failed: " + (string)GetLastError();
         return false;
     }
     
-    // Update LSTM states
-    ArrayCopy(m_lstmHidden, newLstmH);
-    ArrayCopy(m_lstmCell, newLstmC);
-    m_hasState = true;
+    // Get action probabilities from outputs[0]
+    outputProbs = outputs[0];
+    
+    // Update LSTM states with new states from model output
+    if(ArraySize(outputs) > 1) {
+        m_lstmHidden = outputs[1];
+        m_lstmCell = outputs[2];
+        m_hasState = true;
+    }
+    
+    // Resize and fill action probabilities
+    ArrayResize(actionProbabilities, m_settings.numActions);
     
     // Find the action with highest probability
     float maxProb = -1;
     action = 0;
     
-    // Resize and fill action probabilities
-    ArrayResize(actionProbabilities, m_settings.numActions);
-    
     for(int i = 0; i < m_settings.numActions; i++) {
-        actionProbabilities[i] = outputProbs[i];
+        // Get the probability from the output matrix (shape is [1, num_actions])
+        float prob = outputProbs[0][i];
+        actionProbabilities[i] = prob;
         
-        if(outputProbs[i] > maxProb) {
-            maxProb = outputProbs[i];
+        if(prob > maxProb) {
+            maxProb = prob;
             action = i;
         }
     }

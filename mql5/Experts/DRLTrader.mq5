@@ -543,13 +543,6 @@ bool InitializeModel() {
             Print("Please place your ONNX model in the MQL5/Files/Models/ directory");
         }
         
-        // Add instructions for ONNX Runtime
-        Print("ONNX Runtime Integration Instructions:");
-        Print("1. Download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases");
-        Print("2. Extract onnxruntime.dll from the package");
-        Print("3. Place the DLL in your MetaTrader 5 terminal's MQL5/Libraries/ folder");
-        Print("4. Restart MetaTrader 5 to load the DLL");
-        
         if(FallbackToManualMode) {
             Print("OPERATING IN MANUAL MODE: DRL model unavailable, automatic trading disabled");
             return true; // Continue execution without the model
