@@ -1,787 +1,427 @@
 //+------------------------------------------------------------------+
-//|                                                    DRLTrader.mq5    |
-//|                                   Copyright 2024, DRL Trading Bot   |
-//|                                     https://github.com/your-repo    |
+//|                                                    DRLTrader.mq5     |
+//|                                   Copyright 2024, DRL Trading Bot    |
+//|                                     https://github.com/your-repo     |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, DRL Trading Bot"
-#property link "https://github.com/your-repo"
-#property version "1.00"
+#property link      "https://github.com/your-repo"
+#property version   "1.00"
 #property strict
 
 // Include required files
 #include <Trade/Trade.mqh>
-#include <Arrays/ArrayDouble.mqh>
-#include <Math/Stat/Math.mqh>
 #include <Trade/SymbolInfo.mqh>
-#include <DRL/features.mqh>
-#include <DRL/model.mqh>
-#include <DRL/matrix.mqh>
-#include <DRL/weights.mqh>
+
+// Import DLL functions
+#import "DRLModel.dll"
+   void* CreateModel(string model_path, string config_path);
+   void DestroyModel(void* handle);
+   bool Predict(void* handle, const double& features[], int feature_count,
+                double& state[], int state_size, double& output[]);
+   bool GetModelProperties(void* handle, int& feature_count,
+                         int& hidden_size, int& action_count);
+   const char* const* GetFeatureNames(void* handle, int& count);
+   void FreeFeatureNames(const char* const* names);
+#import
 
 // Constants
 #define MAGIC_NUMBER 20240417
 #define STOP_LOSS_PIPS 1500.0
-#define BARS_TO_FETCH 500
 
 // Input parameters
-input int MaxSpread = 350; // Maximum allowed spread (points)
+input string ModelGroup = ">>> Model Settings <<<";
+input string ModelPath = "C:\\MT5\\model.pt";  // Path to TorchScript model
+input string ConfigPath = "C:\\MT5\\model_config.json";  // Path to model config
 
-// Position sizing settings
-input string PositionGroup = ">>> Position Sizing <<<"; // Position Sizing
-input double BALANCE_PER_LOT = 2500.0;                 // Amount required per 0.01 lot
+input string TradingGroup = ">>> Trading Settings <<<";
+input int MaxSpread = 350;           // Maximum allowed spread (points)
+input double BalancePerLot = 2500.0; // Amount required per 0.01 lot
 
-// Model settings
-input string ModelGroup = ">>> Model Settings <<<"; // Model Settings
-input bool ResetStatesOnGap = true;                 // Reset LSTM states on timeframe gap
-input int TimeframeMinutes = 15;                    // Trading timeframe in minutes
-
-// Exploration settings
-input string ExplorationGroup = ">>> Exploration Settings <<<"; // Exploration Settings
-input double ExploreRate = 0.10;                              // Exploration rate (0.0-1.0)
-input double BuyBias = 0.05;                                  // Additional probability for BUY actions
-input double SellBias = 0.05;                                 // Additional probability for SELL actions
+// Indicators
+int rsi_handle;
+int atr_handle;
+int bb_handle;
+int adx_handle;
 
 // Global variables
-CTrade Trade;                        // Trading object
-CFeatureProcessor *FeatureProcessor; // Feature calculation class
-double LSTMState[];                  // Current LSTM state
-datetime LastBarTime;                // Last processed bar time
-int LastBarIndex;                    // Last processed bar index
-bool FirstTick = true;               // Flag for first tick
+CTrade Trade;               // Trading object
+void* ModelHandle = NULL;   // Model instance handle
+double[] LSTMState;        // LSTM state vector
+double[] Features;         // Feature vector
+double[] ActionProbs;      // Action probabilities
+string[] FeatureNames;     // Feature names from model
+
+// Model properties
+int FeatureCount = 0;
+int HiddenSize = 0;
+int ActionCount = 0;
 
 // Position tracking
-struct Position
-{
+struct Position {
     int direction;      // 1 for long, -1 for short, 0 for none
     double entryPrice;  // Position entry price
     double lotSize;     // Position size in lots
-    int entryStep;      // Entry step relative to data window
     datetime entryTime; // Entry timestamp
-    bool pendingUpdate; // Track if position update is pending
 };
 
 Position CurrentPosition;
 
 //+------------------------------------------------------------------+
-//| Expert initialization function                                      |
+//| Initialize indicators                                              |
 //+------------------------------------------------------------------+
-int OnInit()
-{
-    Print("DEBUG: Starting initialization of DRLTrader");
+bool InitializeIndicators() {
+    rsi_handle = iRSI(_Symbol, _Period, 14, PRICE_CLOSE);
+    atr_handle = iATR(_Symbol, _Period, 14);
+    bb_handle = iBands(_Symbol, _Period, 20, 0, 2, PRICE_CLOSE);
+    adx_handle = iADX(_Symbol, _Period, 14);
+    
+    return rsi_handle != INVALID_HANDLE && 
+           atr_handle != INVALID_HANDLE && 
+           bb_handle != INVALID_HANDLE &&
+           adx_handle != INVALID_HANDLE;
+}
 
-    // Check account type and broker requirements
-    Print("DEBUG: Account info - Leverage: 1:", AccountInfoInteger(ACCOUNT_LEVERAGE),
-          ", Stop Out Level: ", AccountInfoInteger(ACCOUNT_MARGIN_SO_MODE),
-          ", Allowed Trade Mode: ", AccountInfoInteger(ACCOUNT_TRADE_MODE));
+//+------------------------------------------------------------------+
+//| Release indicators                                                |
+//+------------------------------------------------------------------+
+void ReleaseIndicators() {
+    IndicatorRelease(rsi_handle);
+    IndicatorRelease(atr_handle);
+    IndicatorRelease(bb_handle);
+    IndicatorRelease(adx_handle);
+}
 
-    // Check symbol details
-    Print("DEBUG: Symbol details - Min Lot: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN),
-          ", Max Lot: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX),
-          ", Lot Step: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP),
-          ", Trade Allowed: ", SymbolInfoInteger(_Symbol, SYMBOL_TRADE_MODE));
+//+------------------------------------------------------------------+
+//| Calculate features                                                 |
+//+------------------------------------------------------------------+
+void ProcessFeatures() {
+    ArrayResize(Features, 9); // Base features, position features added later
+    
+    // Price data
+    double close[];
+    double open[];
+    ArraySetAsSeries(close, true);
+    ArraySetAsSeries(open, true);
+    CopyClose(_Symbol, _Period, 0, 2, close);
+    CopyOpen(_Symbol, _Period, 0, 1, open);
+    
+    // Returns
+    Features[0] = (close[0] - close[1]) / close[1];
+    Features[0] = MathMax(MathMin(Features[0], 0.1), -0.1);
+    
+    // RSI
+    double rsi[];
+    ArraySetAsSeries(rsi, true);
+    CopyBuffer(rsi_handle, 0, 0, 1, rsi);
+    Features[1] = rsi[0] / 50.0 - 1.0;
+    
+    // ATR
+    double atr[];
+    ArraySetAsSeries(atr, true);
+    CopyBuffer(atr_handle, 0, 0, 1, atr);
+    Features[2] = atr[0] / close[0];
+    
+    // Volume Change
+    long volume[];
+    ArraySetAsSeries(volume, true);
+    CopyTickVolume(_Symbol, _Period, 0, 2, volume);
+    Features[3] = volume[1] > 0 ? 
+                  ((double)volume[0] - volume[1]) / volume[1] : 0;
+    Features[3] = MathMax(MathMin(Features[3], 1.0), -1.0);
+    
+    // Bollinger Bands
+    double upper[], lower[];
+    ArraySetAsSeries(upper, true);
+    ArraySetAsSeries(lower, true);
+    CopyBuffer(bb_handle, 1, 0, 1, upper);
+    CopyBuffer(bb_handle, 2, 0, 1, lower);
+    
+    double band_range = upper[0] - lower[0];
+    double position = close[0] - lower[0];
+    Features[4] = position / (band_range + 1e-8);
+    Features[4] = MathMax(MathMin(Features[4], 1.0), 0.0);
+    
+    // ADX (Trend Strength)
+    double adx[];
+    ArraySetAsSeries(adx, true);
+    CopyBuffer(adx_handle, 0, 0, 1, adx);
+    Features[5] = MathMax(MathMin(adx[0]/25.0 - 1.0, 1.0), -1.0);
+    
+    // Candle Pattern
+    double high[], low[];
+    ArraySetAsSeries(high, true);
+    ArraySetAsSeries(low, true);
+    CopyHigh(_Symbol, _Period, 0, 1, high);
+    CopyLow(_Symbol, _Period, 0, 1, low);
+    
+    double body = close[0] - open[0];
+    double upper_wick = high[0] - MathMax(close[0], open[0]);
+    double lower_wick = MathMin(close[0], open[0]) - low[0];
+    double range = high[0] - low[0] + 1e-8;
+    
+    Features[6] = (body/range + 
+                  (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2.0;
+    Features[6] = MathMax(MathMin(Features[6], 1.0), -1.0);
+    
+    // Time Features
+    MqlDateTime time;
+    TimeToStruct(TimeCurrent(), time);
+    int minutes = time.hour * 60 + time.min;
+    Features[7] = MathSin(2.0 * M_PI * minutes / 1440);
+    Features[8] = MathCos(2.0 * M_PI * minutes / 1440);
+    
+    // Add position features
+    int current_size = ArraySize(Features);
+    ArrayResize(Features, current_size + 2);
+    
+    // Position type
+    Features[current_size] = (double)CurrentPosition.direction;
+    
+    // Unrealized P&L
+    double unrealized_pnl = 0;
+    if (CurrentPosition.direction != 0) {
+        double current_price = CurrentPosition.direction == 1 ? 
+                             SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                             SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+        unrealized_pnl = CurrentPosition.direction *
+                        (current_price - CurrentPosition.entryPrice) /
+                        CurrentPosition.entryPrice;
+    }
+    Features[current_size + 1] = MathMax(MathMin(unrealized_pnl, 1.0), -1.0);
+    
+    // Debug: Log feature values
+    for(int i = 0; i < ArraySize(Features); i++) {
+        string feature_name = i < ArraySize(FeatureNames) ? FeatureNames[i] : StringFormat("Feature_%d", i);
+        Print("Feature ", feature_name, ": ", Features[i]);
+    }
+}
 
-    // Initialize trade object with magic number
-    Trade.SetExpertMagicNumber(MAGIC_NUMBER);
-    Trade.SetMarginMode();
-    Trade.SetTypeFillingBySymbol(_Symbol);
+//+------------------------------------------------------------------+
+//| Calculate stop loss price                                          |
+//+------------------------------------------------------------------+
+double CalculateStopLoss(const double entryPrice, const bool isBuy) {
+    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+    
+    // For XAUUSD, 1 pip = 0.1 points
+    double pipValue = StringFind(_Symbol, "XAU") >= 0 ? point * 10 : point;
+    
+    // Calculate stop loss price
+    double slPrice = isBuy ? 
+                    entryPrice - (STOP_LOSS_PIPS * pipValue) : 
+                    entryPrice + (STOP_LOSS_PIPS * pipValue);
+    
+    return NormalizeDouble(slPrice, digits);
+}
 
-    Print("DEBUG: Expert initialized with magic number: ", Trade.RequestMagic());
+//+------------------------------------------------------------------+
+//| Calculate position size                                            |
+//+------------------------------------------------------------------+
+double CalculateLotSize() {
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+    
+    double lotSize = (balance / BalancePerLot) * minLot;
+    lotSize = MathRound(lotSize / lotStep) * lotStep;
+    lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
+    
+    return lotSize;
+}
 
-    // Initialize feature processor
-    FeatureProcessor = new CFeatureProcessor();
-    FeatureProcessor.Init(_Symbol, _Period);
-    Print("DEBUG: Feature processor initialized");
+//+------------------------------------------------------------------+
+//| Execute trades based on model output                               |
+//+------------------------------------------------------------------+
+void ExecuteTrade(const double& probs[]) {
+    // Get action with highest probability
+    int action = 0;
+    double maxProb = probs[0];
+    for(int i = 1; i < ActionCount; i++) {
+        if(probs[i] > maxProb) {
+            maxProb = probs[i];
+            action = i;
+        }
+    }
+    
+    // Debug output
+    string action_names[] = {"Hold", "Buy", "Sell", "Close"};
+    Print("Selected action: ", action_names[action], " (", action, ") with probability ", maxProb);
+    
+    double lotSize = CalculateLotSize();
+    if(lotSize == 0) return;
+    
+    switch(action) {
+        case 1: // Buy
+            if(CurrentPosition.direction == 0) {
+                double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+                double stopLoss = CalculateStopLoss(askPrice, true);
+                
+                if(Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0)) {
+                    CurrentPosition.direction = 1;
+                    CurrentPosition.entryPrice = Trade.ResultPrice();
+                    CurrentPosition.lotSize = lotSize;
+                    CurrentPosition.entryTime = TimeCurrent();
+                }
+            }
+            break;
+            
+        case 2: // Sell
+            if(CurrentPosition.direction == 0) {
+                double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+                double stopLoss = CalculateStopLoss(bidPrice, false);
+                
+                if(Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0)) {
+                    CurrentPosition.direction = -1;
+                    CurrentPosition.entryPrice = Trade.ResultPrice();
+                    CurrentPosition.lotSize = lotSize;
+                    CurrentPosition.entryTime = TimeCurrent();
+                }
+            }
+            break;
+            
+        case 3: // Close
+            if(CurrentPosition.direction != 0) {
+                if(Trade.PositionClose(_Symbol)) {
+                    CurrentPosition.direction = 0;
+                    CurrentPosition.entryPrice = 0;
+                    CurrentPosition.lotSize = 0;
+                    CurrentPosition.entryTime = 0;
+                }
+            }
+            break;
+    }
+}
 
-    // Initialize LSTM state array for both hidden and cell states
-    ArrayResize(LSTMState, 2 * LSTM_UNITS);  // Double size for [hidden_state, cell_state]
-    if(ArraySize(LSTMState) != 2 * LSTM_UNITS) {
-        Print("ERROR: Failed to initialize LSTM state array - expected size ", 
-              2 * LSTM_UNITS, ", got ", ArraySize(LSTMState));
+//+------------------------------------------------------------------+
+//| Get feature names from model                                       |
+//+------------------------------------------------------------------+
+bool GetFeatureNames() {
+    int count = 0;
+    const char* const* names = GetFeatureNames(ModelHandle, count);
+    
+    if(names != NULL && count > 0) {
+        ArrayResize(FeatureNames, count);
+        for(int i = 0; i < count; i++) {
+            FeatureNames[i] = names[i];
+        }
+        FreeFeatureNames(names);
+        return true;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                     |
+//+------------------------------------------------------------------+
+int OnInit() {
+    Print("Initializing DRLTrader with LibTorch implementation...");
+    
+    // Initialize indicators
+    if(!InitializeIndicators()) {
+        Print("Failed to initialize indicators");
         return INIT_FAILED;
     }
     
-    // Initialize both hidden and cell states to zero
+    // Initialize model
+    ModelHandle = CreateModel(ModelPath, ConfigPath);
+    if(ModelHandle == NULL) {
+        Print("Failed to load model");
+        return INIT_FAILED;
+    }
+    
+    // Get model properties
+    if(!GetModelProperties(ModelHandle, FeatureCount, HiddenSize, ActionCount)) {
+        Print("Failed to get model properties");
+        return INIT_FAILED;
+    }
+    
+    // Get feature names
+    if(!GetFeatureNames()) {
+        Print("Warning: Failed to get feature names");
+    }
+    
+    Print("Model loaded successfully - Features: ", FeatureCount,
+          ", Hidden Size: ", HiddenSize,
+          ", Actions: ", ActionCount);
+    
+    // Initialize arrays
+    ArrayResize(LSTMState, 2 * HiddenSize);
     ArrayInitialize(LSTMState, 0);
-    Print("DEBUG: LSTM state initialized with ", LSTM_UNITS, 
-          " units (", ArraySize(LSTMState), " total elements)");
-
-    // Initialize position tracking to match Python's None state
+    
+    ArrayResize(ActionProbs, ActionCount);
+    ArrayInitialize(ActionProbs, 0);
+    
+    // Initialize trade object
+    Trade.SetExpertMagicNumber(MAGIC_NUMBER);
+    Trade.SetMarginMode();
+    Trade.SetTypeFillingBySymbol(_Symbol);
+    
+    // Initialize position tracking
     CurrentPosition.direction = 0;
-    CurrentPosition.entryPrice = 0.0;
-    CurrentPosition.lotSize = 0.0;
-    CurrentPosition.entryStep = 0;
+    CurrentPosition.entryPrice = 0;
+    CurrentPosition.lotSize = 0;
     CurrentPosition.entryTime = 0;
-    CurrentPosition.pendingUpdate = false;
-    Print("DEBUG: Position initialized to None state");
-
+    
     // Check for existing positions
-    Print("DEBUG: Checking for existing positions, total positions: ", PositionsTotal());
-    if (PositionsTotal() > 0)
-    {
-        for (int i = 0; i < PositionsTotal(); i++)
-        {
+    if(PositionsTotal() > 0) {
+        for(int i = 0; i < PositionsTotal(); i++) {
             ulong ticket = PositionGetTicket(i);
-            if (PositionSelectByTicket(ticket))
-            {
-                if (PositionGetString(POSITION_SYMBOL) == _Symbol &&
-                    PositionGetInteger(POSITION_MAGIC) == MAGIC_NUMBER)
-                {
-                    // Match Python's position recovery exactly
-                    CurrentPosition.direction = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+                   PositionGetInteger(POSITION_MAGIC) == MAGIC_NUMBER) {
+                    CurrentPosition.direction = 
+                        PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
                     CurrentPosition.entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
                     CurrentPosition.lotSize = PositionGetDouble(POSITION_VOLUME);
                     CurrentPosition.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
-                    CurrentPosition.entryStep = 0; // Will be updated in first trading cycle
-                    CurrentPosition.pendingUpdate = false;
-                    Print("Recovered position: ",
-                          CurrentPosition.direction == 1 ? "LONG" : "SHORT",
-                          " ", CurrentPosition.lotSize, " lots @ ",
-                          CurrentPosition.entryPrice);
                     break;
                 }
             }
         }
     }
-
-    // Reset state tracking
-    LastBarTime = 0;
-    LastBarIndex = 0;
-    FirstTick = true;
-
-    Print("DEBUG: Initialization completed successfully");
-    return (INIT_SUCCEEDED);
+    
+    return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
 //| Expert deinitialization function                                   |
 //+------------------------------------------------------------------+
-void OnDeinit(const int reason)
-{
-    // Clean up resources
-    if (CheckPointer(FeatureProcessor) == POINTER_DYNAMIC)
-    {
-        FeatureProcessor.Deinit();
-        delete FeatureProcessor;
+void OnDeinit(const int reason) {
+    if(ModelHandle != NULL) {
+        DestroyModel(ModelHandle);
+        ModelHandle = NULL;
     }
-}
-
-//+------------------------------------------------------------------+
-//| Calculate stop loss price based on pips                            |
-//+------------------------------------------------------------------+
-double CalculateStopLoss(const double entryPrice, const bool isBuy)
-{
-    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-
-    // For XAUUSD, 1 pip = 0.1 points (multiply by 10)
-    double pipValue = StringFind(_Symbol, "XAU") >= 0 ? point * 10 : point;
-
-    // Calculate stop loss price
-    double slPrice = isBuy ? entryPrice - (STOP_LOSS_PIPS * pipValue) : entryPrice + (STOP_LOSS_PIPS * pipValue);
-
-    // Round to symbol digits
-    return NormalizeDouble(slPrice, digits);
-}
-
-//+------------------------------------------------------------------+
-//| Calculate lot size matching Python implementation                   |
-//+------------------------------------------------------------------+
-double CalculateLotSize()
-{
-    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-
-    // Match Python calculation exactly
-    double lotSize = (balance / BALANCE_PER_LOT) * minLot;
-    lotSize = MathRound(lotSize / lotStep) * lotStep; // Round to nearest lot step
-    lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
-
-    return lotSize;
-}
-
-//+------------------------------------------------------------------+
-//| Execute trade based on model prediction                            |
-//+------------------------------------------------------------------+
-void ExecuteTrade(const int action, const double &features[])
-{
-    // Calculate lot size and current prices
-    double lotSize = CalculateLotSize();
-    Print("DEBUG: CalculateLotSize() returned ", lotSize);
-
-    if (lotSize == 0)
-    {
-        Print("DEBUG: Trade execution aborted - lotSize is zero");
-        return;
-    }
-
-    double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-    double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-    Print("DEBUG: Current prices - Ask: ", askPrice, ", Bid: ", bidPrice, ", Spread: ", SymbolInfoInteger(_Symbol, SYMBOL_SPREAD));
-
-    // Log account info
-    Print("DEBUG: Account info - Balance: ", AccountInfoDouble(ACCOUNT_BALANCE),
-          ", Equity: ", AccountInfoDouble(ACCOUNT_EQUITY),
-          ", Margin level: ", AccountInfoDouble(ACCOUNT_MARGIN_LEVEL),
-          ", Free margin: ", AccountInfoDouble(ACCOUNT_MARGIN_FREE));
-
-    switch (action)
-    {
-    case 1: // Buy
-        if (CurrentPosition.direction == 0)
-        {
-            double stopLoss = CalculateStopLoss(askPrice, true);
-            Print("DEBUG: Attempting to BUY ", lotSize, " lots @ market, SL: ", stopLoss);
-            if (Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0))
-            {
-                // Update position only after confirmed execution
-                CurrentPosition.direction = 1;
-                CurrentPosition.entryPrice = Trade.ResultPrice();
-                CurrentPosition.lotSize = lotSize;
-                CurrentPosition.entryStep = BARS_TO_FETCH - 1; // Last step in data window
-                CurrentPosition.entryTime = TimeCurrent();
-                Print("DEBUG: Buy executed successfully: ", lotSize, " lots @ ", Trade.ResultPrice(), ", SL: ", stopLoss);
-            }
-            else
-            {
-                int errorCode = GetLastError();
-                Print("DEBUG: Buy execution FAILED - Error code: ", errorCode, ", Description: ", ErrorDescription(errorCode));
-            }
-        }
-        else
-        {
-            Print("DEBUG: Buy action ignored - already have position: ",
-                  CurrentPosition.direction == 1 ? "LONG" : "SHORT",
-                  " with ", CurrentPosition.lotSize, " lots");
-        }
-        break;
-
-    case 2: // Sell
-        if (CurrentPosition.direction == 0)
-        {
-            double stopLoss = CalculateStopLoss(bidPrice, false);
-            Print("DEBUG: Attempting to SELL ", lotSize, " lots @ market, SL: ", stopLoss);
-            if (Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0))
-            {
-                // Update position only after confirmed execution
-                CurrentPosition.direction = -1;
-                CurrentPosition.entryPrice = Trade.ResultPrice();
-                CurrentPosition.lotSize = lotSize;
-                CurrentPosition.entryStep = BARS_TO_FETCH - 1; // Last step in data window
-                CurrentPosition.entryTime = TimeCurrent();
-                Print("DEBUG: Sell executed successfully: ", lotSize, " lots @ ", Trade.ResultPrice(), ", SL: ", stopLoss);
-            }
-            else
-            {
-                int errorCode = GetLastError();
-                Print("DEBUG: Sell execution FAILED - Error code: ", errorCode, ", Description: ", ErrorDescription(errorCode));
-            }
-        }
-        else
-        {
-            Print("DEBUG: Sell action ignored - already have position: ",
-                  CurrentPosition.direction == 1 ? "LONG" : "SHORT",
-                  " with ", CurrentPosition.lotSize, " lots");
-        }
-        break;
-
-    case 3: // Close
-        if (CurrentPosition.direction != 0)
-        {
-            Print("DEBUG: Attempting to close position");
-            if (Trade.PositionClose(_Symbol))
-            {
-                Print("DEBUG: Position closed successfully");
-                // Reset all position fields to match Python's None state
-                CurrentPosition.direction = 0;
-                CurrentPosition.entryPrice = 0.0;
-                CurrentPosition.lotSize = 0.0;
-                CurrentPosition.entryStep = 0;
-                CurrentPosition.entryTime = 0;
-                CurrentPosition.pendingUpdate = false;
-            }
-            else
-            {
-                int errorCode = GetLastError();
-                Print("DEBUG: Position close FAILED - Error code: ", errorCode, ", Description: ", ErrorDescription(errorCode));
-            }
-        }
-        else
-        {
-            Print("DEBUG: Close action ignored - no position to close");
-        }
-        break;
-
-    case 0: // Hold
-        Print("DEBUG: Hold action - no trades executed");
-        break;
-
-    default:
-        Print("DEBUG: Unknown action value: ", action);
-        break;
-    }
-}
-
-//+------------------------------------------------------------------+
-//| Get error description                                             |
-//+------------------------------------------------------------------+
-string ErrorDescription(int errorCode)
-{
-    switch (errorCode)
-    {
-    case 0: // ERR_NO_ERROR
-        return "No error";
-    case 4051: // ERR_INVALID_FUNCTION_PARAMETER_VALUE
-        return "Invalid parameter value";
-    case 4052: // ERR_INVALID_TRADE_PARAMETERS
-        return "Invalid trade parameters";
-    case 4022: // ERR_SYSTEM_BUSY
-        return "System is busy";
-    case 4008: // ERR_NO_RESULT
-        return "No result";
-    case 4055: // ERR_INVALID_PRICE
-        return "Invalid price";
-    case 4056: // ERR_INVALID_STOPS
-        return "Invalid stops";
-    case 4061: // ERR_INVALID_VOLUME
-        return "Invalid volume";
-    case 4109: // ERR_TRADE_DISABLED
-        return "Trade is disabled";
-    case 4060: // ERR_MARKET_CLOSED
-        return "Market is closed";
-    case 4062: // ERR_TRADE_TOO_MANY_ORDERS
-        return "Too many orders";
-    case 4059: // ERR_TRADE_CONTEXT_BUSY
-        return "Trade context is busy";
-    case 4113: // ERR_TRADE_EXPERT_DISABLED_BY_SERVER
-        return "EA trading disabled by server";
-    case 4057: // ERR_TRADE_EXPIRATION_DENIED
-        return "Expiration is denied";
-    case 4107: // ERR_TRADE_TOO_MANY_REQUESTS
-        return "Too many requests";
-    case 4110: // ERR_TRADE_HEDGE_PROHIBITED
-        return "Hedge is prohibited";
-    case 4111: // ERR_TRADE_PROHIBITED_BY_FIFO
-        return "Prohibited by FIFO";
-    case 4108: // ERR_TRADE_POSITION_NOT_FOUND
-        return "Position not found";
-    case 4114: // ERR_TRADE_IMPOSSIBLE_TO_CLOSE
-        return "Impossible to close";
-    case 4025: // ERR_TRADE_NOT_ALLOWED_IN_TESTING
-        return "Not allowed in testing";
-    default:
-        return "Unknown error " + IntegerToString(errorCode);
-    }
+    ReleaseIndicators();
 }
 
 //+------------------------------------------------------------------+
 //| Expert tick function                                               |
 //+------------------------------------------------------------------+
-void OnTick()
-{
-    // New debug section to verify model dimensions
-    if (FirstTick) {
-        Print("MODEL DEBUG: Architecture - FEATURE_COUNT=", FEATURE_COUNT, 
-              ", LSTM_UNITS=", LSTM_UNITS, 
-              ", ACTION_COUNT=", ACTION_COUNT);
-        
-        // Check weight array dimensions
-        Print("MODEL DEBUG: Weight dimensions - Input: ", 
-              ArrayRange(actor_input_weight, 0), "x", ArrayRange(actor_input_weight, 1),
-              ", Hidden: ", ArrayRange(actor_hidden_weight, 0), "x", ArrayRange(actor_hidden_weight, 1),
-              ", Output: ", ArrayRange(actor_output_weight, 0), "x", ArrayRange(actor_output_weight, 1));
-        
-        // Check bias array sizes
-        Print("MODEL DEBUG: Bias sizes - Input: ", ArraySize(actor_input_bias),
-              ", Hidden: ", ArraySize(actor_hidden_bias),
-              ", Output: ", ArraySize(actor_output_bias));
-    }
-    
+void OnTick() {
     // Skip if spread is too high
-    if (SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) > MaxSpread)
-    {
-        Print("DEBUG: Skipping tick due to high spread: ", SymbolInfoInteger(_Symbol, SYMBOL_SPREAD), " > ", MaxSpread);
-        return;
-    }
-
-    // Check for new bar
-    datetime currentBarTime = iTime(_Symbol, _Period, 0);
-    if (currentBarTime == LastBarTime)
-    {
-        // Uncomment if needed for very detailed logging
-        // Print("DEBUG: Skipping tick - not a new bar");
-        return;
-    }
-
-    Print("DEBUG: Processing new bar at ", TimeToString(currentBarTime), ", last bar was ",
-          LastBarTime > 0 ? TimeToString(LastBarTime) : "none");
-
-    // Check for significant time gap using Python's logic
-    if (ResetStatesOnGap && LastBarTime > 0)
-    {
-        datetime expectedTime = LastBarTime + TimeframeMinutes * 60;
-        int timeDiff = (int)(currentBarTime - expectedTime);
-
-        if (timeDiff > (TimeframeMinutes * 2 * 60))
-        {
-            Print("DEBUG: Significant data gap detected (", timeDiff / 60.0, " minutes), resetting LSTM states");
-            if(ArraySize(LSTMState) != 2 * LSTM_UNITS) {
-                Print("ERROR: Invalid state array size during reset - expected ", 
-                      2 * LSTM_UNITS, ", got ", ArraySize(LSTMState));
-                return;
-            }
-            ArrayInitialize(LSTMState, 0);
-            Print("DEBUG: Reset LSTM states after gap (", ArraySize(LSTMState), " total elements)");
-        }
-    }
-
-    // Calculate features
-    double features[];
-    FeatureProcessor.ProcessFeatures(features);
-    Print("DEBUG: Processed ", ArraySize(features), " features");
-
-    // Add position features
-    int baseFeatureCount = ArraySize(features);
-    ArrayResize(features, baseFeatureCount + 2);
-    features[baseFeatureCount] = (double)CurrentPosition.direction; // Position type
-
-    // Calculate unrealized P&L
-    double unrealizedPnl = 0;
-    if (CurrentPosition.direction != 0)
-    {
-        double currentPrice = CurrentPosition.direction == 1 ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-        unrealizedPnl = CurrentPosition.direction *
-                        (currentPrice - CurrentPosition.entryPrice) /
-                        CurrentPosition.entryPrice;
-        Print("DEBUG: Current position: ",
-              CurrentPosition.direction == 1 ? "LONG" : "SHORT",
-              " entry price: ", CurrentPosition.entryPrice,
-              " current price: ", currentPrice,
-              " unrealized PnL: ", unrealizedPnl);
-    }
-    features[baseFeatureCount + 1] = MathMax(MathMin(unrealizedPnl, 1.0), -1.0);
-
-    // Log selected key features for analysis
-    Print("DEBUG: Key features - Position: ", features[baseFeatureCount],
-          ", PnL: ", features[baseFeatureCount + 1]);
-
-    // Run LSTM inference
-    double lstm_output[];
-    RunLSTMInference(features, LSTMState, lstm_output);
-
-    // Add this after the LSTM inference
-    Print("DEBUG: LSTM state sample: ", LSTMState[0], ", ", LSTMState[1], ", ", LSTMState[2]);
-
-    // Log raw model output
-    Print("DEBUG: Raw model output - Hold: ", DoubleToString(lstm_output[0], 4),
-          ", Buy: ", DoubleToString(lstm_output[1], 4),
-          ", Sell: ", DoubleToString(lstm_output[2], 4),
-          ", Close: ", DoubleToString(lstm_output[3], 4));
-
-    // Log these values in a format you can easily analyze
-    Print("RAW_OUTPUT: ", TimeToString(currentBarTime), ",", 
-          DoubleToString(lstm_output[0], 5), ",", 
-          DoubleToString(lstm_output[1], 5), ",",
-          DoubleToString(lstm_output[2], 5), ",",
-          DoubleToString(lstm_output[3], 5));
-
-    // Get action with highest probability without any modifications
-    int action = 0;
-    double maxProb = lstm_output[0];
-    for (int i = 1; i < ACTION_COUNT; i++)
-    {
-        if (lstm_output[i] > maxProb)
-        {
-            maxProb = lstm_output[i];
-            action = i;
-        }
-    }
-
-    // Log model output and decision
-    string actionDescription = "";
-    switch (action)
-    {
-    case 0:
-        actionDescription = "HOLD";
-        break;
-    case 1:
-        actionDescription = "BUY";
-        break;
-    case 2:
-        actionDescription = "SELL";
-        break;
-    case 3:
-        actionDescription = "CLOSE";
-        break;
-    default:
-        actionDescription = "UNKNOWN";
-        break;
-    }
-
-    Print("DEBUG: Model output probabilities - Hold: ",
-          DoubleToString(lstm_output[0], 4), ", Buy: ",
-          DoubleToString(lstm_output[1], 4), ", Sell: ",
-          DoubleToString(lstm_output[2], 4), ", Close: ",
-          DoubleToString(lstm_output[3], 4));
-    Print("DEBUG: Selected action: ", action, " (", actionDescription, ") with probability ", DoubleToString(maxProb, 4));
-
-    // Execute trade
-    ExecuteTrade(action, features);
-
-    // Update state tracking
-    LastBarTime = currentBarTime;
-    LastBarIndex++;
-    FirstTick = false;
-}
-
-// Helper function to convert 2D index to 1D array index
-int GetArrayIndex(const int row, const int col, const int cols) {
-    return row * cols + col;
-}
-
-// Convert a flattened 1D array index to a row
-int GetRow(const int index, const int cols) {
-    return index / cols;
-}
-
-// Convert a flattened 1D array index to a column
-int GetCol(const int index, const int cols) {
-    return index % cols;
-}
-
-// Create a new function for our custom flattening operation
-void PrepareWeightsArray(const double &sourceArray[], double &targetArray[], const int inputDim, const int outputDim) {
-    ArrayResize(targetArray, inputDim * outputDim);
-    ArrayCopy(targetArray, sourceArray);
-}
-
-//+------------------------------------------------------------------+
-//| Run LSTM inference                                                 |
-//+------------------------------------------------------------------+
-void RunLSTMInference(const double &features[], double &state[], double &output[])
-{
-    Print("DEBUG_LSTM: Starting RunLSTMInference with feature count: ", ArraySize(features), 
-          ", state size: ", ArraySize(state));
-          
-    // Split state into hidden and cell states (each LSTM_UNITS long)
-    // Original shape is (2, 1, 256) where first dim is [hidden_state, cell_state]
-    double hidden_state[];  // First half of state array
-    double next_cell_state[]; // Next cell state to be computed
-    double current_cell_state[]; // Second half of state array
-    double input_gate[];
-    double forget_gate[];
-    double cell_candidate[];
-    double output_gate[];
-    
-    int hidden_size = LSTM_UNITS;
-    Print("DEBUG_LSTM: Hidden size (LSTM_UNITS): ", hidden_size);
-    
-    // Initialize all arrays
-    ArrayResize(hidden_state, hidden_size);
-    ArrayResize(next_cell_state, hidden_size);
-    ArrayResize(current_cell_state, hidden_size);
-    ArrayResize(input_gate, hidden_size);
-    ArrayResize(forget_gate, hidden_size);
-    ArrayResize(cell_candidate, hidden_size);
-    ArrayResize(output_gate, hidden_size);
-    
-    // Split state into hidden and cell states
-    for(int i = 0; i < LSTM_UNITS; i++) {
-        hidden_state[i] = state[i];
-        current_cell_state[i] = state[i + LSTM_UNITS];
-    }
-    ArrayResize(output, ACTION_COUNT);
-    
-    Print("DEBUG_LSTM: Arrays resized - input_gate: ", ArraySize(input_gate),
-          ", forget_gate: ", ArraySize(forget_gate),
-          ", output: ", ArraySize(output),
-          ", ACTION_COUNT: ", ACTION_COUNT);
-          
-    // Create temporary arrays for matrix multiplication operations
-    double temp_input_weights[];
-    double temp_hidden_weights[];
-    double temp_output_weights[];  // Final output weights
-    
-    // Copy weights to temporary arrays to avoid parameter conversion issues
-    ArrayResize(temp_input_weights, ArraySize(actor_input_weight));
-    ArrayCopy(temp_input_weights, actor_input_weight);
-    
-    ArrayResize(temp_hidden_weights, ArraySize(actor_hidden_weight));
-    ArrayCopy(temp_hidden_weights, actor_hidden_weight);
-    
-    // Prepare output weights
-    ArrayResize(temp_output_weights, OUTPUT_WEIGHT_ROWS * OUTPUT_WEIGHT_COLS); // [256][4]
-    ArrayCopy(temp_output_weights, actor_output_weight);
-    
-    // Actor LSTM - Input transformation
-    double actor_input[];
-    if (FEATURE_COUNT > 0 && LSTM_UNITS > 0) {
-        Print("DEBUG_LSTM: Feature count: ", ArraySize(features), 
-              ", FEATURE_COUNT: ", FEATURE_COUNT);
-              
-        MatrixMultiply(features, temp_input_weights, actor_input,
-                      1, FEATURE_COUNT, FEATURE_COUNT, INPUT_WEIGHT_COLS);
-                   
-        Print("DEBUG_LSTM: actor_input size after multiply: ", ArraySize(actor_input));
-    } else {
-        Print("ERROR_LSTM: Invalid dimensions for feature processing");
+    if(SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) > MaxSpread) {
+        Print("Skipping tick - spread too high: ", SymbolInfoInteger(_Symbol, SYMBOL_SPREAD));
         return;
     }
     
-    // Actor LSTM - Hidden transformation
-    double actor_hidden_transform[];
-    if (LSTM_UNITS > 0) {
-        Print("DEBUG_LSTM: State size: ", ArraySize(state),
-              ", LSTM_UNITS: ", LSTM_UNITS);
-        
-        MatrixMultiply(state, temp_hidden_weights, actor_hidden_transform,
-                      1, LSTM_UNITS, LSTM_UNITS, HIDDEN_WEIGHT_COLS);
-                   
-        Print("DEBUG_LSTM: actor_hidden_transform size after multiply: ", ArraySize(actor_hidden_transform));
-    } else {
-        Print("ERROR_LSTM: Invalid dimensions for hidden state processing");
-        return;
-    }
-
-    // Calculate gates
-    Print("DEBUG_LSTM: Starting gate calculations for ", LSTM_UNITS, " units");
-    for (int i = 0; i < LSTM_UNITS; i++)
-    {
-        // Debug bounds checks
-        if(i >= ArraySize(actor_input) || i >= ArraySize(actor_hidden_transform) || 
-           i >= ArraySize(actor_hidden_bias)) {
-            Print("ERROR_LSTM: Index out of bounds at forget_gate calculation, i=", i, 
-                  ", actor_input size: ", ArraySize(actor_input),
-                  ", actor_hidden_transform size: ", ArraySize(actor_hidden_transform),
-                  ", actor_hidden_bias size: ", ArraySize(actor_hidden_bias));
-            return;
-        }
-        
-        int idx = i;
-        forget_gate[i] = sigmoid(actor_input[idx] +
-                                 actor_hidden_transform[idx] +
-                                 actor_hidden_bias[idx]);
-
-        // Debug bounds checks for input_gate
-        idx += LSTM_UNITS;
-        if(idx >= ArraySize(actor_input) || idx >= ArraySize(actor_hidden_transform) || 
-           i >= ArraySize(actor_input_bias)) {
-            Print("ERROR_LSTM: Index out of bounds at input_gate calculation, idx=", idx, ", i=", i,
-                  ", actor_input size: ", ArraySize(actor_input),
-                  ", actor_hidden_transform size: ", ArraySize(actor_hidden_transform),
-                  ", actor_input_bias size: ", ArraySize(actor_input_bias));
-            return;
-        }
-        
-        input_gate[i] = sigmoid(actor_input[idx] +
-                                actor_hidden_transform[idx] +
-                                actor_input_bias[idx]);
-
-        // Debug bounds checks for cell_state
-        idx += LSTM_UNITS;
-        if(idx >= ArraySize(actor_input) || idx >= ArraySize(actor_hidden_transform) || 
-           i >= ArraySize(actor_input_bias)) {
-            Print("ERROR_LSTM: Index out of bounds at cell_state calculation, idx=", idx, ", i=", i,
-                  ", actor_input size: ", ArraySize(actor_input),
-                  ", actor_hidden_transform size: ", ArraySize(actor_hidden_transform),
-                  ", actor_input_bias size: ", ArraySize(actor_input_bias));
-            return;
-        }
-        
-        cell_candidate[i] = custom_tanh(actor_input[idx] +
-                                      actor_hidden_transform[idx] +
-                                      actor_input_bias[i]);
-
-        // Debug bounds checks for output_gate
-        idx += LSTM_UNITS;
-        if(idx >= ArraySize(actor_input) || idx >= ArraySize(actor_hidden_transform) || 
-           i >= ArraySize(actor_hidden_bias)) {
-            Print("ERROR_LSTM: Index out of bounds at output_gate calculation, idx=", idx, ", i=", i,
-                  ", actor_input size: ", ArraySize(actor_input),
-                  ", actor_hidden_transform size: ", ArraySize(actor_hidden_transform),
-                  ", actor_hidden_bias size: ", ArraySize(actor_hidden_bias));
-            return;
-        }
-        
-        output_gate[i] = sigmoid(actor_input[idx] +
-                               actor_hidden_transform[idx] +
-                               actor_hidden_bias[i]);
-    }
-
-    // Update cell and hidden states
-    Print("DEBUG_LSTM: Updating cell and hidden states");
-    for (int i = 0; i < LSTM_UNITS; i++)
-    {
-        if(i >= ArraySize(forget_gate) || i >= ArraySize(current_cell_state) || 
-           i >= ArraySize(input_gate) || i >= ArraySize(cell_candidate)) {
-            Print("ERROR_LSTM: Index out of bounds at state update, i=", i,
-                  ", forget_gate size: ", ArraySize(forget_gate),
-                  ", current_cell_state size: ", ArraySize(current_cell_state),
-                  ", input_gate size: ", ArraySize(input_gate),
-                  ", cell_candidate size: ", ArraySize(cell_candidate));
-            return;
-        }
-        
-        // Update cell state using LSTM equations
-        next_cell_state[i] = forget_gate[i] * current_cell_state[i] +
-                            input_gate[i] * cell_candidate[i];
-        hidden_state[i] = output_gate[i] * custom_tanh(next_cell_state[i]);
-    }
-
-    // Update LSTM state for next iteration by concatenating hidden_state and next_cell_state
-    Print("DEBUG_LSTM: Copying updated states to state array");
-    for(int i = 0; i < LSTM_UNITS; i++) {
-        state[i] = hidden_state[i];              // First half: hidden state
-        state[i + LSTM_UNITS] = next_cell_state[i];  // Second half: cell state
-    }
-
-    // Calculate final output with temporary weights array
-    Print("DEBUG_LSTM: Starting final output calculation");
-    Print("DEBUG_LSTM: actor_output_weight dimensions: ", ArrayRange(actor_output_weight, 0), "x", ArrayRange(actor_output_weight, 1));
-    Print("DEBUG_LSTM: Hidden state first 5 values: ", 
-          hidden_state[0], ", ", hidden_state[1], ", ", 
-          hidden_state[2], ", ", hidden_state[3], ", ", hidden_state[4]);
-          
-    // Direct output transformation from LSTM hidden state to action outputs
-    Print("DEBUG_LSTM: Starting output transformation");
-    MatrixMultiply(hidden_state, temp_output_weights, output,
-                  1, LSTM_UNITS, OUTPUT_WEIGHT_ROWS, OUTPUT_WEIGHT_COLS);
-                   
-    Print("DEBUG_LSTM: Output size after multiply: ", ArraySize(output));
-    Print("DEBUG_LSTM: Raw output values: ", output[0], ", ", output[1], ", ", output[2], ", ", output[3]);
-
-    // Add bias and apply softmax
-    Print("DEBUG_LSTM: Applying softmax with bias");
-    if(ArraySize(output) != ACTION_COUNT || ArraySize(actor_output_bias) < ACTION_COUNT) {
-        Print("ERROR_LSTM: Array size mismatch before softmax - output size: ", ArraySize(output),
-              ", actor_output_bias size: ", ArraySize(actor_output_bias),
-              ", ACTION_COUNT: ", ACTION_COUNT);
+    // Skip if not a new bar
+    static datetime last_bar_time = 0;
+    datetime current_bar_time = iTime(_Symbol, _Period, 0);
+    if(current_bar_time == last_bar_time) return;
+    last_bar_time = current_bar_time;
+    
+    // Process features
+    ProcessFeatures();
+    
+    // Get model prediction
+    if(!Predict(ModelHandle, Features, ArraySize(Features),
+                LSTMState, ArraySize(LSTMState), ActionProbs)) {
+        Print("Prediction failed");
         return;
     }
     
-    // Find maximum value first for numerical stability
-    double max_val = output[0] + actor_output_bias[0];
-    for (int i = 1; i < ACTION_COUNT; i++) {
-        max_val = MathMax(max_val, output[i] + actor_output_bias[i]);
-    }
-
-    // Apply softmax with the stability trick
-    double sum = 0;
-    for (int i = 0; i < ACTION_COUNT; i++) {
-        output[i] = MathExp(output[i] + actor_output_bias[i] - max_val);
-        sum += output[i];
-    }
-
-    // Normalize probabilities
-    Print("DEBUG_LSTM: Normalizing probabilities, sum=", sum);
-    if (sum > 0)
-    {
-        for (int i = 0; i < ACTION_COUNT; i++)
-        {
-            output[i] /= sum;
-        }
-    }
-    
-    Print("DEBUG_LSTM: LSTM inference completed successfully");
+    // Execute trades based on prediction
+    ExecuteTrade(ActionProbs);
 }

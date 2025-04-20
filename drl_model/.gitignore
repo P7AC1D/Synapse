@@ -1,0 +1,57 @@
+# Build directories
+build/
+bin/
+out/
+
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.dir/
+
+# Visual Studio files
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+Debug/
+Release/
+x64/
+*.pdb
+*.idb
+*.ilk
+*.exp
+*.lib
+
+# Exported model files
+output/
+*.pt
+*.json
+
+# LibTorch and dependencies
+*.dll
+*.lib
+*.pdb
+*.exp
+
+# MT5 temporary files
+*.ex5
+*.ex4
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment and IDE
+.env
+.venv/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
