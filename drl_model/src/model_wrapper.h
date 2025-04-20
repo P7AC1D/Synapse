@@ -30,6 +30,9 @@ public:
     // Process and normalize features
     std::vector<float> process_features(const std::vector<double>& raw_features);
     
+    // Get action from probabilities
+    int get_action(const torch::Tensor& action_probs);
+    
     // Getters for model properties
     int get_feature_count() const { return feature_count; }
     int get_hidden_size() const { return hidden_size; }

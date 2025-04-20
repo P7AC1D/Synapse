@@ -146,6 +146,12 @@ __declspec(dllexport) bool GetModelProperties(
     }
 }
 
+// Global storage for feature names to ensure proper memory management
+struct FeatureNamesData {
+    char** names;
+    int count;
+};
+
 __declspec(dllexport) const char* const* GetFeatureNames(
     void* handle,
     int* count
@@ -160,13 +166,18 @@ __declspec(dllexport) const char* const* GetFeatureNames(
         const auto& names = model->get_feature_names();
         *count = static_cast<int>(names.size());
         
-        // Convert vector<string> to array of C-strings
-        const char** name_array = new const char*[names.size()];
+        // Create a new array of C strings (we need to allocate both the array and the strings)
+        auto* data = new FeatureNamesData();
+        data->count = *count;
+        data->names = new char*[names.size()];
+        
         for (size_t i = 0; i < names.size(); ++i) {
-            name_array[i] = names[i].c_str();
+            // Allocate memory for each string copy and copy the string content
+            data->names[i] = new char[names[i].length() + 1];
+            strcpy(data->names[i], names[i].c_str());
         }
         
-        return name_array;
+        return reinterpret_cast<const char* const*>(data);
     }
     catch (const std::exception& e) {
         log_error(std::string("Failed to get feature names: ") + e.what());
@@ -175,9 +186,20 @@ __declspec(dllexport) const char* const* GetFeatureNames(
     }
 }
 
-__declspec(dllexport) void FreeFeatureNames(const char* const* names) {
-    if (names) {
-        delete[] names;
+__declspec(dllexport) void FreeFeatureNames(const char* const* names_ptr) {
+    if (names_ptr) {
+        auto* data = reinterpret_cast<FeatureNamesData*>(const_cast<char**>(names_ptr));
+        
+        // Free each string
+        for (int i = 0; i < data->count; ++i) {
+            delete[] data->names[i];
+        }
+        
+        // Free the array itself
+        delete[] data->names;
+        
+        // Free the container
+        delete data;
     }
 }
 

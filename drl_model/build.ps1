@@ -6,6 +6,63 @@ param (
     [string]$BuildType = "Release"
 )
 
+# Try to read parameters from .env file if not provided
+if (-not $LibTorchPath -or -not $VcpkgPath -or -not $MT5Path) {
+    Write-Host "Some parameters are missing, attempting to load from .env file..."
+    
+    # Find .env file in the script's directory
+    $scriptDir = $PSScriptRoot
+    $envFile = Join-Path $scriptDir ".env"
+    
+    if (Test-Path $envFile) {
+        Write-Host "Found .env file at: $envFile"
+        $envContent = Get-Content $envFile
+        
+        foreach ($line in $envContent) {
+            # Skip comments and empty lines
+            if ($line -match '^\s*#' -or $line -match '^\s*$') {
+                continue
+            }
+            
+            # Parse key=value pairs
+            if ($line -match '^\s*([^=]+)=(.+)$') {
+                $key = $matches[1].Trim()
+                $value = $matches[2].Trim()
+                
+                # Map environment variables to script parameters
+                switch ($key) {
+                    "LIBTORCH_ROOT" { 
+                        if (-not $LibTorchPath) { 
+                            $LibTorchPath = $value 
+                            Write-Host "Using LibTorchPath from .env: $LibTorchPath"
+                        }
+                    }
+                    "VCPKG_ROOT" { 
+                        if (-not $VcpkgPath) { 
+                            $VcpkgPath = $value 
+                            Write-Host "Using VcpkgPath from .env: $VcpkgPath"
+                        }
+                    }
+                    "MT5_PATH" { 
+                        if (-not $MT5Path) { 
+                            $MT5Path = $value 
+                            Write-Host "Using MT5Path from .env: $MT5Path"
+                        }
+                    }
+                    "BUILD_TYPE" { 
+                        if ($BuildType -eq "Release") { # Only override default value
+                            $BuildType = $value 
+                            Write-Host "Using BuildType from .env: $BuildType"
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        Write-Host "No .env file found at: $envFile"
+    }
+}
+
 # Check parameters
 if (-not $LibTorchPath) {
     Write-Host "Please provide LibTorch path with -LibTorchPath parameter"
