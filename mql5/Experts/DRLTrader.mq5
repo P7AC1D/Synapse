@@ -11,31 +11,20 @@
 // Include required files
 #include <Trade/Trade.mqh>
 #include <Trade/SymbolInfo.mqh>
-
-// Import DLL functions
-#import "DRLModel.dll"
-   void* CreateModel(string model_path, string config_path);
-   void DestroyModel(void* handle);
-   bool Predict(void* handle, const double& features[], int feature_count,
-                double& state[], int state_size, double& output[]);
-   bool GetModelProperties(void* handle, int& feature_count,
-                         int& hidden_size, int& action_count);
-   const char* const* GetFeatureNames(void* handle, int& count);
-   void FreeFeatureNames(const char* const* names);
-#import
+#include <JAson.mqh>  // JSON parsing library
 
 // Constants
 #define MAGIC_NUMBER 20240417
 #define STOP_LOSS_PIPS 1500.0
 
 // Input parameters
-input string ModelGroup = ">>> Model Settings <<<";
-input string ModelPath = "C:\\MT5\\model.pt";  // Path to TorchScript model
-input string ConfigPath = "C:\\MT5\\model_config.json";  // Path to model config
+input string ApiGroup = ">>> API Settings <<<";
+input string ApiUrl = "http://localhost:8000";  // API base URL
+input int MinDataBars = 500;                    // Minimum data bars to collect
 
 input string TradingGroup = ">>> Trading Settings <<<";
-input int MaxSpread = 350;           // Maximum allowed spread (points)
-input double BalancePerLot = 2500.0; // Amount required per 0.01 lot
+input int MaxSpread = 350;                      // Maximum allowed spread (points)
+input double BalancePerLot = 2500.0;            // Amount required per 0.01 lot
 
 // Indicators
 int rsi_handle;
@@ -43,18 +32,20 @@ int atr_handle;
 int bb_handle;
 int adx_handle;
 
-// Global variables
-CTrade Trade;               // Trading object
-void* ModelHandle = NULL;   // Model instance handle
-double[] LSTMState;        // LSTM state vector
-double[] Features;         // Feature vector
-double[] ActionProbs;      // Action probabilities
-string[] FeatureNames;     // Feature names from model
+// Indicator parameters
+int atr_period = 14;
+int rsi_period = 14;
+int boll_period = 20;
+int adx_period = 14;
 
-// Model properties
-int FeatureCount = 0;
-int HiddenSize = 0;
-int ActionCount = 0;
+// Global variables
+CTrade Trade;                   // Trading object
+CJAVal json;                    // JSON parser
+string last_error = "";         // Last error message
+
+// HTTP request related
+int http_timeout = 5000;        // Timeout in milliseconds
+string http_headers;            // HTTP headers
 
 // Position tracking
 struct Position {
@@ -66,14 +57,24 @@ struct Position {
 
 Position CurrentPosition;
 
+// Data arrays
+double open_prices[];
+double high_prices[];
+double low_prices[];
+double close_prices[];
+double spread_values[];
+long volume_values[];
+datetime time_values[];
+
 //+------------------------------------------------------------------+
 //| Initialize indicators                                              |
 //+------------------------------------------------------------------+
 bool InitializeIndicators() {
-    rsi_handle = iRSI(_Symbol, _Period, 14, PRICE_CLOSE);
-    atr_handle = iATR(_Symbol, _Period, 14);
-    bb_handle = iBands(_Symbol, _Period, 20, 0, 2, PRICE_CLOSE);
-    adx_handle = iADX(_Symbol, _Period, 14);
+    // Initialize standard MT5 indicators
+    rsi_handle = iRSI(_Symbol, _Period, rsi_period, PRICE_CLOSE);
+    atr_handle = iATR(_Symbol, _Period, atr_period);
+    bb_handle = iBands(_Symbol, _Period, boll_period, 0, 2, PRICE_CLOSE);
+    adx_handle = iADX(_Symbol, _Period, adx_period);
     
     return rsi_handle != INVALID_HANDLE && 
            atr_handle != INVALID_HANDLE && 
@@ -89,111 +90,6 @@ void ReleaseIndicators() {
     IndicatorRelease(atr_handle);
     IndicatorRelease(bb_handle);
     IndicatorRelease(adx_handle);
-}
-
-//+------------------------------------------------------------------+
-//| Calculate features                                                 |
-//+------------------------------------------------------------------+
-void ProcessFeatures() {
-    ArrayResize(Features, 9); // Base features, position features added later
-    
-    // Price data
-    double close[];
-    double open[];
-    ArraySetAsSeries(close, true);
-    ArraySetAsSeries(open, true);
-    CopyClose(_Symbol, _Period, 0, 2, close);
-    CopyOpen(_Symbol, _Period, 0, 1, open);
-    
-    // Returns
-    Features[0] = (close[0] - close[1]) / close[1];
-    Features[0] = MathMax(MathMin(Features[0], 0.1), -0.1);
-    
-    // RSI
-    double rsi[];
-    ArraySetAsSeries(rsi, true);
-    CopyBuffer(rsi_handle, 0, 0, 1, rsi);
-    Features[1] = rsi[0] / 50.0 - 1.0;
-    
-    // ATR
-    double atr[];
-    ArraySetAsSeries(atr, true);
-    CopyBuffer(atr_handle, 0, 0, 1, atr);
-    Features[2] = atr[0] / close[0];
-    
-    // Volume Change
-    long volume[];
-    ArraySetAsSeries(volume, true);
-    CopyTickVolume(_Symbol, _Period, 0, 2, volume);
-    Features[3] = volume[1] > 0 ? 
-                  ((double)volume[0] - volume[1]) / volume[1] : 0;
-    Features[3] = MathMax(MathMin(Features[3], 1.0), -1.0);
-    
-    // Bollinger Bands
-    double upper[], lower[];
-    ArraySetAsSeries(upper, true);
-    ArraySetAsSeries(lower, true);
-    CopyBuffer(bb_handle, 1, 0, 1, upper);
-    CopyBuffer(bb_handle, 2, 0, 1, lower);
-    
-    double band_range = upper[0] - lower[0];
-    double position = close[0] - lower[0];
-    Features[4] = position / (band_range + 1e-8);
-    Features[4] = MathMax(MathMin(Features[4], 1.0), 0.0);
-    
-    // ADX (Trend Strength)
-    double adx[];
-    ArraySetAsSeries(adx, true);
-    CopyBuffer(adx_handle, 0, 0, 1, adx);
-    Features[5] = MathMax(MathMin(adx[0]/25.0 - 1.0, 1.0), -1.0);
-    
-    // Candle Pattern
-    double high[], low[];
-    ArraySetAsSeries(high, true);
-    ArraySetAsSeries(low, true);
-    CopyHigh(_Symbol, _Period, 0, 1, high);
-    CopyLow(_Symbol, _Period, 0, 1, low);
-    
-    double body = close[0] - open[0];
-    double upper_wick = high[0] - MathMax(close[0], open[0]);
-    double lower_wick = MathMin(close[0], open[0]) - low[0];
-    double range = high[0] - low[0] + 1e-8;
-    
-    Features[6] = (body/range + 
-                  (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2.0;
-    Features[6] = MathMax(MathMin(Features[6], 1.0), -1.0);
-    
-    // Time Features
-    MqlDateTime time;
-    TimeToStruct(TimeCurrent(), time);
-    int minutes = time.hour * 60 + time.min;
-    Features[7] = MathSin(2.0 * M_PI * minutes / 1440);
-    Features[8] = MathCos(2.0 * M_PI * minutes / 1440);
-    
-    // Add position features
-    int current_size = ArraySize(Features);
-    ArrayResize(Features, current_size + 2);
-    
-    // Position type
-    Features[current_size] = (double)CurrentPosition.direction;
-    
-    // Unrealized P&L
-    double unrealized_pnl = 0;
-    if (CurrentPosition.direction != 0) {
-        double current_price = CurrentPosition.direction == 1 ? 
-                             SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
-                             SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-        unrealized_pnl = CurrentPosition.direction *
-                        (current_price - CurrentPosition.entryPrice) /
-                        CurrentPosition.entryPrice;
-    }
-    Features[current_size + 1] = MathMax(MathMin(unrealized_pnl, 1.0), -1.0);
-    
-    // Debug: Log feature values
-    for(int i = 0; i < ArraySize(Features); i++) {
-        string feature_name = i < ArraySize(FeatureNames) ? FeatureNames[i] : StringFormat("Feature_%d", i);
-        Print("Feature ", feature_name, ": ", Features[i]);
-    }
 }
 
 //+------------------------------------------------------------------+
@@ -231,37 +127,165 @@ double CalculateLotSize() {
 }
 
 //+------------------------------------------------------------------+
-//| Execute trades based on model output                               |
+//| Collect historical data                                           |
 //+------------------------------------------------------------------+
-void ExecuteTrade(const double& probs[]) {
-    // Get action with highest probability
-    int action = 0;
-    double maxProb = probs[0];
-    for(int i = 1; i < ActionCount; i++) {
-        if(probs[i] > maxProb) {
-            maxProb = probs[i];
-            action = i;
-        }
+bool CollectHistoricalData(int bars_to_collect) {
+    // Resize arrays
+    ArrayResize(open_prices, bars_to_collect);
+    ArrayResize(high_prices, bars_to_collect);
+    ArrayResize(low_prices, bars_to_collect);
+    ArrayResize(close_prices, bars_to_collect);
+    ArrayResize(spread_values, bars_to_collect);
+    ArrayResize(volume_values, bars_to_collect);
+    ArrayResize(time_values, bars_to_collect);
+    
+    // Set arrays as series
+    ArraySetAsSeries(open_prices, true);
+    ArraySetAsSeries(high_prices, true);
+    ArraySetAsSeries(low_prices, true);
+    ArraySetAsSeries(close_prices, true);
+    ArraySetAsSeries(spread_values, true);
+    ArraySetAsSeries(volume_values, true);
+    ArraySetAsSeries(time_values, true);
+    
+    // Copy price data
+    if (CopyOpen(_Symbol, _Period, 0, bars_to_collect, open_prices) != bars_to_collect) return false;
+    if (CopyHigh(_Symbol, _Period, 0, bars_to_collect, high_prices) != bars_to_collect) return false;
+    if (CopyLow(_Symbol, _Period, 0, bars_to_collect, low_prices) != bars_to_collect) return false;
+    if (CopyClose(_Symbol, _Period, 0, bars_to_collect, close_prices) != bars_to_collect) return false;
+    if (CopyTickVolume(_Symbol, _Period, 0, bars_to_collect, volume_values) != bars_to_collect) return false;
+    if (CopyTime(_Symbol, _Period, 0, bars_to_collect, time_values) != bars_to_collect) return false;
+    
+    // Calculate spread values (as points)
+    for (int i = 0; i < bars_to_collect; i++) {
+        spread_values[i] = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Build JSON request for API                                        |
+//+------------------------------------------------------------------+
+string BuildApiRequest() {
+    CJAVal request;
+    int data_size = ArraySize(close_prices);
+    
+    // Create arrays for data
+    request["timestamp"].IsArray(true);
+    request["open"].IsArray(true);
+    request["high"].IsArray(true);
+    request["low"].IsArray(true);
+    request["close"].IsArray(true);
+    request["volume"].IsArray(true);
+    
+    // Add data to arrays
+    for (int i = 0; i < data_size; i++) {
+        // Convert datetime to unix timestamp
+        datetime current_time = time_values[i];
+        long timestamp = (long)current_time;
+        
+        request["timestamp"].Add(timestamp);
+        request["open"].Add(open_prices[i]);
+        request["high"].Add(high_prices[i]);
+        request["low"].Add(low_prices[i]);
+        request["close"].Add(close_prices[i]);
+        request["volume"].Add((double)volume_values[i]);
+    }
+    
+    // Add symbol
+    request["symbol"] = _Symbol;
+    
+    // Convert to JSON string
+    return request.Serialize();
+}
+
+//+------------------------------------------------------------------+
+//| Make prediction API call                                          |
+//+------------------------------------------------------------------+
+bool GetPrediction(string &action, string &description) {
+    // Build API request
+    string request_body = BuildApiRequest();
+    char result[];
+    string result_headers;
+    
+    // Setup headers
+    string headers = "Content-Type: application/json\r\n";
+    
+    // Make POST request to API
+    int res = WebRequest(
+        "POST",
+        ApiUrl + "/predict",
+        headers,
+        http_timeout,
+        request_body,
+        result,
+        result_headers
+    );
+    
+    if (res == -1) {
+        int error_code = GetLastError();
+        last_error = StringFormat("HTTP request failed with error %d: %s", error_code, ErrorDescription(error_code));
+        Print(last_error);
+        
+        // WebRequest requires URL be added to allowed URLs
+        if (error_code == ERR_FUNCTION_NOT_ALLOWED_IN_TESTING_MODE) {
+            Print("Make sure URL is added to 'Tools' -> 'Options' -> 'Expert Advisors' -> 'Allow WebRequest'");
+        }
+        
+        return false;
+    }
+    
+    // Parse response
+    string response = CharArrayToString(result);
+    CJAVal json_response;
+    
+    if (!json_response.Deserialize(response)) {
+        last_error = "Failed to parse JSON response: " + response;
+        Print(last_error);
+        return false;
+    }
+    
+    // Extract prediction
+    action = json_response["action"].ToStr();
+    description = json_response["description"].ToStr();
+    
+    Print("API Prediction: Action=", action, ", Description=", description);
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Execute trades based on API prediction                            |
+//+------------------------------------------------------------------+
+void ExecuteTrade(const string &action, const string &description) {
+    double lotSize = CalculateLotSize();
+    if(lotSize <= 0) return;
+    
+    // Map action string to action code
+    int action_code = 0; // Hold by default
+    if (action == "buy") action_code = 1;
+    else if (action == "sell") action_code = 2;
+    else if (action == "close") action_code = 3;
     
     // Debug output
     string action_names[] = {"Hold", "Buy", "Sell", "Close"};
-    Print("Selected action: ", action_names[action], " (", action, ") with probability ", maxProb);
+    Print("Selected action: ", action_names[action_code], " (", action_code, ") with description: ", description);
     
-    double lotSize = CalculateLotSize();
-    if(lotSize == 0) return;
-    
-    switch(action) {
+    switch(action_code) {
         case 1: // Buy
             if(CurrentPosition.direction == 0) {
                 double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
                 double stopLoss = CalculateStopLoss(askPrice, true);
                 
-                if(Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0)) {
+                if(Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0, "API_BUY: " + description)) {
                     CurrentPosition.direction = 1;
                     CurrentPosition.entryPrice = Trade.ResultPrice();
                     CurrentPosition.lotSize = lotSize;
                     CurrentPosition.entryTime = TimeCurrent();
+                    Print("BUY position opened: ", lotSize, " lots @ ", CurrentPosition.entryPrice);
+                }
+                else {
+                    Print("Failed to open BUY position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
                 }
             }
             break;
@@ -271,11 +295,15 @@ void ExecuteTrade(const double& probs[]) {
                 double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
                 double stopLoss = CalculateStopLoss(bidPrice, false);
                 
-                if(Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0)) {
+                if(Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0, "API_SELL: " + description)) {
                     CurrentPosition.direction = -1;
                     CurrentPosition.entryPrice = Trade.ResultPrice();
                     CurrentPosition.lotSize = lotSize;
                     CurrentPosition.entryTime = TimeCurrent();
+                    Print("SELL position opened: ", lotSize, " lots @ ", CurrentPosition.entryPrice);
+                }
+                else {
+                    Print("Failed to open SELL position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
                 }
             }
             break;
@@ -283,40 +311,85 @@ void ExecuteTrade(const double& probs[]) {
         case 3: // Close
             if(CurrentPosition.direction != 0) {
                 if(Trade.PositionClose(_Symbol)) {
+                    Print("Position closed from ", CurrentPosition.direction > 0 ? "BUY" : "SELL", 
+                          " @ ", CurrentPosition.entryPrice);
                     CurrentPosition.direction = 0;
                     CurrentPosition.entryPrice = 0;
                     CurrentPosition.lotSize = 0;
                     CurrentPosition.entryTime = 0;
                 }
+                else {
+                    Print("Failed to close position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
+                }
             }
+            break;
+            
+        case 0: // Hold - do nothing
+        default:
+            // No action needed for hold
             break;
     }
 }
 
 //+------------------------------------------------------------------+
-//| Get feature names from model                                       |
+//| Verify position tracking is synchronized with actual positions    |
 //+------------------------------------------------------------------+
-bool GetFeatureNames() {
-    int count = 0;
-    const char* const* names = GetFeatureNames(ModelHandle, count);
+void VerifyPositions() {
+    bool has_mt5_position = false;
     
-    if(names != NULL && count > 0) {
-        ArrayResize(FeatureNames, count);
-        for(int i = 0; i < count; i++) {
-            FeatureNames[i] = names[i];
+    // Check all positions
+    for(int i = 0; i < PositionsTotal(); i++) {
+        ulong ticket = PositionGetTicket(i);
+        if(PositionSelectByTicket(ticket)) {
+            if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+               PositionGetInteger(POSITION_MAGIC) == MAGIC_NUMBER) {
+                
+                has_mt5_position = true;
+                int mt5_direction = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
+                double mt5_lot_size = PositionGetDouble(POSITION_VOLUME);
+                double mt5_entry_price = PositionGetDouble(POSITION_PRICE_OPEN);
+                
+                // Case 1: We think we don't have a position but MT5 shows one
+                if(CurrentPosition.direction == 0) {
+                    Print("Position tracking mismatch: Found MT5 position but no internal tracking. Updating internal tracking.");
+                    CurrentPosition.direction = mt5_direction;
+                    CurrentPosition.entryPrice = mt5_entry_price;
+                    CurrentPosition.lotSize = mt5_lot_size;
+                    CurrentPosition.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
+                }
+                // Case 2: Position details mismatch
+                else if(mt5_direction != CurrentPosition.direction || 
+                       MathAbs(mt5_lot_size - CurrentPosition.lotSize) > 0.001) {
+                    Print("Position details mismatch - MT5: ", mt5_direction > 0 ? "BUY" : "SELL", " ", 
+                          mt5_lot_size, " lots @ ", mt5_entry_price,
+                          ", Internal: ", CurrentPosition.direction > 0 ? "BUY" : "SELL", " ",
+                          CurrentPosition.lotSize, " lots @ ", CurrentPosition.entryPrice);
+                    
+                    CurrentPosition.direction = mt5_direction;
+                    CurrentPosition.entryPrice = mt5_entry_price;
+                    CurrentPosition.lotSize = mt5_lot_size;
+                }
+                
+                break; // Only process first matching position
+            }
         }
-        FreeFeatureNames(names);
-        return true;
     }
     
-    return false;
+    // Case 3: We think we have a position but MT5 doesn't
+    if(CurrentPosition.direction != 0 && !has_mt5_position) {
+        Print("Position tracking mismatch: Internal position exists but no MT5 position found. Clearing internal tracking.");
+        CurrentPosition.direction = 0;
+        CurrentPosition.entryPrice = 0;
+        CurrentPosition.lotSize = 0;
+        CurrentPosition.entryTime = 0;
+    }
 }
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
 //+------------------------------------------------------------------+
 int OnInit() {
-    Print("Initializing DRLTrader with LibTorch implementation...");
+    Print("Initializing DRLTrader with API connection...");
     
     // Initialize indicators
     if(!InitializeIndicators()) {
@@ -324,34 +397,15 @@ int OnInit() {
         return INIT_FAILED;
     }
     
-    // Initialize model
-    ModelHandle = CreateModel(ModelPath, ConfigPath);
-    if(ModelHandle == NULL) {
-        Print("Failed to load model");
+    // Set up HTTP headers
+    http_headers = "Content-Type: application/json\r\n";
+    
+    // Check if URL is allowed
+    if(!WebRequestEnabled()) {
+        Print("Web requests not allowed. Please enable in Tools > Options > Expert Advisors > Allow WebRequest for URL:");
+        Print(ApiUrl);
         return INIT_FAILED;
     }
-    
-    // Get model properties
-    if(!GetModelProperties(ModelHandle, FeatureCount, HiddenSize, ActionCount)) {
-        Print("Failed to get model properties");
-        return INIT_FAILED;
-    }
-    
-    // Get feature names
-    if(!GetFeatureNames()) {
-        Print("Warning: Failed to get feature names");
-    }
-    
-    Print("Model loaded successfully - Features: ", FeatureCount,
-          ", Hidden Size: ", HiddenSize,
-          ", Actions: ", ActionCount);
-    
-    // Initialize arrays
-    ArrayResize(LSTMState, 2 * HiddenSize);
-    ArrayInitialize(LSTMState, 0);
-    
-    ArrayResize(ActionProbs, ActionCount);
-    ArrayInitialize(ActionProbs, 0);
     
     // Initialize trade object
     Trade.SetExpertMagicNumber(MAGIC_NUMBER);
@@ -376,12 +430,16 @@ int OnInit() {
                     CurrentPosition.entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
                     CurrentPosition.lotSize = PositionGetDouble(POSITION_VOLUME);
                     CurrentPosition.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
+                    Print("Recovered existing position: ", 
+                          CurrentPosition.direction > 0 ? "LONG" : "SHORT", " ",
+                          CurrentPosition.lotSize, " lots @ ", CurrentPosition.entryPrice);
                     break;
                 }
             }
         }
     }
     
+    Print("DRLTrader initialized with API URL: ", ApiUrl);
     return INIT_SUCCEEDED;
 }
 
@@ -389,11 +447,8 @@ int OnInit() {
 //| Expert deinitialization function                                   |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
-    if(ModelHandle != NULL) {
-        DestroyModel(ModelHandle);
-        ModelHandle = NULL;
-    }
     ReleaseIndicators();
+    Print("DRLTrader deinitialized");
 }
 
 //+------------------------------------------------------------------+
@@ -412,16 +467,23 @@ void OnTick() {
     if(current_bar_time == last_bar_time) return;
     last_bar_time = current_bar_time;
     
-    // Process features
-    ProcessFeatures();
+    // Verify position tracking is synchronized with MT5 positions
+    VerifyPositions();
     
-    // Get model prediction
-    if(!Predict(ModelHandle, Features, ArraySize(Features),
-                LSTMState, ArraySize(LSTMState), ActionProbs)) {
-        Print("Prediction failed");
+    // Collect historical data
+    if(!CollectHistoricalData(MinDataBars)) {
+        Print("Failed to collect historical data");
+        return;
+    }
+    
+    // Get prediction from API
+    string action = "hold";
+    string description = "";
+    if(!GetPrediction(action, description)) {
+        Print("Failed to get prediction from API: ", last_error);
         return;
     }
     
     // Execute trades based on prediction
-    ExecuteTrade(ActionProbs);
+    ExecuteTrade(action, description);
 }
