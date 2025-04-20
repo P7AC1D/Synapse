@@ -43,7 +43,7 @@ public:
         settings = model_settings;
         
         // Check if model file exists
-        if(!FileIsExist(path, FILE_COMMON)) {
+        if(!FileIsExist(path)) {
             last_error = "Model file not found: " + path;
             return false;
         }
