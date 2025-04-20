@@ -34,6 +34,7 @@ input int MaxSpread = 350;                         // Maximum allowed spread (po
 input double BalancePerLot = 2500.0;               // Amount required per 0.01 lot
 input bool UseFixedLotSize = false;                // Use fixed lot size instead of calculating from balance
 input double FixedLotSize = 0.01;                  // Fixed lot size if UseFixedLotSize is true
+input bool FallbackToManualMode = true;            // If true, will not trade automatically when ONNX fails
 
 // Indicators
 int rsi_handle;
@@ -52,6 +53,7 @@ int adx_period = 14;
 CTrade Trade;                   // Trading object
 RecurrentPPOModel Model;        // DRL Model
 string last_error = "";         // Last error message
+bool onnx_available = false;    // Flag indicating if ONNX runtime is available
 
 // Position tracking
 struct Position {
@@ -354,6 +356,13 @@ bool PrepareModelInput() {
 //| Get prediction from the model                                     |
 //+------------------------------------------------------------------+
 bool GetPrediction(int &action, string &description) {
+    // Check if ONNX is available
+    if(!onnx_available) {
+        action = 0; // Hold
+        description = "Manual mode - ONNX runtime not available";
+        return false;
+    }
+    
     // Prepare model input data
     if(!PrepareModelInput()) {
         Print("Failed to prepare model input data");
@@ -527,9 +536,29 @@ bool InitializeModel() {
     
     if(!Model.Initialize(ModelPath, settings)) {
         Print("Failed to initialize RecurrentPPO model: ", Model.LastError());
+        
+        // Check if the model file exists at all
+        if(!FileIsExist(ModelPath)) {
+            Print("ERROR: Model file not found at ", ModelPath);
+            Print("Please place your ONNX model in the MQL5/Files/Models/ directory");
+        }
+        
+        // Add instructions for ONNX Runtime
+        Print("ONNX Runtime Integration Instructions:");
+        Print("1. Download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases");
+        Print("2. Extract onnxruntime.dll from the package");
+        Print("3. Place the DLL in your MetaTrader 5 terminal's MQL5/Libraries/ folder");
+        Print("4. Restart MetaTrader 5 to load the DLL");
+        
+        if(FallbackToManualMode) {
+            Print("OPERATING IN MANUAL MODE: DRL model unavailable, automatic trading disabled");
+            return true; // Continue execution without the model
+        }
+        
         return false;
     }
     
+    onnx_available = true;
     Print("RecurrentPPO model initialized successfully from: ", ModelPath);
     return true;
 }
@@ -585,7 +614,13 @@ int OnInit() {
         return INIT_FAILED;
     }
     
-    Print("DRLTrader initialized with ONNX model: ", ModelPath);
+    if(onnx_available) {
+        Print("DRLTrader initialized with ONNX model: ", ModelPath);
+    } else if(FallbackToManualMode) {
+        Print("DRLTrader initialized in MANUAL MODE (no automatic trading)");
+        Print("To use manual mode, place buy/sell orders with the EA's magic number: ", MAGIC_NUMBER);
+    }
+    
     return INIT_SUCCEEDED;
 }
 
@@ -620,6 +655,15 @@ void OnTick() {
     // Collect historical data
     if(!CollectHistoricalData(MinDataBars)) {
         Print("Failed to collect historical data");
+        return;
+    }
+    
+    // In manual mode (ONNX unavailable), just track positions
+    if(!onnx_available && FallbackToManualMode) {
+        // Update entryBar if we have a position
+        if(CurrentPosition.direction != 0) {
+            CurrentPosition.entryBar++;
+        }
         return;
     }
     
