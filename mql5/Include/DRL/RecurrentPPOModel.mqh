@@ -242,7 +242,9 @@ bool RecurrentPPOModel::Predict(
     }
     
     // Reshape the matrix to the expected dimensions [1, seq_len, features]
-    inputMatrix.Reshape(1, m_settings.sequenceLength, m_settings.numFeatures);
+    // Fix: Reshape only takes 2 parameters (rows, cols), not 3
+    // We need to keep it as a 2D matrix with rows=1, cols=seq_len*features
+    // The ONNX runtime will interpret the shape correctly based on the OnnxSetInputShape we did earlier
     
     // Create output matrices
     matrixf outputProbs;      // For action probabilities
@@ -263,7 +265,8 @@ bool RecurrentPPOModel::Predict(
     ArrayResize(outputs, 3); // Probabilities + new hidden state + new cell state
     
     // Run inference using official OnnxRun function
-    if(!OnnxRun(m_modelHandle, ONNX_VERBOSE_LOGS, inputs, outputs)) {
+    // Fix: Replace ONNX_VERBOSE_LOGS with ONNX_DEBUG_LOGS
+    if(!OnnxRun(m_modelHandle, ONNX_DEBUG_LOGS, inputs, outputs)) {
         m_lastError = "Inference failed: " + (string)GetLastError();
         return false;
     }
