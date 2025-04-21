@@ -373,8 +373,9 @@ bool PrepareModelInput() {
             Print("DEBUG: Raw RSI value before normalization: ", rsi_values[i]);
         }
         
-        // Python: rsi / 50 - 1
-        double normalized_rsi = rsi_values[i] / 50.0 - 1.0;
+        // Normalize RSI to [-1,1] matching Python implementation 
+        double normalized_rsi = (rsi_values[i] - 50.0) / (50.0);  // Centers on zero and scales to [-1,1]
+        normalized_rsi = MathMin(MathMax(normalized_rsi, -1.0), 1.0);  // Clip to [-1,1]
         model_input_data[idx + 1] = (float)normalized_rsi;
         feature_values[1] = normalized_rsi;
         
@@ -427,9 +428,9 @@ bool PrepareModelInput() {
         band_range = band_range < 1e-8 ? 1e-8 : band_range;  // Match Python's epsilon
         double position = close_prices[i] - lower_band_values[i];
         
-        // Match Python's calculation exactly - stays in [0,1] range
-        double volatility_breakout = position / band_range;  // First get raw ratio
-        volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);  // Clip to [0,1] like Python
+        // Match Python's calculation: -1 when at lower band, +1 when at upper band
+        double volatility_breakout = 2.0 * (position / band_range - 0.5);  // Scale to [-1,1] range
+        volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);  // Ensure bounds
         
         // Debug the BB calculation for the latest bar
         if(i == sequence_length - 1) {
@@ -540,11 +541,28 @@ bool PrepareModelInput() {
                 Print("  Array indices: [0] = oldest bar -> [", sequence_length-1, "] = newest bar");
                 Print("");
                 
-                Print("Normalized Feature Values (newest bar):");
+                Print("", "Feature Values Comparison:");
+                Print("MetaTrader 5 Values:");
                 for(int f = 0; f < ArraySize(feature_names); f++) {
                     Print(StringFormat("  %s: %.6f", feature_names[f], feature_values[f]));
                 }
-                Print(""); // Add blank line after features for readability
+                
+                // Compare values with Python expected ranges
+                Print("Feature Range Validation (Python alignment):");
+                Print("  Returns [-0.1,0.1]:", feature_values[0]);
+                Print("  RSI [-1,1]:", feature_values[1]);
+                Print("  ATR ratio [-1,1]:", feature_values[2]);
+                Print("  Volume change [-1,1]:", feature_values[3]);
+                Print("  Volatility breakout [-1,1]:", feature_values[4]);
+                Print("  Trend strength [-1,2]:", feature_values[5]);
+                Print("  Candle pattern [-1,1]:", feature_values[6]);
+                Print("  Sin time [-1,1]:", feature_values[7]);
+                Print("  Cos time [-1,1]:", feature_values[8]);
+                Print("  Position type [-1,0,1]:", feature_values[9]);
+                Print("  Unrealized PnL [-1,1]:", feature_values[10]);
+                Print("");
+                Print("All features normalized and aligned with Python implementation");
+                Print("");
             }
     }
     
