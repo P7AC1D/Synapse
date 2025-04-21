@@ -439,6 +439,17 @@ bool PrepareModelInput() {
         int time_index = time_struct.hour * 60 + time_struct.min;
         double sin_time = MathSin(2.0 * M_PI * time_index / minutes_in_day);
         double cos_time = MathCos(2.0 * M_PI * time_index / minutes_in_day);
+        
+        // Debug time calculations for the current bar
+        if(i == 0) {
+            Print("DEBUG: Time encoding - Raw time:", time_values[i],
+                  ", Hour:", time_struct.hour,
+                  ", Minute:", time_struct.min,
+                  ", Time index:", time_index,
+                  ", Sin:", sin_time,
+                  ", Cos:", cos_time);
+        }
+        
         model_input_data[idx + 7] = (float)sin_time;
         model_input_data[idx + 8] = (float)cos_time;
         feature_values[7] = sin_time;
