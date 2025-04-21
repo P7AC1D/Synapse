@@ -130,6 +130,19 @@ class TradeModel:
         
         # Get normalized observation
         observation = env.get_observation()
+            
+        # Get feature names from feature processor
+        feature_names = env.feature_processor.get_feature_names()
+        
+        # Create feature dictionary
+        feature_dict = dict(zip(feature_names, observation))
+        
+        # Log features
+        feature_log = "Python Feature Values:\n"
+        for name, value in feature_dict.items():
+            feature_log += f"  {name}: {value:.6f}\n"
+        
+        self.logger.info(feature_log)
         
         # Make prediction with LSTM state management and proper deterministic setting
         action, self.lstm_states = self.model.predict(

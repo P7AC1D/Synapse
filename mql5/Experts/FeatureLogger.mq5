@@ -103,7 +103,8 @@ void ProcessAndLogFeatures()
    int num_bars = MathMin(100, Bars(_Symbol, PERIOD_CURRENT)); // Limit to 100 bars for efficiency
    
    // Prepare arrays
-   double close[], high[], low[], open[], volume[];
+   double close[], high[], low[], open[];
+   long volume[];  // Changed from double to long
    double rsi[], atr[], atr_sma[], upper_bb[], lower_bb[], adx[];
    
    ArraySetAsSeries(close, true);
@@ -118,20 +119,20 @@ void ProcessAndLogFeatures()
    ArraySetAsSeries(lower_bb, true);
    ArraySetAsSeries(adx, true);
    
-   // Copy price data
-   if(CopyClose(_Symbol, PERIOD_CURRENT, 0, num_bars, close) <= 0) return;
-   if(CopyHigh(_Symbol, PERIOD_CURRENT, 0, num_bars, high) <= 0) return;
-   if(CopyLow(_Symbol, PERIOD_CURRENT, 0, num_bars, low) <= 0) return;
-   if(CopyOpen(_Symbol, PERIOD_CURRENT, 0, num_bars, open) <= 0) return;
-   if(CopyTickVolume(_Symbol, PERIOD_CURRENT, 0, num_bars, volume) <= 0) return;
+   // Copy price data (start from 1 to skip current incomplete bar)
+   if(CopyClose(_Symbol, PERIOD_CURRENT, 1, num_bars, close) <= 0) return;
+   if(CopyHigh(_Symbol, PERIOD_CURRENT, 1, num_bars, high) <= 0) return;
+   if(CopyLow(_Symbol, PERIOD_CURRENT, 1, num_bars, low) <= 0) return;
+   if(CopyOpen(_Symbol, PERIOD_CURRENT, 1, num_bars, open) <= 0) return;
+   if(CopyTickVolume(_Symbol, PERIOD_CURRENT, 1, num_bars, volume) <= 0) return;
    
-   // Copy indicator values
-   if(CopyBuffer(handle_rsi, 0, 0, num_bars, rsi) <= 0) return;
-   if(CopyBuffer(handle_atr, 0, 0, num_bars, atr) <= 0) return;
-   if(CopyBuffer(handle_atr_sma, 0, 0, num_bars, atr_sma) <= 0) return;
-   if(CopyBuffer(handle_bb, 1, 0, num_bars, upper_bb) <= 0) return;  // Upper band = 1
-   if(CopyBuffer(handle_bb, 2, 0, num_bars, lower_bb) <= 0) return;  // Lower band = 2
-   if(CopyBuffer(handle_adx, 0, 0, num_bars, adx) <= 0) return;      // ADX line = 0
+   // Copy indicator values (start from 1 to skip current incomplete bar)
+   if(CopyBuffer(handle_rsi, 0, 1, num_bars, rsi) <= 0) return;
+   if(CopyBuffer(handle_atr, 0, 1, num_bars, atr) <= 0) return;
+   if(CopyBuffer(handle_atr_sma, 0, 1, num_bars, atr_sma) <= 0) return;
+   if(CopyBuffer(handle_bb, 1, 1, num_bars, upper_bb) <= 0) return;  // Upper band = 1
+   if(CopyBuffer(handle_bb, 2, 1, num_bars, lower_bb) <= 0) return;  // Lower band = 2
+   if(CopyBuffer(handle_adx, 0, 1, num_bars, adx) <= 0) return;      // ADX line = 0
    
    // Only process current bar (index 0)
    int idx = 0;

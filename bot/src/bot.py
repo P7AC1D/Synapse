@@ -220,9 +220,6 @@ class TradingBot:
             current_balance = self.mt5.get_account_balance()
             self.model.initial_balance = current_balance
             
-            # Log feature values before prediction for comparison with MQL5
-            self._log_feature_values(data, self.current_position)
-            
             # Make prediction with position context
             prediction = self.model.predict_single(
                 data,
@@ -258,40 +255,6 @@ class TradingBot:
             
         except Exception as e:
             self.logger.exception(f"Error in trading cycle: {e}")
-            
-    def _log_feature_values(self, data: pd.DataFrame, current_position: dict = None) -> None:
-        """Log feature values for comparison with MQL5 implementation."""
-        try:
-            # Create environment with position state
-            env = TradingEnv(
-                data=data,
-                initial_balance=self.model.initial_balance,
-                random_start=False,
-                balance_per_lot=self.model.balance_per_lot
-            )
-            
-            # Set current position if provided
-            if current_position:
-                env.current_position = current_position.copy()  # Use copy to avoid reference issues
-            
-            # Get observation from environment
-            observation = env.get_observation()
-            
-            # Get feature names from feature processor
-            feature_names = env.feature_processor.get_feature_names()
-            
-            # Create feature dictionary
-            feature_dict = dict(zip(feature_names, observation))
-            
-            # Log features
-            feature_log = "Python Feature Values:\n"
-            for name, value in feature_dict.items():
-                feature_log += f"  {name}: {value:.6f}\n"
-            
-            self.logger.info(feature_log)
-            
-        except Exception as e:
-            self.logger.error(f"Error logging feature values: {e}")
     
     def setup_signal_handlers(self) -> None:
         """Set up handlers for termination signals."""
