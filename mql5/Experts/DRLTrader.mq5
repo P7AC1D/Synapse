@@ -373,15 +373,16 @@ bool PrepareModelInput() {
             Print("DEBUG: Raw RSI value before normalization: ", rsi_values[i]);
         }
         
-        // Normalize RSI to [-1,1] matching Python implementation 
-        double normalized_rsi = (rsi_values[i] - 50.0) / (50.0);  // Centers on zero and scales to [-1,1]
-        normalized_rsi = MathMin(MathMax(normalized_rsi, -1.0), 1.0);  // Clip to [-1,1]
+        // Match Python's RSI normalization: rsi/50 - 1
+        double normalized_rsi = rsi_values[i] / 50.0 - 1.0;
+        normalized_rsi = MathMin(MathMax(normalized_rsi, -1.0), 1.0);  // Ensure bounds
         model_input_data[idx + 1] = (float)normalized_rsi;
         feature_values[1] = normalized_rsi;
         
         if(i == sequence_length - 1) {
             Print("DEBUG: RSI calculation - Raw: ", rsi_values[i],
-                  ", Normalized: ", normalized_rsi);
+                  ", Division: ", rsi_values[i] / 50.0,
+                  ", Final: ", normalized_rsi);
         }
         
         // Feature 2: ATR ratio normalized like Python
@@ -428,9 +429,9 @@ bool PrepareModelInput() {
         band_range = band_range < 1e-8 ? 1e-8 : band_range;  // Match Python's epsilon
         double position = close_prices[i] - lower_band_values[i];
         
-        // Match Python's calculation: -1 when at lower band, +1 when at upper band
-        double volatility_breakout = 2.0 * (position / band_range - 0.5);  // Scale to [-1,1] range
-        volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);  // Ensure bounds
+        // Match Python's calculation: clip to [0,1] range
+        double volatility_breakout = position / band_range;  // Calculate ratio
+        volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);  // Clip to [0,1] like Python
         
         // Debug the BB calculation for the latest bar
         if(i == sequence_length - 1) {
@@ -444,8 +445,9 @@ bool PrepareModelInput() {
         model_input_data[idx + 4] = (float)volatility_breakout;
         feature_values[4] = volatility_breakout;
         
-        // Feature 5: Trend strength - use Python's exact formula
-        double trend_strength = adx_values[i] / 25.0 - 1.0;  // Exact formula from Python
+        // Feature 5: Trend strength - clip to Python's [-1,1] range
+        double trend_strength = adx_values[i] / 25.0 - 1.0;
+        trend_strength = MathMin(MathMax(trend_strength, -1.0), 1.0);  // Match Python's clipping
         model_input_data[idx + 5] = (float)trend_strength;
         feature_values[5] = trend_strength;
         
@@ -553,8 +555,8 @@ bool PrepareModelInput() {
                 Print("  RSI [-1,1]:", feature_values[1]);
                 Print("  ATR ratio [-1,1]:", feature_values[2]);
                 Print("  Volume change [-1,1]:", feature_values[3]);
-                Print("  Volatility breakout [-1,1]:", feature_values[4]);
-                Print("  Trend strength [-1,2]:", feature_values[5]);
+                Print("  Volatility breakout [0,1]:", feature_values[4]);  // Corrected range to match Python's implementation
+                Print("  Trend strength [-1,1]:", feature_values[5]);  // Corrected range to match Python's implementation
                 Print("  Candle pattern [-1,1]:", feature_values[6]);
                 Print("  Sin time [-1,1]:", feature_values[7]);
                 Print("  Cos time [-1,1]:", feature_values[8]);
