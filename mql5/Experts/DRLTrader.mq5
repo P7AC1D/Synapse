@@ -19,7 +19,7 @@
 
 // Input parameters
 input string ModelGroup = ">>> Model Settings <<<";
-input string ModelPath = "Files\\Models\\XAUUSDm.onnx";  // Path to ONNX model (relative to terminal data folder)
+input string ModelPath = "XAUUSDm.onnx";  // Path to ONNX model (relative to terminal data folder)
 input int SequenceLength = 500;                    // Number of bars for sequence input
 input int LSTMHiddenSize = 256;                    // LSTM hidden state size, changed from 64 to 256
 input int LSTMNumLayers = 2;                       // Number of LSTM layers, changed from 1 to 2
@@ -536,12 +536,6 @@ bool InitializeModel() {
     
     if(!Model.Initialize(ModelPath, settings)) {
         Print("Failed to initialize RecurrentPPO model: ", Model.LastError());
-        
-        // Check if the model file exists at all
-        if(!FileIsExist(ModelPath)) {
-            Print("ERROR: Model file not found at ", ModelPath);
-            Print("Please place your ONNX model in the MQL5/Files/Models/ directory");
-        }
         
         if(FallbackToManualMode) {
             Print("OPERATING IN MANUAL MODE: DRL model unavailable, automatic trading disabled");

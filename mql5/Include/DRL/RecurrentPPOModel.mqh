@@ -88,14 +88,7 @@ bool RecurrentPPOModel::Initialize(const string modelPath, const ModelSettings &
     if(m_initialized) Cleanup();
     
     m_modelPath = modelPath;
-    m_settings = settings;
-    
-    // Check if file exists first
-    if(!FileIsExist(modelPath, FILE_COMMON)) {
-        m_lastError = StringFormat("Model file not found: %s - Please check if the file exists in the MQL5 Data Folder", modelPath);
-        Print(m_lastError);
-        return false;
-    }
+    m_settings = settings;    
     
     Print("Trying to load ONNX model from: ", modelPath);
     
