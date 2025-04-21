@@ -30,6 +30,7 @@ input string DataGroup = ">>> Data Settings <<<";
 input int MinDataBars = 500;                       // Minimum data bars to collect
 
 input string TradingGroup = ">>> Trading Settings <<<";
+input string Label = "PPO_LSTM_EA";                // Label for the EA
 input int MaxSpread = 350;                         // Maximum allowed spread (points)
 input double BalancePerLot = 2500.0;               // Amount required per 0.01 lot
 input bool UseFixedLotSize = false;                // Use fixed lot size instead of calculating from balance
@@ -410,7 +411,7 @@ void ExecuteTrade(const int action, const string &description) {
                 double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
                 double stopLoss = CalculateStopLoss(askPrice, true);
                 
-                if(Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0, "DRL_BUY: " + description)) {
+                if(Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0, Label)) {
                     CurrentPosition.direction = 1;
                     CurrentPosition.entryPrice = Trade.ResultPrice();
                     CurrentPosition.lotSize = lotSize;
@@ -429,7 +430,7 @@ void ExecuteTrade(const int action, const string &description) {
                 double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
                 double stopLoss = CalculateStopLoss(bidPrice, false);
                 
-                if(Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0, "DRL_SELL: " + description)) {
+                if(Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0, Label)) {
                     CurrentPosition.direction = -1;
                     CurrentPosition.entryPrice = Trade.ResultPrice();
                     CurrentPosition.lotSize = lotSize;
@@ -478,7 +479,7 @@ void VerifyPositions() {
         ulong ticket = PositionGetTicket(i);
         if(PositionSelectByTicket(ticket)) {
             if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
-               PositionGetInteger(POSITION_MAGIC) == MAGIC_NUMBER) {
+               PositionGetInteger(POSITION_COMMENT) == Label) {
                 
                 has_mt5_position = true;
                 int mt5_direction = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
