@@ -169,14 +169,14 @@ bool CollectHistoricalData(int bars_to_collect) {
     ArrayResize(volume_values, bars_to_collect);
     ArrayResize(time_values, bars_to_collect);
     
-    // Set arrays as series
-    ArraySetAsSeries(open_prices, true);
-    ArraySetAsSeries(high_prices, true);
-    ArraySetAsSeries(low_prices, true);
-    ArraySetAsSeries(close_prices, true);
-    ArraySetAsSeries(spread_values, true);
-    ArraySetAsSeries(volume_values, true);
-    ArraySetAsSeries(time_values, true);
+    // Set arrays as series but with false to match Python's order (oldest to newest)
+    ArraySetAsSeries(open_prices, false);
+    ArraySetAsSeries(high_prices, false);
+    ArraySetAsSeries(low_prices, false);
+    ArraySetAsSeries(close_prices, false);
+    ArraySetAsSeries(spread_values, false);
+    ArraySetAsSeries(volume_values, false);
+    ArraySetAsSeries(time_values, false);
     
     // Temporary arrays for data collection
     double temp_open[];
@@ -193,6 +193,7 @@ bool CollectHistoricalData(int bars_to_collect) {
     ArrayResize(temp_volume, total_bars_to_collect);
     ArrayResize(temp_time, total_bars_to_collect);
     
+    // Set temporary arrays as series to match MT5's default behavior
     ArraySetAsSeries(temp_open, true);
     ArraySetAsSeries(temp_high, true);
     ArraySetAsSeries(temp_low, true);
@@ -208,14 +209,15 @@ bool CollectHistoricalData(int bars_to_collect) {
     if (CopyTickVolume(_Symbol, _Period, 0, total_bars_to_collect, temp_volume) != total_bars_to_collect) return false;
     if (CopyTime(_Symbol, _Period, 0, total_bars_to_collect, temp_time) != total_bars_to_collect) return false;
     
-    // Skip current bar (index 0) and copy only completed bars
+    // Copy data in reverse order to match Python (oldest to newest, excluding current bar)
     for (int i = 0; i < bars_to_collect; i++) {
-        open_prices[i] = temp_open[i + 1];
-        high_prices[i] = temp_high[i + 1];
-        low_prices[i] = temp_low[i + 1];
-        close_prices[i] = temp_close[i + 1];
-        volume_values[i] = temp_volume[i + 1];
-        time_values[i] = temp_time[i + 1];
+        int src_idx = total_bars_to_collect - 2 - i;  // Skip current bar (-1) and go backwards
+        open_prices[i] = temp_open[src_idx];
+        high_prices[i] = temp_high[src_idx];
+        low_prices[i] = temp_low[src_idx];
+        close_prices[i] = temp_close[src_idx];
+        volume_values[i] = temp_volume[src_idx];
+        time_values[i] = temp_time[src_idx];
     }
     
     // Calculate spread values (as points)
@@ -336,15 +338,14 @@ bool PrepareModelInput() {
         
         // Feature 0: Returns
         double returns = 0.0;
-        if(i < sequence_length - 1) {
-            // Calculate returns as percentage price change from previous bar
-            returns = (close_prices[i] - close_prices[i+1]) / close_prices[i+1];
+        if(i > 0) {  // Changed condition to match Python's order
+            returns = (close_prices[i] - close_prices[i-1]) / close_prices[i-1];
         }
         
-        // Debug the returns calculation for the first bar
-        if(i == 0) {
-            Print("DEBUG: Returns calculation - Current close:", close_prices[0],
-                  ", Previous close:", i < sequence_length - 1 ? close_prices[1] : 0,
+        // Debug the returns calculation for the latest bar
+        if(i == sequence_length - 1) {
+            Print("DEBUG: Returns calculation - Current close:", close_prices[i],
+                  ", Previous close:", i > 0 ? close_prices[i-1] : 0,
                   ", Returns:", returns);
         }
         
@@ -353,33 +354,17 @@ bool PrepareModelInput() {
         feature_values[0] = returns;
         
         // Feature 1: RSI normalized to [-1, 1]
-        // Debug the raw RSI value before normalization
-        if(i == 0) {
+        if(i == sequence_length - 1) {
             Print("DEBUG: Raw RSI value before normalization: ", rsi_values[i]);
         }
         
-        // Apply correction factor to account for difference between TA-lib and MQL5 RSI implementations
-        // This scaling helps match the Python TA-lib implementation more closely
-        double raw_rsi = rsi_values[i];
-        // If RSI is below 50, reduce the difference from 50
-        // If RSI is above 50, increase the difference from 50
-        double scaled_rsi = raw_rsi;
-        
-        if(raw_rsi < 50) {
-            // TA-lib values tend to be higher in lower range
-            scaled_rsi = 50 - (50 - raw_rsi) * 0.9;
-        } else {
-            // TA-lib values tend to be lower in upper range
-            scaled_rsi = 50 + (raw_rsi - 50) * 0.9;
-        }
-        
-        double normalized_rsi = scaled_rsi / 50.0 - 1.0;
+        // Direct RSI normalization without scaling
+        double normalized_rsi = rsi_values[i] / 50.0 - 1.0;
         model_input_data[idx + 1] = (float)normalized_rsi;
         feature_values[1] = normalized_rsi;
         
-        if(i == 0) {
-            Print("DEBUG: RSI calculation - Raw: ", raw_rsi, 
-                  ", Scaled: ", scaled_rsi,
+        if(i == sequence_length - 1) {
+            Print("DEBUG: RSI calculation - Raw: ", rsi_values[i],
                   ", Normalized: ", normalized_rsi);
         }
         
@@ -389,49 +374,46 @@ bool PrepareModelInput() {
         double max_expected_ratio = 2.0;
         double expected_range = max_expected_ratio - min_expected_ratio;
         double atr_norm = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
+        atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0);
         
-        // Debug ATR calculation
-        if(i == 0) {
-            Print("DEBUG: ATR calculation - Value:", atr_values[i], 
-                  ", SMA:", atr_sma[i], 
+        if(i == sequence_length - 1) {
+            Print("DEBUG: ATR calculation - Value:", atr_values[i],
+                  ", SMA:", atr_sma[i],
                   ", Ratio:", atr_ratio,
                   ", Normalized:", atr_norm);
         }
         
-        atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0);
         model_input_data[idx + 2] = (float)atr_norm;
         feature_values[2] = atr_norm;
         
         // Feature 3: Volume change
         double volume_pct = 0.0;
-        if(i < sequence_length - 1 && volume_values[i+1] > 0) {
-            // Debug pre-calculation values
-            if(i == 0) {
-                Print("DEBUG: Volume calc - current:", volume_values[i], 
-                      ", previous:", volume_values[i+1]);
+        if(i > 0) {  // Changed condition to match Python's order
+            if(i == sequence_length - 1) {
+                Print("DEBUG: Volume calc - current:", volume_values[i],
+                      ", previous:", volume_values[i-1]);
             }
             
-            // Calculate the same way as Python: (current - previous) / previous
-            volume_pct = ((double)volume_values[i] - volume_values[i+1]) / volume_values[i+1];
+            volume_pct = ((double)volume_values[i] - volume_values[i-1]) / volume_values[i-1];
         }
         volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0);
         model_input_data[idx + 3] = (float)volume_pct;
         feature_values[3] = volume_pct;
         
-        // Feature 4: Volatility breakout [0,1]
+        // Feature 4: Volatility breakout [-1,1]
         double band_range = upper_band_values[i] - lower_band_values[i];
         band_range = band_range < 1e-8 ? 1e-8 : band_range;
         double position = close_prices[i] - lower_band_values[i];
-        double volatility_breakout = position / band_range;
-        // Debug the BB calculation for the first bar (latest bar)
-        if(i == 0) {
+        double volatility_breakout = 2.0 * (position / band_range) - 1.0;  // Changed to [-1,1] range
+        // Debug the BB calculation for the latest bar
+        if(i == sequence_length - 1) {
             Print("DEBUG: BB values - Upper:", upper_band_values[i], 
                   ", Lower:", lower_band_values[i],
                   ", Close:", close_prices[i],
                   ", Position from lower:", position,
                   ", Band Range:", band_range);
         }
-        volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);
+        volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);  // Changed to [-1,1] range
         model_input_data[idx + 4] = (float)volatility_breakout;
         feature_values[4] = volatility_breakout;
         
@@ -454,25 +436,16 @@ bool PrepareModelInput() {
         MqlDateTime time_struct;
         TimeToStruct(time_values[i], time_struct);
         
-        // Apply timezone adjustment to match Python
-        // Adjust time by 15 minutes (typical timezone difference observed)
-        datetime adjusted_time = time_values[i] + 15 * 60; // +15 minutes in seconds
-        MqlDateTime adjusted_time_struct;
-        TimeToStruct(adjusted_time, adjusted_time_struct);
-        
         int minutes_in_day = 24 * 60;
-        int time_index = adjusted_time_struct.hour * 60 + adjusted_time_struct.min;
+        int time_index = time_struct.hour * 60 + time_struct.min;
         double sin_time = MathSin(2.0 * M_PI * time_index / minutes_in_day);
         double cos_time = MathCos(2.0 * M_PI * time_index / minutes_in_day);
         
-        // Debug time calculations for the current bar
-        if(i == 0) {
-            Print("DEBUG: Time encoding - Original time:", time_values[i],
-                  ", Adjusted time:", adjusted_time,
-                  ", Original hour:", time_struct.hour,
-                  ", Original minute:", time_struct.min,
-                  ", Adjusted hour:", adjusted_time_struct.hour,
-                  ", Adjusted minute:", adjusted_time_struct.min,
+        // Debug time calculations for the latest bar
+        if(i == sequence_length - 1) {
+            Print("DEBUG: Time encoding - Time:", time_values[i],
+                  ", Hour:", time_struct.hour,
+                  ", Minute:", time_struct.min,
                   ", Time index:", time_index,
                   ", Sin:", sin_time,
                   ", Cos:", cos_time);
@@ -515,16 +488,20 @@ bool PrepareModelInput() {
             unrealized_pnl = MathMin(MathMax(unrealized_pnl, -1.0), 1.0);
             
             // Debug info
-            if(i == 0) {
+            if(i == sequence_length - 1) {
                 Print("PnL Debug: Price diff=", price_diff, ", PnL currency=", pnl_currency, 
                       ", Balance=", account_balance, ", Normalized=", unrealized_pnl);
             }
+        } else if (CurrentPosition.direction == 1) {
+            // Ensure long positions are reported as 1.0 even with no PnL yet
+            unrealized_pnl = 0.0;
+            position_type = 1.0;
         }
         model_input_data[idx + 10] = (float)unrealized_pnl;
         feature_values[10] = unrealized_pnl;
 
         // Only log features for the last (most recent) time step
-        if(i == 0) {
+        if(i == sequence_length - 1) {
             string feature_names[] = {"returns", "rsi", "atr", "volume_change", "volatility_breakout", 
                                      "trend_strength", "candle_pattern", "sin_time", "cos_time", 
                                      "position_type", "unrealized_pnl"};
