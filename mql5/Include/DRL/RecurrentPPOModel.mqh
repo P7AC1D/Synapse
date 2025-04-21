@@ -234,47 +234,31 @@ bool RecurrentPPOModel::Predict(
         inputMatrix[0][i] = observationData[i];
     }
     
-    // Reshape the matrix to the expected dimensions [1, seq_len, features]
-    // Fix: Reshape only takes 2 parameters (rows, cols), not 3
-    // We need to keep it as a 2D matrix with rows=1, cols=seq_len*features
-    // The ONNX runtime will interpret the shape correctly based on the OnnxSetInputShape we did earlier
+    // No need for Reshape - the shape is already defined through OnnxSetInputShape
     
-    // Create output matrices
-    matrixf outputProbs;      // For action probabilities
-    matrixf newLstmHidden;    // For the new LSTM hidden state
-    matrixf newLstmCell;      // For the new LSTM cell state
+    // Create output matrix for action probabilities (shape is [1, num_actions])
+    matrixf outputProbs;
+    outputProbs.Resize(1, m_settings.numActions);
     
-    // Create input array for OnnxRun - we need to pass the model all required inputs
-    matrixf inputs[];
-    ArrayResize(inputs, 3); // Observation + hidden state + cell state
-    
-    // Set the input matrices
-    inputs[0] = inputMatrix;  // Observation data
-    inputs[1] = m_lstmHidden; // LSTM hidden state
-    inputs[2] = m_lstmCell;   // LSTM cell state
-    
-    // Create output array for OnnxRun
-    matrixf outputs[];
-    ArrayResize(outputs, 3); // Probabilities + new hidden state + new cell state
+    // Initialize LSTM hidden and cell state matrices if not already done
+    if(!m_hasState) {
+        ResetLSTMState();
+    }
     
     // Run inference using official OnnxRun function
-    // Fix: Replace ONNX_VERBOSE_LOGS with ONNX_DEBUG_LOGS
-    if(!OnnxRun(m_modelHandle, ONNX_DEBUG_LOGS, inputs, outputs)) {
+    // Based on the documentation, OnnxRun can take variable inputs and outputs directly
+    // Pass input matrices and output matrices as separate parameters
+    if(!OnnxRun(m_modelHandle, ONNX_DEBUG_LOGS,
+                inputMatrix, m_lstmHidden, m_lstmCell,  // Input: observations, h_state, c_state
+                outputProbs, m_lstmHidden, m_lstmCell)) // Output: action_probs, new_h_state, new_c_state
+    {
         m_lastError = "Inference failed: " + (string)GetLastError();
         return false;
     }
     
-    // Get action probabilities from outputs[0]
-    outputProbs = outputs[0];
+    m_hasState = true;
     
-    // Update LSTM states with new states from model output
-    if(ArraySize(outputs) > 1) {
-        m_lstmHidden = outputs[1];
-        m_lstmCell = outputs[2];
-        m_hasState = true;
-    }
-    
-    // Resize and fill action probabilities
+    // Resize and fill action probabilities array
     ArrayResize(actionProbabilities, m_settings.numActions);
     
     // Find the action with highest probability
@@ -282,7 +266,6 @@ bool RecurrentPPOModel::Predict(
     action = 0;
     
     for(int i = 0; i < m_settings.numActions; i++) {
-        // Get the probability from the output matrix (shape is [1, num_actions])
         float prob = outputProbs[0][i];
         actionProbabilities[i] = prob;
         
