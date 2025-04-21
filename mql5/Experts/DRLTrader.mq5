@@ -385,27 +385,23 @@ bool PrepareModelInput() {
                   ", Final: ", normalized_rsi);
         }
         
-        // Feature 2: ATR ratio normalized like Python
-        double atr_ratio = 1.0;  // Default
-        if(atr_sma[i] > 0) {
-            atr_ratio = atr_values[i] / (atr_sma[i] + 1e-8);  // Add epsilon like Python
-            // Scale from typical range [0.5, 2.0] to [-1, 1]
-            double min_ratio = 0.5;
-            double max_ratio = 2.0;
-            double range = max_ratio - min_ratio;
-            atr_ratio = 2.0 * ((atr_ratio - min_ratio) / range) - 1.0;
-            atr_ratio = MathMin(MathMax(atr_ratio, -1.0), 1.0);  // Ensure bounds
-        }
+        // Feature 2: ATR ratio with exact Python normalization
+        double min_expected_ratio = 0.5;
+        double max_expected_ratio = 2.0;
+        double expected_range = max_expected_ratio - min_expected_ratio;
+        double atr_ratio = atr_values[i] / (atr_sma[i] + 1e-8);
+        double atr_norm = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
+        atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0);
         
         if(i == sequence_length - 1) {
             Print("DEBUG: ATR calculation - Value:", atr_values[i],
                   ", SMA:", atr_sma[i],
-                  ", Raw ratio:", atr_values[i] / (atr_sma[i] + 1e-8),
-                  ", Normalized:", atr_ratio);
+                  ", Raw ratio:", atr_ratio,
+                  ", Normalized:", atr_norm);
         }
         
-        model_input_data[idx + 2] = (float)atr_ratio;
-        feature_values[2] = atr_ratio;
+        model_input_data[idx + 2] = (float)atr_norm;
+        feature_values[2] = atr_norm;
         
         // Feature 3: Volume change - exact Python implementation
         double volume_pct = 0.0;
