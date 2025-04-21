@@ -318,18 +318,29 @@ bool PrepareModelInput() {
         
         // Feature 0: Returns
         double returns = 0.0;
-        if(i < sequence_length - 1) {
+        // Most recent bar should have returns=0 just like Python
+        if(i == 0) {
+            returns = 0.0;
+            Print("DEBUG: Returns calculation - Using 0 for most recent bar (i=0) as in Python");
+        } 
+        // For older bars (i > 0), calculate returns from prior price
+        else if(i < sequence_length) {
             // In Python: returns = np.diff(close) / close[:-1]
-            // Python uses (current - previous) / previous 
-            // Since our arrays are reversed in MQL5, we need to do:
-            returns = (close_prices[i+1] - close_prices[i]) / close_prices[i];
+            // This is (current_price - previous_price) / previous_price
+            // In our reversed array, this is:
+            returns = (close_prices[i-1] - close_prices[i]) / close_prices[i];
+            
+            // Debug the calculation for the second bar
+            if(i == 1) {
+                Print("DEBUG: Returns calculation - Bar[1] - Current:", close_prices[i-1], 
+                      ", Previous:", close_prices[i],
+                      ", Calculated return:", returns);
+            } 
         }
         
-        // Debug the returns calculation for the first bar
+        // Debug the final returns value for the first bar (most recent)
         if(i == 0) {
-            Print("DEBUG: Returns calculation - Current close:", close_prices[0],
-                  ", Previous close:", i < sequence_length - 1 ? close_prices[1] : 0,
-                  ", Returns:", returns);
+            Print("DEBUG: Returns final value for most recent bar (i=0): ", returns);
         }
         
         returns = MathMin(MathMax(returns, -0.1), 0.1);  // Clip between -0.1 and 0.1
