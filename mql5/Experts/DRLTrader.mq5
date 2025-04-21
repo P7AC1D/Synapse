@@ -226,22 +226,24 @@ bool CollectHistoricalData(int bars_to_collect) {
     // Log what we're doing for debugging
     Print("Using data from ", time_values[0], " to ", time_values[bars_to_collect-1], 
           " (excluding current incomplete bar)");
-          
+    
     // Check terminal timezone settings
     MqlDateTime terminal_time;
     datetime current_time = TimeCurrent();
     TimeToStruct(current_time, terminal_time);
     
-    // Get GMT offset in hours
-    int gmt_offset = terminal_time.day_of_week; // Temporarily store GMT offset
+    // Get timezone info
     datetime server_time = TimeTradeServer();
     MqlDateTime server_time_struct;
     TimeToStruct(server_time, server_time_struct);
     
+    int local_hour = terminal_time.hour;
+    int server_hour = server_time_struct.hour;
+    int hour_diff = server_hour - local_hour;
+    
     Print("DEBUG: Timezone info - Local time: ", TimeLocal(),
           ", Server time: ", server_time,
-          ", GMT offset: ", terminal_time.day_of_week,
-          " hours");
+          ", Hour difference: ", hour_diff);
           
     return true;
 }
@@ -451,16 +453,26 @@ bool PrepareModelInput() {
         // Feature 7-8: Time encoding using sin/cos
         MqlDateTime time_struct;
         TimeToStruct(time_values[i], time_struct);
+        
+        // Apply timezone adjustment to match Python
+        // Adjust time by 15 minutes (typical timezone difference observed)
+        datetime adjusted_time = time_values[i] + 15 * 60; // +15 minutes in seconds
+        MqlDateTime adjusted_time_struct;
+        TimeToStruct(adjusted_time, adjusted_time_struct);
+        
         int minutes_in_day = 24 * 60;
-        int time_index = time_struct.hour * 60 + time_struct.min;
+        int time_index = adjusted_time_struct.hour * 60 + adjusted_time_struct.min;
         double sin_time = MathSin(2.0 * M_PI * time_index / minutes_in_day);
         double cos_time = MathCos(2.0 * M_PI * time_index / minutes_in_day);
         
         // Debug time calculations for the current bar
         if(i == 0) {
-            Print("DEBUG: Time encoding - Raw time:", time_values[i],
-                  ", Hour:", time_struct.hour,
-                  ", Minute:", time_struct.min,
+            Print("DEBUG: Time encoding - Original time:", time_values[i],
+                  ", Adjusted time:", adjusted_time,
+                  ", Original hour:", time_struct.hour,
+                  ", Original minute:", time_struct.min,
+                  ", Adjusted hour:", adjusted_time_struct.hour,
+                  ", Adjusted minute:", adjusted_time_struct.min,
                   ", Time index:", time_index,
                   ", Sin:", sin_time,
                   ", Cos:", cos_time);
