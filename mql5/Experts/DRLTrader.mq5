@@ -414,11 +414,9 @@ bool PrepareModelInput() {
         band_range = band_range < 1e-8 ? 1e-8 : band_range;  // Match Python's epsilon
         double position = close_prices[i] - lower_band_values[i];
         
-        // Match Python's full calculation
+        // Match Python's calculation exactly - stays in [0,1] range
         double volatility_breakout = position / band_range;  // First get raw ratio
-        volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);  // Clip to [0,1]
-        volatility_breakout = 2.0 * volatility_breakout - 1.0;  // Convert to [-1,1]
-        volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);  // Final bounds check
+        volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);  // Clip to [0,1] like Python
         
         // Debug the BB calculation for the latest bar
         if(i == sequence_length - 1) {
@@ -455,24 +453,22 @@ bool PrepareModelInput() {
         model_input_data[idx + 6] = (float)candle_pattern;
         feature_values[6] = candle_pattern;
         
-        // Feature 7-8: Time encoding exactly matching Python
+        // Feature 7-8: Simple time encoding matching Python exactly
         MqlDateTime time_struct;
         TimeToStruct(time_values[i], time_struct);
         
-        // Match Python's time encoding exactly
+        // Direct time calculation without any timezone shifts
         int minutes_in_day = 24 * 60;
-        int time_index = time_struct.hour * 60 + time_struct.min;
-        double angle = 2.0 * M_PI * time_index / minutes_in_day;
-        
-        // Python uses [sin, cos] order and standard trig signs
-        double sin_time = MathSin(angle);  // Matches numpy.sin
-        double cos_time = MathCos(angle);  // Matches numpy.cos
+        int minutes_since_midnight = time_struct.hour * 60 + time_struct.min;
+        double angle = 2.0 * M_PI * minutes_since_midnight / minutes_in_day;
+        double sin_time = MathSin(angle);
+        double cos_time = MathCos(angle);
         
         // Debug time calculations for the latest bar
         if(i == sequence_length - 1) {
             Print("DEBUG: Time encoding - Time:", time_values[i],
                   ", Hour:", time_struct.hour,
-                  ", Shifted Index:", time_index,
+                  ", Minutes since midnight:", minutes_since_midnight,
                   ", Sin:", sin_time,
                   ", Cos:", cos_time);
         }
