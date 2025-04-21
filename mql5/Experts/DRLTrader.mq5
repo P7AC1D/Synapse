@@ -357,8 +357,30 @@ bool PrepareModelInput() {
             double point_value = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
             double pip_size = StringFind(_Symbol, "XAU") >= 0 ? point_value * 10 : point_value;
             double price_diff = (current_price - CurrentPosition.entryPrice) * CurrentPosition.direction;
-            unrealized_pnl = price_diff / pip_size * CurrentPosition.lotSize * 100.0; // Rough estimate of account percentage
-            unrealized_pnl = MathMin(MathMax(unrealized_pnl / 5.0, -1.0), 1.0); // Normalize to [-1,1]
+            
+            // Calculate actual PnL in account currency
+            double contract_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+            double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+            double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+            double point_cost = tick_value / tick_size * point_value;
+            
+            // Calculate PnL in account currency
+            double pnl_currency = price_diff * CurrentPosition.lotSize * contract_size;
+            
+            // Get account balance for normalization (matches Python implementation)
+            double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
+            
+            // Normalize by account balance, just like in Python
+            unrealized_pnl = pnl_currency / account_balance;
+            
+            // Clip to [-1, 1] range
+            unrealized_pnl = MathMin(MathMax(unrealized_pnl, -1.0), 1.0);
+            
+            // Debug info
+            if(i == 0) {
+                Print("PnL Debug: Price diff=", price_diff, ", PnL currency=", pnl_currency, 
+                      ", Balance=", account_balance, ", Normalized=", unrealized_pnl);
+            }
         }
         model_input_data[idx + 10] = (float)unrealized_pnl;
         feature_values[10] = unrealized_pnl;
