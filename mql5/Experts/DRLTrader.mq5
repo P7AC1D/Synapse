@@ -318,11 +318,11 @@ bool PrepareModelInput() {
         
         // Feature 0: Returns
         double returns = 0.0;
-        // For the most recent complete bar, we use the previous bar's data
         if(i < sequence_length - 1) {
-            // Similar to Python's: np.diff(close) / close[:-1]
-            // In MQL, array is in reverse order, so we use i+1 for "previous"
-            returns = (close_prices[i] - close_prices[i+1]) / close_prices[i+1];
+            // In Python: returns = np.diff(close) / close[:-1]
+            // Python uses (current - previous) / previous 
+            // Since our arrays are reversed in MQL5, we need to do:
+            returns = (close_prices[i+1] - close_prices[i]) / close_prices[i];
         }
         
         // Debug the returns calculation for the first bar
