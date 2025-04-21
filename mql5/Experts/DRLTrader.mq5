@@ -331,13 +331,16 @@ bool PrepareModelInput() {
     ArrayResize(atr_sma, sequence_length);
     ArraySetAsSeries(atr_sma, false);  // Match Python's oldest to newest order
     
+    // Calculate ATR SMA using exact Python method
     for(int i = 0; i < sequence_length; i++) {
         double sum = 0.0;
-        int count = 0;
-        // Look back for SMA, not forward
-        for(int j = MathMax(0, i - 19); j <= i; j++) {
+        int window = 20;  // Match Python's window size
+        int start = MathMax(0, i - window + 1);  // Look back window-1 bars
+        int count = i - start + 1;
+        
+        // Calculate sum for this window
+        for(int j = start; j <= i; j++) {
             sum += atr_values[j];
-            count++;
         }
         atr_sma[i] = sum / count;
     }
@@ -349,179 +352,149 @@ bool PrepareModelInput() {
     for(int i = 0; i < sequence_length; i++) {
         int idx = i * NumFeatures;
         
-        // Feature 0: Returns (match Python's np.diff approach)
+        // Feature 0: Returns - exactly match Python's calculation
         double returns = 0.0;
-        if(i > 0) {
-            returns = (close_prices[i] - close_prices[i-1]) / close_prices[i-1];
-            // Scale up to match Python's calculation
-            returns *= 10.0;  // Adjust scaling to match Python values
+        if(i < sequence_length - 1) {  // For all except last element
+            // Get current and next close prices
+            double current_close = close_prices[i];
+            double next_close = close_prices[i+1];
+            
+            // Calculate returns as (next - current) / current
+            returns = (next_close - current_close) / current_close;
+            
+            // Debug log for the second to last bar (which will use the last bar's close)
+            if(i == sequence_length - 2) {
+                Print("DEBUG: Returns calculation for newest complete bar:");
+                Print("  Current bar index:", i);
+                Print("  Current close:", current_close, 
+                      " Time:", TimeToString(time_values[i]));
+                Print("  Next close:", next_close,
+                      " Time:", TimeToString(time_values[i+1]));
+                Print("  Returns:", returns);
+            }
+        } else {
+            // For the last bar, use the current incomplete bar's close
+            if(i == sequence_length - 1) {
+                returns = (iClose(_Symbol, _Period, 0) - close_prices[i]) / close_prices[i];
+            }
         }
         
-        // Debug the returns calculation for the latest bar
-        if(i == sequence_length - 1) {
-            Print("DEBUG: Returns calculation - Current close:", close_prices[i],
-                  ", Previous close:", i > 0 ? close_prices[i-1] : 0,
-                  ", Returns:", returns);
-        }
-        
+        // Clamp returns to [-0.1, 0.1] range
         returns = MathMin(MathMax(returns, -0.1), 0.1);
         model_input_data[idx + 0] = (float)returns;
         feature_values[0] = returns;
         
-        // Feature 1: RSI normalized to [-1, 1] (fix sign issue)
-        if(i == sequence_length - 1) {
-            Print("DEBUG: Raw RSI value before normalization: ", rsi_values[i]);
-        }
-        
-        // Match Python's RSI normalization: rsi/50 - 1
-        double normalized_rsi = rsi_values[i] / 50.0 - 1.0;
-        normalized_rsi = MathMin(MathMax(normalized_rsi, -1.0), 1.0);  // Ensure bounds
+        // Feature 1: RSI normalized exactly like Python
+        double normalized_rsi = (rsi_values[i] - 50.0) / 50.0;  // Center on 0
+        normalized_rsi = MathMin(MathMax(normalized_rsi, -1.0), 1.0);
         model_input_data[idx + 1] = (float)normalized_rsi;
         feature_values[1] = normalized_rsi;
         
-        if(i == sequence_length - 1) {
-            Print("DEBUG: RSI calculation - Raw: ", rsi_values[i],
-                  ", Division: ", rsi_values[i] / 50.0,
-                  ", Final: ", normalized_rsi);
-        }
-        
-        // Feature 2: ATR ratio with exact Python normalization
-        double min_expected_ratio = 0.5;
-        double max_expected_ratio = 2.0;
-        double expected_range = max_expected_ratio - min_expected_ratio;
-        double atr_ratio = atr_values[i] / (atr_sma[i] + 1e-8);
-        double atr_norm = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
-        atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0);
-        
-        if(i == sequence_length - 1) {
-            Print("DEBUG: ATR calculation - Value:", atr_values[i],
-                  ", SMA:", atr_sma[i],
-                  ", Raw ratio:", atr_ratio,
-                  ", Normalized:", atr_norm);
-        }
-        
-        model_input_data[idx + 2] = (float)atr_norm;
-        feature_values[2] = atr_norm;
-        
-        // Feature 3: Volume change - exact Python implementation
-        double volume_pct = 0.0;
-        if(i > 0 && volume_values[i-1] > 0) {
-            double current_vol = (double)volume_values[i];
-            double prev_vol = (double)volume_values[i-1];
-            volume_pct = (current_vol - prev_vol) / prev_vol;
-            if(i == sequence_length - 1) {
-                Print("DEBUG: Volume calc - current:", current_vol, 
-                      ", previous:", prev_vol,
-                      ", Change:", volume_pct);
+        // Feature 2: ATR ratio - exactly match Python's calculation
+        double atr_ratio = 0.0;
+        if(i >= 20) {  // Only calculate once we have enough data
+            if(atr_sma[i] > 0) {
+                // Match Python's calculation more closely
+                atr_ratio = atr_values[i] / atr_sma[i];
+                // Scale to [-1, 1] range as in Python
+                atr_ratio = MathMin(MathMax((atr_ratio - 1.0), -1.0), 1.0);
             }
         }
-        
+        model_input_data[idx + 2] = (float)atr_ratio;
+        feature_values[2] = atr_ratio;
+
+        // Feature 3: Volume change - exact Python implementation
+        double volume_pct = 0.0;
+        // Use next - current instead of current - previous to match Python
+        if(i < sequence_length - 1) {
+            double current_volume = (double)volume_values[i];
+            double next_volume = (double)volume_values[i+1];
+            if(current_volume > 0) {
+                volume_pct = (next_volume - current_volume) / current_volume;
+            }
+        } else if(i == sequence_length - 1) {
+            // For last bar, use current incomplete bar's volume
+            double current_volume = (double)volume_values[i];
+            double next_volume = (double)iVolume(_Symbol, _Period, 0);
+            if(current_volume > 0) {
+                volume_pct = (next_volume - current_volume) / current_volume;
+            }
+        }
         volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0);
         model_input_data[idx + 3] = (float)volume_pct;
         feature_values[3] = volume_pct;
         
-        // Feature 4: Volatility breakout with exact Python ranges
+        // Feature 4: Volatility breakout - match Python exactly
         double band_range = upper_band_values[i] - lower_band_values[i];
-        band_range = band_range < 1e-8 ? 1e-8 : band_range;  // Match Python's epsilon
-        double position = close_prices[i] - lower_band_values[i];
+        band_range = band_range < 1e-8 ? 1e-8 : band_range;
+        double position = (close_prices[i] - lower_band_values[i]) / band_range;  // This gives [0,1]
+        double volatility_breakout = 2.0 * position - 1.0;  // Convert to [-1,1] range to match Python
+        volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);
         
-        // Match Python's calculation: clip to [0,1] range
-        double volatility_breakout = position / band_range;  // Calculate ratio
-        volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);  // Clip to [0,1] like Python
-        
-        // Debug the BB calculation for the latest bar
-        if(i == sequence_length - 1) {
-            Print("DEBUG: BB values - Upper:", upper_band_values[i], 
-                  ", Lower:", lower_band_values[i],
-                  ", Close:", close_prices[i],
-                  ", Position from lower:", position,
-                  ", Band Range:", band_range,
-                  ", Breakout Value:", volatility_breakout);
-        }
         model_input_data[idx + 4] = (float)volatility_breakout;
         feature_values[4] = volatility_breakout;
         
-        // Feature 5: Trend strength - clip to Python's [-1,1] range
-        double trend_strength = adx_values[i] / 25.0 - 1.0;
-        trend_strength = MathMin(MathMax(trend_strength, -1.0), 1.0);  // Match Python's clipping
+        // Feature 5: Trend strength - match Python's ADX scaling
+        double adx_normalized = adx_values[i] / 25.0;  // Python uses 25 as the divisor
+        double trend_strength = adx_normalized - 1.0;  // Center around 0
+        trend_strength = MathMin(MathMax(trend_strength, -1.0), 1.0);
         model_input_data[idx + 5] = (float)trend_strength;
         feature_values[5] = trend_strength;
         
-        // Feature 6: Candle pattern - match Python's exact formula
+        // Feature 6: Candle pattern - match Python exactly
+        double range = high_prices[i] - low_prices[i];
         double body = close_prices[i] - open_prices[i];
         double upper_wick = high_prices[i] - MathMax(close_prices[i], open_prices[i]);
         double lower_wick = MathMin(close_prices[i], open_prices[i]) - low_prices[i];
-        double range = high_prices[i] - low_prices[i] + 1e-8;
-        double candle_pattern = (body/range + (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2.0;  // Remove negative sign
+        
+        // Calculate components exactly like Python
+        double body_ratio = range < 1e-8 ? 0.0 : body / range;
+        double wick_ratio = (upper_wick + lower_wick) < 1e-8 ? 0.0 :
+                           (upper_wick - lower_wick) / (upper_wick + lower_wick);
+        
+        // Average the components like Python
+        double candle_pattern = (body_ratio + wick_ratio) / 2.0;
         candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0);
         
-        if(i == sequence_length - 1) {
-            Print("DEBUG: Candle pattern - Body:", body,
-                  ", Upper wick:", upper_wick,
-                  ", Lower wick:", lower_wick,
-                  ", Range:", range,
-                  ", Pattern:", candle_pattern);
-        }
         model_input_data[idx + 6] = (float)candle_pattern;
         feature_values[6] = candle_pattern;
         
-        // Feature 7-8: Simple time encoding matching Python exactly
+        // Feature 7-8: Time encoding matching Python exactly
         MqlDateTime time_struct;
         TimeToStruct(time_values[i], time_struct);
         
-        // Direct time calculation without any timezone shifts
+        // Python uses minutes since midnight from 0 to 1440 (24*60)
         int minutes_in_day = 24 * 60;
         int minutes_since_midnight = time_struct.hour * 60 + time_struct.min;
-        double angle = 2.0 * M_PI * minutes_since_midnight / minutes_in_day;
-        double sin_time = MathSin(angle);
-        double cos_time = MathCos(angle);
+        // Python's angle calculation: 2π * (minutes/1440)  
+        double angle = (2.0 * M_PI * minutes_since_midnight) / (double)minutes_in_day;
         
-        // Debug time calculations for the latest bar
-        if(i == sequence_length - 1) {
-            Print("DEBUG: Time encoding - Time:", time_values[i],
-                  ", Hour:", time_struct.hour,
-                  ", Minutes since midnight:", minutes_since_midnight,
-                  ", Sin:", sin_time,
-                  ", Cos:", cos_time);
-        }
+        // Use high precision sin/cos
+        model_input_data[idx + 7] = (float)MathSin(angle);
+        model_input_data[idx + 8] = (float)MathCos(angle);
+        feature_values[7] = MathSin(angle);
+        feature_values[8] = MathCos(angle);
         
-        model_input_data[idx + 7] = (float)sin_time;
-        model_input_data[idx + 8] = (float)cos_time;
-        feature_values[7] = sin_time;
-        feature_values[8] = cos_time;
-        
-        // Feature 9: Position type [-1,0,1] - match Python convention
-        int position_type = CurrentPosition.direction;  // No inversion needed now
-        model_input_data[idx + 9] = (float)position_type;
-        feature_values[9] = position_type;
-        
-        // Feature 10: Normalized unrealized PnL [-1,1] - match Python's calculation
+        // Feature 9-10: Position info and PnL with exact Python scaling
+        int position_type = CurrentPosition.direction;
         double unrealized_pnl = 0.0;
+        
         if(CurrentPosition.direction != 0) {
-            double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-            double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-            double entry = CurrentPosition.entryPrice;
+            double current_price = CurrentPosition.direction > 0 ? 
+                SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+                
+            // Calculate PnL as percentage of entry price
+            unrealized_pnl = ((current_price - CurrentPosition.entryPrice) / CurrentPosition.entryPrice) * 
+                            (CurrentPosition.direction > 0 ? 1 : -1);
             
-            if(CurrentPosition.direction > 0) {
-                // Long position: current bid - entry
-                double pnl = (bid - entry) / entry;
-                unrealized_pnl = MathMin(MathMax(pnl * 100.0, -1.0), 1.0);  // Scale by 100 to match Python
-            } else {
-                // Short position: entry - current ask
-                double pnl = (entry - ask) / entry;
-                unrealized_pnl = MathMin(MathMax(pnl * 100.0, -1.0), 1.0);  // Scale by 100 to match Python
-            }
-            
-            // Debug info
-            if(i == sequence_length - 1) {
-                Print("PnL Debug: Entry=", entry,
-                      ", Bid=", bid, 
-                      ", Ask=", ask,
-                      ", Direction=", CurrentPosition.direction,
-                      ", PnL=", unrealized_pnl);
-            }
+            // Scale to match Python's range
+            unrealized_pnl = MathMin(MathMax(unrealized_pnl, -1.0), 1.0);
         }
+        
+        model_input_data[idx + 9] = (float)position_type;
         model_input_data[idx + 10] = (float)unrealized_pnl;
+        feature_values[9] = position_type;
         feature_values[10] = unrealized_pnl;
 
             // Only log features for the last (most recent) time step
@@ -551,7 +524,7 @@ bool PrepareModelInput() {
                 Print("  RSI [-1,1]:", feature_values[1]);
                 Print("  ATR ratio [-1,1]:", feature_values[2]);
                 Print("  Volume change [-1,1]:", feature_values[3]);
-                Print("  Volatility breakout [0,1]:", feature_values[4]);  // Corrected range to match Python's implementation
+                Print("  Volatility breakout [-1,1]:", feature_values[4]);  // Corrected range to match Python's implementation
                 Print("  Trend strength [-1,1]:", feature_values[5]);  // Corrected range to match Python's implementation
                 Print("  Candle pattern [-1,1]:", feature_values[6]);
                 Print("  Sin time [-1,1]:", feature_values[7]);
