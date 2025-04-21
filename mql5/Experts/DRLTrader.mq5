@@ -318,9 +318,18 @@ bool PrepareModelInput() {
         
         // Feature 0: Returns
         double returns = 0.0;
-        if(i < sequence_length - 1) {
-            returns = (close_prices[i] - close_prices[i+1]) / close_prices[i+1];
+        if(i > 0) {  // Changed from i < sequence_length - 1
+            // Use current price minus previous price, divided by previous price
+            returns = (close_prices[i-1] - close_prices[i]) / close_prices[i];
         }
+        
+        // Debug the returns calculation for the first bar
+        if(i == 0) {
+            Print("DEBUG: Returns calculation - Current close:", close_prices[0],
+                  ", Previous close:", i > 0 ? close_prices[1] : 0,
+                  ", Returns:", returns);
+        }
+        
         returns = MathMin(MathMax(returns, -0.1), 0.1);  // Clip between -0.1 and 0.1
         model_input_data[idx + 0] = (float)returns;
         feature_values[0] = returns;
