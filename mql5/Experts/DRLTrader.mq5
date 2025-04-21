@@ -157,6 +157,9 @@ double CalculateLotSize() {
 //| Collect historical data                                           |
 //+------------------------------------------------------------------+
 bool CollectHistoricalData(int bars_to_collect) {
+    // Add +1 to include current bar, but we'll exclude it later
+    int total_bars_to_collect = bars_to_collect + 1;
+    
     // Resize arrays
     ArrayResize(open_prices, bars_to_collect);
     ArrayResize(high_prices, bars_to_collect);
@@ -175,18 +178,54 @@ bool CollectHistoricalData(int bars_to_collect) {
     ArraySetAsSeries(volume_values, true);
     ArraySetAsSeries(time_values, true);
     
-    // Copy price data
-    if (CopyOpen(_Symbol, _Period, 0, bars_to_collect, open_prices) != bars_to_collect) return false;
-    if (CopyHigh(_Symbol, _Period, 0, bars_to_collect, high_prices) != bars_to_collect) return false;
-    if (CopyLow(_Symbol, _Period, 0, bars_to_collect, low_prices) != bars_to_collect) return false;
-    if (CopyClose(_Symbol, _Period, 0, bars_to_collect, close_prices) != bars_to_collect) return false;
-    if (CopyTickVolume(_Symbol, _Period, 0, bars_to_collect, volume_values) != bars_to_collect) return false;
-    if (CopyTime(_Symbol, _Period, 0, bars_to_collect, time_values) != bars_to_collect) return false;
+    // Temporary arrays for data collection
+    double temp_open[];
+    double temp_high[];
+    double temp_low[];
+    double temp_close[];
+    long temp_volume[];
+    datetime temp_time[];
+    
+    ArrayResize(temp_open, total_bars_to_collect);
+    ArrayResize(temp_high, total_bars_to_collect);
+    ArrayResize(temp_low, total_bars_to_collect);
+    ArrayResize(temp_close, total_bars_to_collect);
+    ArrayResize(temp_volume, total_bars_to_collect);
+    ArrayResize(temp_time, total_bars_to_collect);
+    
+    ArraySetAsSeries(temp_open, true);
+    ArraySetAsSeries(temp_high, true);
+    ArraySetAsSeries(temp_low, true);
+    ArraySetAsSeries(temp_close, true);
+    ArraySetAsSeries(temp_volume, true);
+    ArraySetAsSeries(temp_time, true);
+    
+    // Copy price data including current bar
+    if (CopyOpen(_Symbol, _Period, 0, total_bars_to_collect, temp_open) != total_bars_to_collect) return false;
+    if (CopyHigh(_Symbol, _Period, 0, total_bars_to_collect, temp_high) != total_bars_to_collect) return false;
+    if (CopyLow(_Symbol, _Period, 0, total_bars_to_collect, temp_low) != total_bars_to_collect) return false;
+    if (CopyClose(_Symbol, _Period, 0, total_bars_to_collect, temp_close) != total_bars_to_collect) return false;
+    if (CopyTickVolume(_Symbol, _Period, 0, total_bars_to_collect, temp_volume) != total_bars_to_collect) return false;
+    if (CopyTime(_Symbol, _Period, 0, total_bars_to_collect, temp_time) != total_bars_to_collect) return false;
+    
+    // Skip current bar (index 0) and copy only completed bars
+    for (int i = 0; i < bars_to_collect; i++) {
+        open_prices[i] = temp_open[i + 1];
+        high_prices[i] = temp_high[i + 1];
+        low_prices[i] = temp_low[i + 1];
+        close_prices[i] = temp_close[i + 1];
+        volume_values[i] = temp_volume[i + 1];
+        time_values[i] = temp_time[i + 1];
+    }
     
     // Calculate spread values (as points)
     for (int i = 0; i < bars_to_collect; i++) {
         spread_values[i] = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     }
+    
+    // Log what we're doing for debugging
+    Print("Using data from ", time_values[0], " to ", time_values[bars_to_collect-1], 
+          " (excluding current incomplete bar)");
     
     return true;
 }
@@ -296,6 +335,15 @@ bool PrepareModelInput() {
         double max_expected_ratio = 2.0;
         double expected_range = max_expected_ratio - min_expected_ratio;
         double atr_norm = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
+        
+        // Debug ATR calculation
+        if(i == 0) {
+            Print("DEBUG: ATR calculation - Value:", atr_values[i], 
+                  ", SMA:", atr_sma[i], 
+                  ", Ratio:", atr_ratio,
+                  ", Normalized:", atr_norm);
+        }
+        
         atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0);
         model_input_data[idx + 2] = (float)atr_norm;
         feature_values[2] = atr_norm;
@@ -303,6 +351,13 @@ bool PrepareModelInput() {
         // Feature 3: Volume change
         double volume_pct = 0.0;
         if(i < sequence_length - 1 && volume_values[i+1] > 0) {
+            // Debug pre-calculation values
+            if(i == 0) {
+                Print("DEBUG: Volume calc - current:", volume_values[i], 
+                      ", previous:", volume_values[i+1]);
+            }
+            
+            // Calculate the same way as Python: (current - previous) / previous
             volume_pct = ((double)volume_values[i] - volume_values[i+1]) / volume_values[i+1];
         }
         volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0);
@@ -314,6 +369,14 @@ bool PrepareModelInput() {
         band_range = band_range < 1e-8 ? 1e-8 : band_range;
         double position = close_prices[i] - lower_band_values[i];
         double volatility_breakout = position / band_range;
+        // Debug the BB calculation for the first bar (latest bar)
+        if(i == 0) {
+            Print("DEBUG: BB values - Upper:", upper_band_values[i], 
+                  ", Lower:", lower_band_values[i],
+                  ", Close:", close_prices[i],
+                  ", Position from lower:", position,
+                  ", Band Range:", band_range);
+        }
         volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);
         model_input_data[idx + 4] = (float)volatility_breakout;
         feature_values[4] = volatility_breakout;
@@ -523,41 +586,61 @@ void ExecuteTrade(const int action, const string &description) {
 void VerifyPositions() {
     bool has_mt5_position = false;
     
+    // Debugging info - print all positions before verification
+    Print("DEBUG: Position verification - Checking all positions");
+    
     // Check all positions
     for(int i = 0; i < PositionsTotal(); i++) {
         ulong ticket = PositionGetTicket(i);
         if(PositionSelectByTicket(ticket)) {
-            if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
-                PositionGetString(POSITION_COMMENT) == Label) {
+            if(PositionGetString(POSITION_SYMBOL) == _Symbol) {
+                // Debug output for all positions on this symbol
+                Print("DEBUG: Found position - Symbol: ", PositionGetString(POSITION_SYMBOL),
+                     ", Type: ", PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "BUY" : "SELL",
+                     ", Comment: ", PositionGetString(POSITION_COMMENT),
+                     ", Magic: ", PositionGetInteger(POSITION_MAGIC),
+                     ", Label match: ", (PositionGetString(POSITION_COMMENT) == Label));
                 
-                has_mt5_position = true;
-                int mt5_direction = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
-                double mt5_lot_size = PositionGetDouble(POSITION_VOLUME);
-                double mt5_entry_price = PositionGetDouble(POSITION_PRICE_OPEN);
-                
-                // Case 1: We think we don't have a position but MT5 shows one
-                if(CurrentPosition.direction == 0) {
-                    Print("Position tracking mismatch: Found MT5 position but no internal tracking. Updating internal tracking.");
-                    CurrentPosition.direction = mt5_direction;
-                    CurrentPosition.entryPrice = mt5_entry_price;
-                    CurrentPosition.lotSize = mt5_lot_size;
-                    CurrentPosition.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
-                    CurrentPosition.entryBar = 0; // Approximate with current bar
-                }
-                // Case 2: Position details mismatch
-                else if(mt5_direction != CurrentPosition.direction || 
-                       MathAbs(mt5_lot_size - CurrentPosition.lotSize) > 0.001) {
-                    Print("Position details mismatch - MT5: ", mt5_direction > 0 ? "BUY" : "SELL", " ", 
-                          mt5_lot_size, " lots @ ", mt5_entry_price,
-                          ", Internal: ", CurrentPosition.direction > 0 ? "BUY" : "SELL", " ",
-                          CurrentPosition.lotSize, " lots @ ", CurrentPosition.entryPrice);
+                // Check if this position belongs to our EA
+                if(PositionGetString(POSITION_COMMENT) == Label) {
                     
-                    CurrentPosition.direction = mt5_direction;
-                    CurrentPosition.entryPrice = mt5_entry_price;
-                    CurrentPosition.lotSize = mt5_lot_size;
+                    has_mt5_position = true;
+                    int mt5_direction = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
+                    double mt5_lot_size = PositionGetDouble(POSITION_VOLUME);
+                    double mt5_entry_price = PositionGetDouble(POSITION_PRICE_OPEN);
+                    
+                    // Case 1: We think we don't have a position but MT5 shows one
+                    if(CurrentPosition.direction == 0) {
+                        Print("Position tracking mismatch: Found MT5 position but no internal tracking. Updating internal tracking.");
+                        CurrentPosition.direction = mt5_direction;
+                        CurrentPosition.entryPrice = mt5_entry_price;
+                        CurrentPosition.lotSize = mt5_lot_size;
+                        CurrentPosition.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
+                        CurrentPosition.entryBar = 0; // Approximate with current bar
+                        Print("Updated position tracking to: ", 
+                              CurrentPosition.direction > 0 ? "BUY" : "SELL",
+                              ", Size: ", CurrentPosition.lotSize,
+                              ", Entry: ", CurrentPosition.entryPrice);
+                    }
+                    // Case 2: Position details mismatch
+                    else if(mt5_direction != CurrentPosition.direction || 
+                           MathAbs(mt5_lot_size - CurrentPosition.lotSize) > 0.001) {
+                        Print("Position details mismatch - MT5: ", mt5_direction > 0 ? "BUY" : "SELL", " ", 
+                              mt5_lot_size, " lots @ ", mt5_entry_price,
+                              ", Internal: ", CurrentPosition.direction > 0 ? "BUY" : "SELL", " ",
+                              CurrentPosition.lotSize, " lots @ ", CurrentPosition.entryPrice);
+                        
+                        CurrentPosition.direction = mt5_direction;
+                        CurrentPosition.entryPrice = mt5_entry_price;
+                        CurrentPosition.lotSize = mt5_lot_size;
+                        Print("Updated position tracking to match MT5 position");
+                    } else {
+                        Print("Position tracking is in sync, direction: ", 
+                             CurrentPosition.direction > 0 ? "LONG(+1)" : "SHORT(-1)");
+                    }
+                    
+                    break; // Only process first matching position
                 }
-                
-                break; // Only process first matching position
             }
         }
     }
@@ -565,12 +648,15 @@ void VerifyPositions() {
     // Case 3: We think we have a position but MT5 doesn't
     if(CurrentPosition.direction != 0 && !has_mt5_position) {
         Print("Position tracking mismatch: Internal position exists but no MT5 position found. Clearing internal tracking.");
+        Print("Previous tracking had direction: ", CurrentPosition.direction > 0 ? "LONG(+1)" : "SHORT(-1)");
         CurrentPosition.direction = 0;
         CurrentPosition.entryPrice = 0;
         CurrentPosition.lotSize = 0;
         CurrentPosition.entryTime = 0;
         CurrentPosition.entryBar = -1;
     }
+    
+    Print("Current position direction after verification: ", CurrentPosition.direction);
 }
 
 //+------------------------------------------------------------------+
