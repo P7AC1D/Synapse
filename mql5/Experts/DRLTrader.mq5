@@ -157,10 +157,7 @@ double CalculateLotSize() {
 //| Collect historical data                                           |
 //+------------------------------------------------------------------+
 bool CollectHistoricalData(int bars_to_collect) {
-    // Add +1 to include current bar, but we'll exclude it later
-    int total_bars_to_collect = bars_to_collect + 1;
-    
-    // Resize arrays
+    // Initialize arrays with series set to false to match Python's oldest-to-newest order
     ArrayResize(open_prices, bars_to_collect);
     ArrayResize(high_prices, bars_to_collect);
     ArrayResize(low_prices, bars_to_collect);
@@ -169,7 +166,6 @@ bool CollectHistoricalData(int bars_to_collect) {
     ArrayResize(volume_values, bars_to_collect);
     ArrayResize(time_values, bars_to_collect);
     
-    // Set arrays as series but with false to match Python's order (oldest to newest)
     ArraySetAsSeries(open_prices, false);
     ArraySetAsSeries(high_prices, false);
     ArraySetAsSeries(low_prices, false);
@@ -178,56 +174,51 @@ bool CollectHistoricalData(int bars_to_collect) {
     ArraySetAsSeries(volume_values, false);
     ArraySetAsSeries(time_values, false);
     
-    // Temporary arrays for data collection
-    double temp_open[];
-    double temp_high[];
-    double temp_low[];
-    double temp_close[];
-    long temp_volume[];
-    datetime temp_time[];
+    // Use CopyXXX functions with start=1 to skip current incomplete bar
+    if (CopyOpen(_Symbol, _Period, 1, bars_to_collect, open_prices) != bars_to_collect) return false;
+    if (CopyHigh(_Symbol, _Period, 1, bars_to_collect, high_prices) != bars_to_collect) return false;
+    if (CopyLow(_Symbol, _Period, 1, bars_to_collect, low_prices) != bars_to_collect) return false;
+    if (CopyClose(_Symbol, _Period, 1, bars_to_collect, close_prices) != bars_to_collect) return false;
+    if (CopyTickVolume(_Symbol, _Period, 1, bars_to_collect, volume_values) != bars_to_collect) return false;
+    if (CopyTime(_Symbol, _Period, 1, bars_to_collect, time_values) != bars_to_collect) return false;
     
-    ArrayResize(temp_open, total_bars_to_collect);
-    ArrayResize(temp_high, total_bars_to_collect);
-    ArrayResize(temp_low, total_bars_to_collect);
-    ArrayResize(temp_close, total_bars_to_collect);
-    ArrayResize(temp_volume, total_bars_to_collect);
-    ArrayResize(temp_time, total_bars_to_collect);
+    // Log last 5 bars for debugging - reversing order for display
+    Print("Last 5 bars (newest to oldest):");
+    Print("", "Historical Data Collection (Python-aligned):");
+    Print(StringFormat("Total bars collected: %d (start=1 to skip current bar)", bars_to_collect));
+    Print("Array Index Direction:");
+    Print("  [0] = Oldest data   -> Time: ", TimeToString(time_values[0]));
+    Print("  ..."); 
+    Print(StringFormat("  [%d] = Newest data -> Time: %s", 
+          bars_to_collect-1, 
+          TimeToString(time_values[bars_to_collect-1])));
+    Print("");
+    Print("Data Organization:");
+    Print("  1. Current bar excluded (incomplete)");
+    Print("  2. Arrays ordered oldest -> newest");
+    Print("  3. Features calculated in same order");
+    Print("");
     
-    // Set temporary arrays as series to match MT5's default behavior
-    ArraySetAsSeries(temp_open, true);
-    ArraySetAsSeries(temp_high, true);
-    ArraySetAsSeries(temp_low, true);
-    ArraySetAsSeries(temp_close, true);
-    ArraySetAsSeries(temp_volume, true);
-    ArraySetAsSeries(temp_time, true);
-    
-    // Copy price data including current bar
-    if (CopyOpen(_Symbol, _Period, 0, total_bars_to_collect, temp_open) != total_bars_to_collect) return false;
-    if (CopyHigh(_Symbol, _Period, 0, total_bars_to_collect, temp_high) != total_bars_to_collect) return false;
-    if (CopyLow(_Symbol, _Period, 0, total_bars_to_collect, temp_low) != total_bars_to_collect) return false;
-    if (CopyClose(_Symbol, _Period, 0, total_bars_to_collect, temp_close) != total_bars_to_collect) return false;
-    if (CopyTickVolume(_Symbol, _Period, 0, total_bars_to_collect, temp_volume) != total_bars_to_collect) return false;
-    if (CopyTime(_Symbol, _Period, 0, total_bars_to_collect, temp_time) != total_bars_to_collect) return false;
-    
-    // Copy data in reverse order to match Python (oldest to newest, excluding current bar)
-    for (int i = 0; i < bars_to_collect; i++) {
-        int src_idx = total_bars_to_collect - 2 - i;  // Skip current bar (-1) and go backwards
-        open_prices[i] = temp_open[src_idx];
-        high_prices[i] = temp_high[src_idx];
-        low_prices[i] = temp_low[src_idx];
-        close_prices[i] = temp_close[src_idx];
-        volume_values[i] = temp_volume[src_idx];
-        time_values[i] = temp_time[src_idx];
+    Print("Last 5 completed bars (newest to oldest):");
+    for(int i = 0; i < 5 && i < bars_to_collect; i++) {
+        int idx = bars_to_collect - 1 - i;
+        datetime bar_time = time_values[idx];
+        MqlDateTime time_struct;
+        TimeToStruct(bar_time, time_struct);
+        
+        Print(StringFormat(
+            "Bar[%d] - Time: %s [%02d:%02d], O: %.5f, H: %.5f, L: %.5f, C: %.5f, V: %d", 
+            i, TimeToString(bar_time), time_struct.hour, time_struct.min,
+            open_prices[idx], high_prices[idx], low_prices[idx], close_prices[idx], 
+            volume_values[idx]
+        ));
     }
+    Print("");
     
     // Calculate spread values (as points)
     for (int i = 0; i < bars_to_collect; i++) {
         spread_values[i] = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     }
-    
-    // Log what we're doing for debugging
-    Print("Using data from ", time_values[0], " to ", time_values[bars_to_collect-1], 
-          " (excluding current incomplete bar)");
     
     // Check terminal timezone settings
     MqlDateTime terminal_time;
@@ -273,12 +264,33 @@ bool PrepareModelInput() {
     ArraySetAsSeries(lower_band_values, true);
     ArraySetAsSeries(adx_values, true);
     
-    // Copy indicator values
-    if(CopyBuffer(rsi_handle, 0, 0, sequence_length, rsi_values) != sequence_length) return false;
-    if(CopyBuffer(atr_handle, 0, 0, sequence_length, atr_values) != sequence_length) return false;
-    if(CopyBuffer(bb_handle, 1, 0, sequence_length, upper_band_values) != sequence_length) return false;
-    if(CopyBuffer(bb_handle, 2, 0, sequence_length, lower_band_values) != sequence_length) return false;
-    if(CopyBuffer(adx_handle, 0, 0, sequence_length, adx_values) != sequence_length) return false;
+    // Set all arrays as non-series to match Python's oldest-to-newest order
+    ArraySetAsSeries(rsi_values, false);
+    ArraySetAsSeries(atr_values, false);
+    ArraySetAsSeries(upper_band_values, false);
+    ArraySetAsSeries(lower_band_values, false);
+    ArraySetAsSeries(adx_values, false);
+    
+    // Match Python's data order - use start=1 to align with price data
+    if(CopyBuffer(rsi_handle, 0, 1, sequence_length, rsi_values) != sequence_length) return false;
+    if(CopyBuffer(atr_handle, 0, 1, sequence_length, atr_values) != sequence_length) return false;
+    if(CopyBuffer(bb_handle, 1, 1, sequence_length, upper_band_values) != sequence_length) return false;
+    if(CopyBuffer(bb_handle, 2, 1, sequence_length, lower_band_values) != sequence_length) return false;
+    if(CopyBuffer(adx_handle, 0, 1, sequence_length, adx_values) != sequence_length) return false;
+    
+    // Log indicator values for the last 5 bars - displaying newest to oldest but accessing in order
+    Print("Last 5 bars indicator values (newest to oldest):");
+    for(int i = 0; i < 5 && i < sequence_length; i++) {
+        int idx = sequence_length - 1 - i;  // Index for newest-to-oldest display
+        Print(StringFormat(
+            "Bar[%d] - RSI: %.1f (raw %.1f), ATR: %.5f, BB Upper: %.5f, BB Lower: %.5f, ADX: %.1f",
+            i, rsi_values[idx] / 50.0 - 1.0, rsi_values[idx],
+            atr_values[idx], upper_band_values[idx], lower_band_values[idx],
+            adx_values[idx]
+        ));
+    }
+    
+    Print(""); // Add separator line
     
     // Find min/max for normalization
     double min_price = DBL_MAX;
@@ -314,15 +326,16 @@ bool PrepareModelInput() {
     if(max_spread == min_spread) max_spread = min_spread + 1;
     if(max_atr == min_atr) max_atr = min_atr + 1;
     
-    // Calculate ATR moving average (20-period) for ATR ratio feature
+    // Calculate ATR moving average (20-period) for ATR ratio feature - matching Python's order
     double atr_sma[];
     ArrayResize(atr_sma, sequence_length);
-    ArraySetAsSeries(atr_sma, true);
+    ArraySetAsSeries(atr_sma, false);  // Match Python's oldest to newest order
     
     for(int i = 0; i < sequence_length; i++) {
         double sum = 0.0;
         int count = 0;
-        for(int j = i; j < i + 20 && j < sequence_length; j++) {
+        // Look back for SMA, not forward
+        for(int j = MathMax(0, i - 19); j <= i; j++) {
             sum += atr_values[j];
             count++;
         }
@@ -512,18 +525,27 @@ bool PrepareModelInput() {
         model_input_data[idx + 10] = (float)unrealized_pnl;
         feature_values[10] = unrealized_pnl;
 
-        // Only log features for the last (most recent) time step
-        if(i == sequence_length - 1) {
-            string feature_names[] = {"returns", "rsi", "atr", "volume_change", "volatility_breakout", 
+            // Only log features for the last (most recent) time step
+            if(i == sequence_length - 1) {
+                string feature_names[] = {"returns", "rsi", "atr", "volume_change", "volatility_breakout", 
                                      "trend_strength", "candle_pattern", "sin_time", "cos_time", 
                                      "position_type", "unrealized_pnl"};
-            
-            Print("MQL5 Feature Values:");
-            for(int f = 0; f < ArraySize(feature_names); f++) {
-                Print(StringFormat("  %s: %.6f", feature_names[f], feature_values[f]));
+                                     
+                Print("", "Final Sequence Bar [", sequence_length-1, "] - Most Recent:");
+                Print(StringFormat("  Time: %s", TimeToString(time_values[i])));
+                Print(StringFormat("  OHLC: %.5f, %.5f, %.5f, %.5f", 
+                    open_prices[i], high_prices[i], low_prices[i], close_prices[i]));
+                Print(StringFormat("  Raw RSI: %.1f, ADX: %.1f, ATR: %.5f", 
+                    rsi_values[i], adx_values[i], atr_values[i]));
+                Print("  Array indices: [0] = oldest bar -> [", sequence_length-1, "] = newest bar");
+                Print("");
+                
+                Print("Normalized Feature Values (newest bar):");
+                for(int f = 0; f < ArraySize(feature_names); f++) {
+                    Print(StringFormat("  %s: %.6f", feature_names[f], feature_values[f]));
+                }
+                Print(""); // Add blank line after features for readability
             }
-            Print(""); // Add blank line after features for readability
-        }
     }
     
     return true;
@@ -554,15 +576,30 @@ bool GetPrediction(int &action, string &description) {
         return false;
     }
     
-    // Debug output
-    string probs = "";
+    string action_names[] = {"Hold", "Buy", "Sell", "Close"};
+    
+    Print("", "Model Prediction Results:");
+    Print(StringFormat("Selected Action: %s (%d)", action_names[action], action));
+    Print("Action Probabilities:");
+    
     for(int i = 0; i < ArraySize(actionProbabilities); i++) {
-        probs += StringFormat("%.2f", actionProbabilities[i] * 100.0) + "% ";
+        Print(StringFormat("  %s: %.1f%%", action_names[i], actionProbabilities[i] * 100.0));
     }
     
-    string action_names[] = {"Hold", "Buy", "Sell", "Close"};
-    Print("Model prediction: Action=", action_names[action], 
-          ", Probabilities=[", probs, "], Description=", description);
+    Print("Decision Context:");
+    Print(StringFormat("  Position: %s", CurrentPosition.direction == 0 ? "None" : 
+                                      (CurrentPosition.direction > 0 ? "LONG" : "SHORT")));
+    if(CurrentPosition.direction != 0) {
+        double current_price = CurrentPosition.direction > 0 ? 
+            SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+            SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+        double points = (current_price - CurrentPosition.entryPrice) / SymbolInfoDouble(_Symbol, SYMBOL_POINT) * 
+            (CurrentPosition.direction > 0 ? 1 : -1);
+        Print(StringFormat("  Current P/L: %.1f points", points));
+        Print(StringFormat("  Bars held: %d", CurrentPosition.entryBar));
+    }
+    Print(StringFormat("  Model note: %s", description));
+    Print("");
     
     return true;
 }
@@ -571,15 +608,26 @@ bool GetPrediction(int &action, string &description) {
 //| Execute trades based on model prediction                          |
 //+------------------------------------------------------------------+
 void ExecuteTrade(const int action, const string &description) {
-    double lotSize = CalculateLotSize();
-    if(lotSize <= 0) return;
-    
-    // Map action string to action code
-    // 0 = Hold, 1 = Buy, 2 = Sell, 3 = Close
-    
     // Debug output
     string action_names[] = {"Hold", "Buy", "Sell", "Close"};
-    Print("Selected action: ", action_names[action], " with description: ", description);
+    Print("");
+    Print("Trade Execution Analysis:");
+    Print(StringFormat("  Action: %s (%s)", action_names[action], description));
+    
+    // Account status
+    Print("Account Status:");
+    Print(StringFormat("  Balance: %.2f", AccountInfoDouble(ACCOUNT_BALANCE)));
+    Print(StringFormat("  Equity: %.2f", AccountInfoDouble(ACCOUNT_EQUITY)));
+    Print(StringFormat("  Free Margin: %.2f", AccountInfoDouble(ACCOUNT_MARGIN_FREE)));
+    Print(StringFormat("  Margin Level: %.1f%%", AccountInfoDouble(ACCOUNT_MARGIN_LEVEL)));
+    
+    double lotSize = CalculateLotSize();
+    if(lotSize <= 0) {
+        Print("ERROR: Invalid lot size calculated");
+        return;
+    }
+    
+    Print(StringFormat("Trade Size: %.2f lots", lotSize));
     
     switch(action) {
         case 1: // Buy
@@ -587,17 +635,30 @@ void ExecuteTrade(const int action, const string &description) {
                 double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
                 double stopLoss = CalculateStopLoss(askPrice, true);
                 
+                Print("", "Executing BUY order:");
+                Print(StringFormat("  Lot Size: %.2f", lotSize));
+                Print(StringFormat("  Entry: Market (Ask=%.5f)", askPrice));
+                Print(StringFormat("  Stop Loss: %.5f (%.1f points)", stopLoss, StopLoss));
+                
                 if(Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0, Label)) {
                     CurrentPosition.direction = 1;
                     CurrentPosition.entryPrice = Trade.ResultPrice();
                     CurrentPosition.lotSize = lotSize;
                     CurrentPosition.entryTime = TimeCurrent();
                     CurrentPosition.entryBar = 0; // Current bar
-                    Print("BUY position opened: ", lotSize, " lots @ ", CurrentPosition.entryPrice);
+                    Print("SUCCESS - BUY position opened:");
+                    Print(StringFormat("  Entry Price: %.5f", CurrentPosition.entryPrice));
+                    Print(StringFormat("  Stop Loss: %.5f", stopLoss));
+                    Print(StringFormat("  Risk: %.1f points", MathAbs(CurrentPosition.entryPrice - stopLoss) / SymbolInfoDouble(_Symbol, SYMBOL_POINT)));
                 }
                 else {
-                    Print("Failed to open BUY position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
+                    Print("FAILED - BUY order error:");
+                    Print(StringFormat("  Error Code: %d", Trade.ResultRetcode()));
+                    Print(StringFormat("  Description: %s", Trade.ResultRetcodeDescription()));
                 }
+            }
+            else {
+                Print("Skipped BUY - Already have position");
             }
             break;
             
@@ -606,25 +667,53 @@ void ExecuteTrade(const int action, const string &description) {
                 double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
                 double stopLoss = CalculateStopLoss(bidPrice, false);
                 
+                Print("", "Executing SELL order:");
+                Print(StringFormat("  Lot Size: %.2f", lotSize));
+                Print(StringFormat("  Entry: Market (Bid=%.5f)", bidPrice));
+                Print(StringFormat("  Stop Loss: %.5f (%.1f points)", stopLoss, StopLoss));
+                
                 if(Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0, Label)) {
                     CurrentPosition.direction = -1;
                     CurrentPosition.entryPrice = Trade.ResultPrice();
                     CurrentPosition.lotSize = lotSize;
                     CurrentPosition.entryTime = TimeCurrent();
                     CurrentPosition.entryBar = 0; // Current bar
-                    Print("SELL position opened: ", lotSize, " lots @ ", CurrentPosition.entryPrice);
+                    Print("SUCCESS - SELL position opened:");
+                    Print(StringFormat("  Entry Price: %.5f", CurrentPosition.entryPrice));
+                    Print(StringFormat("  Stop Loss: %.5f", stopLoss));
+                    Print(StringFormat("  Risk: %.1f points", MathAbs(CurrentPosition.entryPrice - stopLoss) / SymbolInfoDouble(_Symbol, SYMBOL_POINT)));
                 }
                 else {
-                    Print("Failed to open SELL position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
+                    Print("FAILED - SELL order error:");
+                    Print(StringFormat("  Error Code: %d", Trade.ResultRetcode()));
+                    Print(StringFormat("  Description: %s", Trade.ResultRetcodeDescription()));
                 }
+            }
+            else {
+                Print("Skipped SELL - Already have position");
             }
             break;
             
         case 3: // Close
             if(CurrentPosition.direction != 0) {
+                double closing_price = CurrentPosition.direction > 0 ? 
+                    SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                    SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+                
+                Print("", "Executing CLOSE order:");
+                Print(StringFormat("  Position: %s", CurrentPosition.direction > 0 ? "LONG" : "SHORT"));
+                Print(StringFormat("  Entry Price: %.5f", CurrentPosition.entryPrice));
+                Print(StringFormat("  Current Price: %.5f", closing_price));
+                Print(StringFormat("  Lot Size: %.2f", CurrentPosition.lotSize));
+                
                 if(Trade.PositionClose(_Symbol)) {
-                    Print("Position closed from ", CurrentPosition.direction > 0 ? "BUY" : "SELL", 
-                          " @ ", CurrentPosition.entryPrice);
+                    double pnl_points = (closing_price - CurrentPosition.entryPrice) * 
+                        (CurrentPosition.direction > 0 ? 1 : -1) / SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+                    
+                    Print("SUCCESS - Position closed:");
+                    Print(StringFormat("  Exit Price: %.5f", closing_price));
+                    Print(StringFormat("  Points: %.1f", pnl_points));
+                    
                     CurrentPosition.direction = 0;
                     CurrentPosition.entryPrice = 0;
                     CurrentPosition.lotSize = 0;
@@ -632,8 +721,13 @@ void ExecuteTrade(const int action, const string &description) {
                     CurrentPosition.entryBar = -1;
                 }
                 else {
-                    Print("Failed to close position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
+                    Print("FAILED - Close order error:");
+                    Print(StringFormat("  Error Code: %d", Trade.ResultRetcode()));
+                    Print(StringFormat("  Description: %s", Trade.ResultRetcodeDescription()));
                 }
+            }
+            else {
+                Print("Skipped CLOSE - No position");
             }
             break;
             
@@ -727,6 +821,16 @@ void VerifyPositions() {
 //| Initialize the RecurrentPPO model                                 |
 //+------------------------------------------------------------------+
 bool InitializeModel() {
+    Print("", "Initializing RecurrentPPO Model");
+    Print("Configuration:");
+    Print(StringFormat("  Model path: %s", ModelPath));
+    Print(StringFormat("  Sequence length: %d bars", SequenceLength));
+    Print(StringFormat("  LSTM layers: %d", LSTMNumLayers));
+    Print(StringFormat("  Hidden size: %d", LSTMHiddenSize));
+    Print(StringFormat("  Features per bar: %d", NumFeatures));
+    Print(StringFormat("  Possible actions: %d", NumActions));
+    Print("");
+    
     ModelSettings settings;
     settings.sequenceLength = SequenceLength;
     settings.numFeatures = NumFeatures;
@@ -736,9 +840,11 @@ bool InitializeModel() {
     
     if(!Model.Initialize(ModelPath, settings)) {
         Print("Failed to initialize RecurrentPPO model: ", Model.LastError());
+        Print("Model error details: ", Model.LastError());
         
         if(FallbackToManualMode) {
-            Print("OPERATING IN MANUAL MODE: DRL model unavailable, automatic trading disabled");
+            Print("OPERATING IN MANUAL MODE: DRL model unavailable");
+            Print("Manual mode allows direct trading with EA's magic number: ", MAGIC_NUMBER);
             return true; // Continue execution without the model
         }
         
@@ -746,7 +852,8 @@ bool InitializeModel() {
     }
     
     onnx_available = true;
-    Print("RecurrentPPO model initialized successfully from: ", ModelPath);
+    Print("Model successfully initialized");
+    Print("Status: READY FOR AUTOMATIC TRADING");
     return true;
 }
 
@@ -815,9 +922,33 @@ int OnInit() {
 //| Expert deinitialization function                                   |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason) {
+    string reasonText = "";
+    switch(reason) {
+        case REASON_PROGRAM:     reasonText = "Program"; break;
+        case REASON_REMOVE:      reasonText = "Expert removed"; break;
+        case REASON_RECOMPILE:   reasonText = "Expert recompiled"; break;
+        case REASON_CHARTCHANGE: reasonText = "Symbol/timeframe changed"; break;
+        case REASON_CHARTCLOSE:  reasonText = "Chart closed"; break;
+        case REASON_PARAMETERS:  reasonText = "Parameters changed"; break;
+        case REASON_ACCOUNT:     reasonText = "Account changed"; break;
+        default:                 reasonText = "Other reason"; break;
+    }
+    
+    Print("");
+    Print("DRLTrader Shutdown - Reason: ", reasonText);
+    
+    if(CurrentPosition.direction != 0) {
+        Print("WARNING: Deinitialized with active position:");
+        Print(StringFormat("  Direction: %s", CurrentPosition.direction > 0 ? "LONG" : "SHORT"));
+        Print(StringFormat("  Entry Price: %.5f", CurrentPosition.entryPrice));
+        Print(StringFormat("  Lot Size: %.2f", CurrentPosition.lotSize));
+    }
+    
+    Print("Cleaning up resources...");
     ReleaseIndicators();
     Model.Cleanup();
-    Print("DRLTrader deinitialized");
+    Print("Cleanup completed");
+    Print("EA deinitialized successfully");
 }
 
 //+------------------------------------------------------------------+
@@ -836,10 +967,23 @@ void OnTick() {
     if(current_bar_time == last_bar_time) return;
     last_bar_time = current_bar_time;
     
+    // Get current bar info for comparison
+    double current_open = iOpen(_Symbol, _Period, 0);
+    double current_high = iHigh(_Symbol, _Period, 0);
+    double current_low = iLow(_Symbol, _Period, 0);
+    double current_close = iClose(_Symbol, _Period, 0);
+    
+    Print("", "Current incomplete bar:");
+    Print(StringFormat("Bar[0] - Time: %s [%s], O: %.5f, H: %.5f, L: %.5f, C: %.5f", 
+          TimeToString(current_bar_time),
+          "incomplete",
+          current_open, current_high, current_low, current_close));
+    Print("");
+    
     // Verify position tracking is synchronized with MT5 positions
     VerifyPositions();
     
-    // Collect historical data
+    // Collect historical data - skipping current incomplete bar
     if(!CollectHistoricalData(MinDataBars)) {
         Print("Failed to collect historical data");
         return;
