@@ -21,6 +21,7 @@ from mt5_connector import MT5Connector
 from data_fetcher import DataFetcher
 from trade_model import TradeModel
 from trade_executor import TradeExecutor
+from trading.environment import TradingEnv
 from config import (
     LOG_FILE_PATH,
     MT5_SYMBOL,
