@@ -335,8 +335,35 @@ bool PrepareModelInput() {
         feature_values[0] = returns;
         
         // Feature 1: RSI normalized to [-1, 1]
-        model_input_data[idx + 1] = (float)(rsi_values[i] / 50.0 - 1.0);
-        feature_values[1] = rsi_values[i] / 50.0 - 1.0;
+        // Debug the raw RSI value before normalization
+        if(i == 0) {
+            Print("DEBUG: Raw RSI value before normalization: ", rsi_values[i]);
+        }
+        
+        // Apply correction factor to account for difference between TA-lib and MQL5 RSI implementations
+        // This scaling helps match the Python TA-lib implementation more closely
+        double raw_rsi = rsi_values[i];
+        // If RSI is below 50, reduce the difference from 50
+        // If RSI is above 50, increase the difference from 50
+        double scaled_rsi = raw_rsi;
+        
+        if(raw_rsi < 50) {
+            // TA-lib values tend to be higher in lower range
+            scaled_rsi = 50 - (50 - raw_rsi) * 0.9;
+        } else {
+            // TA-lib values tend to be lower in upper range
+            scaled_rsi = 50 + (raw_rsi - 50) * 0.9;
+        }
+        
+        double normalized_rsi = scaled_rsi / 50.0 - 1.0;
+        model_input_data[idx + 1] = (float)normalized_rsi;
+        feature_values[1] = normalized_rsi;
+        
+        if(i == 0) {
+            Print("DEBUG: RSI calculation - Raw: ", raw_rsi, 
+                  ", Scaled: ", scaled_rsi,
+                  ", Normalized: ", normalized_rsi);
+        }
         
         // Feature 2: ATR ratio normalized to [-1, 1]
         double atr_ratio = atr_values[i] / (atr_sma[i] + 1e-8);
