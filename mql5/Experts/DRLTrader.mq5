@@ -15,7 +15,6 @@
 
 // Constants
 #define MAGIC_NUMBER 20240417
-#define STOP_LOSS_PIPS 1500.0
 
 // Input parameters
 input string ModelGroup = ">>> Model Settings <<<";
@@ -32,6 +31,7 @@ input int MinDataBars = 500;                       // Minimum data bars to colle
 input string TradingGroup = ">>> Trading Settings <<<";
 input string Label = "PPO_LSTM_EA";                // Label for the EA
 input int MaxSpread = 350;                         // Maximum allowed spread (points)
+input double StopLoss = 2500.0;                     // Stop loss in points
 input double BalancePerLot = 2500.0;               // Amount required per 0.01 lot
 input bool UseFixedLotSize = false;                // Use fixed lot size instead of calculating from balance
 input double FixedLotSize = 0.01;                  // Fixed lot size if UseFixedLotSize is true
@@ -127,8 +127,8 @@ double CalculateStopLoss(const double entryPrice, const bool isBuy) {
     
     // Calculate stop loss price
     double slPrice = isBuy ? 
-                    entryPrice - (STOP_LOSS_PIPS * pipValue) : 
-                    entryPrice + (STOP_LOSS_PIPS * pipValue);
+                    entryPrice - (StopLoss * pipValue) : 
+                    entryPrice + (StopLoss * pipValue);
     
     return NormalizeDouble(slPrice, digits);
 }
@@ -479,7 +479,7 @@ void VerifyPositions() {
         ulong ticket = PositionGetTicket(i);
         if(PositionSelectByTicket(ticket)) {
             if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
-               PositionGetInteger(POSITION_COMMENT) == Label) {
+                PositionGetString(POSITION_COMMENT) == Label) {
                 
                 has_mt5_position = true;
                 int mt5_direction = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
