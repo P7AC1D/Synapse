@@ -226,7 +226,23 @@ bool CollectHistoricalData(int bars_to_collect) {
     // Log what we're doing for debugging
     Print("Using data from ", time_values[0], " to ", time_values[bars_to_collect-1], 
           " (excluding current incomplete bar)");
+          
+    // Check terminal timezone settings
+    MqlDateTime terminal_time;
+    datetime current_time = TimeCurrent();
+    TimeToStruct(current_time, terminal_time);
     
+    // Get GMT offset in hours
+    int gmt_offset = terminal_time.day_of_week; // Temporarily store GMT offset
+    datetime server_time = TimeTradeServer();
+    MqlDateTime server_time_struct;
+    TimeToStruct(server_time, server_time_struct);
+    
+    Print("DEBUG: Timezone info - Local time: ", TimeLocal(),
+          ", Server time: ", server_time,
+          ", GMT offset: ", terminal_time.day_of_week,
+          " hours");
+          
     return true;
 }
 
