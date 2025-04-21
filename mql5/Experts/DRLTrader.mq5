@@ -270,6 +270,9 @@ bool PrepareModelInput() {
         atr_sma[i] = sum / count;
     }
     
+    // Create array to store feature values for logging
+    double feature_values[11];
+    
     // Fill model input array with all 11 features
     for(int i = 0; i < sequence_length; i++) {
         int idx = i * NumFeatures;
@@ -281,9 +284,11 @@ bool PrepareModelInput() {
         }
         returns = MathMin(MathMax(returns, -0.1), 0.1);  // Clip between -0.1 and 0.1
         model_input_data[idx + 0] = (float)returns;
+        feature_values[0] = returns;
         
         // Feature 1: RSI normalized to [-1, 1]
         model_input_data[idx + 1] = (float)(rsi_values[i] / 50.0 - 1.0);
+        feature_values[1] = rsi_values[i] / 50.0 - 1.0;
         
         // Feature 2: ATR ratio normalized to [-1, 1]
         double atr_ratio = atr_values[i] / (atr_sma[i] + 1e-8);
@@ -293,6 +298,7 @@ bool PrepareModelInput() {
         double atr_norm = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
         atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0);
         model_input_data[idx + 2] = (float)atr_norm;
+        feature_values[2] = atr_norm;
         
         // Feature 3: Volume change
         double volume_pct = 0.0;
@@ -301,6 +307,7 @@ bool PrepareModelInput() {
         }
         volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0);
         model_input_data[idx + 3] = (float)volume_pct;
+        feature_values[3] = volume_pct;
         
         // Feature 4: Volatility breakout [0,1]
         double band_range = upper_band_values[i] - lower_band_values[i];
@@ -309,10 +316,12 @@ bool PrepareModelInput() {
         double volatility_breakout = position / band_range;
         volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);
         model_input_data[idx + 4] = (float)volatility_breakout;
+        feature_values[4] = volatility_breakout;
         
         // Feature 5: Trend strength [-1,1]
         double trend_strength = MathMin(MathMax(adx_values[i]/25.0 - 1.0, -1.0), 1.0);
         model_input_data[idx + 5] = (float)trend_strength;
+        feature_values[5] = trend_strength;
         
         // Feature 6: Candle pattern [-1,1]
         double body = close_prices[i] - open_prices[i];
@@ -322,6 +331,7 @@ bool PrepareModelInput() {
         double candle_pattern = (body/range + (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2.0;
         candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0);
         model_input_data[idx + 6] = (float)candle_pattern;
+        feature_values[6] = candle_pattern;
         
         // Feature 7-8: Time encoding using sin/cos
         MqlDateTime time_struct;
@@ -332,10 +342,13 @@ bool PrepareModelInput() {
         double cos_time = MathCos(2.0 * M_PI * time_index / minutes_in_day);
         model_input_data[idx + 7] = (float)sin_time;
         model_input_data[idx + 8] = (float)cos_time;
+        feature_values[7] = sin_time;
+        feature_values[8] = cos_time;
         
         // Feature 9: Position type [-1,0,1]
         int position_type = CurrentPosition.direction;
         model_input_data[idx + 9] = (float)position_type;
+        feature_values[9] = position_type;
         
         // Feature 10: Normalized unrealized PnL [-1,1]
         double unrealized_pnl = 0.0;
@@ -348,6 +361,20 @@ bool PrepareModelInput() {
             unrealized_pnl = MathMin(MathMax(unrealized_pnl / 5.0, -1.0), 1.0); // Normalize to [-1,1]
         }
         model_input_data[idx + 10] = (float)unrealized_pnl;
+        feature_values[10] = unrealized_pnl;
+
+        // Only log features for the last (most recent) time step
+        if(i == 0) {
+            string feature_names[] = {"returns", "rsi", "atr", "volume_change", "volatility_breakout", 
+                                     "trend_strength", "candle_pattern", "sin_time", "cos_time", 
+                                     "position_type", "unrealized_pnl"};
+            
+            string feature_log = "MQL5 Feature Values:\n";
+            for(int f = 0; f < ArraySize(feature_names); f++) {
+                feature_log += StringFormat("  %s: %.6f\n", feature_names[f], feature_values[f]);
+            }
+            Print(feature_log);
+        }
     }
     
     return true;
