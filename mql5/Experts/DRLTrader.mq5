@@ -4,8 +4,8 @@
 //|                                     https://github.com/your-repo     |
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2024, DRL Trading Bot"
-#property link "https://github.com/your-repo"
-#property version "1.00"
+#property link      "https://github.com/your-repo"
+#property version   "1.00"
 #property strict
 
 // Include required files
@@ -18,24 +18,24 @@
 
 // Input parameters
 input string ModelGroup = ">>> Model Settings <<<";
-input string ModelPath = "XAUUSDm.onnx"; // Path to ONNX model (relative to terminal data folder)
-input int SequenceLength = 500;          // Number of bars for sequence input
-input int LSTMHiddenSize = 256;          // LSTM hidden state size, changed from 64 to 256
-input int LSTMNumLayers = 2;             // Number of LSTM layers, changed from 1 to 2
-input int NumFeatures = 11;              // Number of features per bar
-input int NumActions = 4;                // Number of possible actions
+input string ModelPath = "XAUUSDm.onnx";  // Path to ONNX model (relative to terminal data folder)
+input int SequenceLength = 500;                    // Number of bars for sequence input
+input int LSTMHiddenSize = 256;                    // LSTM hidden state size, changed from 64 to 256
+input int LSTMNumLayers = 2;                       // Number of LSTM layers, changed from 1 to 2
+input int NumFeatures = 11;                        // Number of features per bar
+input int NumActions = 4;                          // Number of possible actions
 
 input string DataGroup = ">>> Data Settings <<<";
-input int MinDataBars = 500; // Minimum data bars to collect
+input int MinDataBars = 500;                       // Minimum data bars to collect
 
 input string TradingGroup = ">>> Trading Settings <<<";
-input string Label = "PPO_LSTM_EA";     // Label for the EA
-input int MaxSpread = 350;              // Maximum allowed spread (points)
-input double StopLoss = 2500.0;         // Stop loss in points
-input double BalancePerLot = 2500.0;    // Amount required per 0.01 lot
-input bool UseFixedLotSize = false;     // Use fixed lot size instead of calculating from balance
-input double FixedLotSize = 0.01;       // Fixed lot size if UseFixedLotSize is true
-input bool FallbackToManualMode = true; // If true, will not trade automatically when ONNX fails
+input string Label = "PPO_LSTM_EA";                // Label for the EA
+input int MaxSpread = 350;                         // Maximum allowed spread (points)
+input double StopLoss = 2500.0;                     // Stop loss in points
+input double BalancePerLot = 2500.0;               // Amount required per 0.01 lot
+input bool UseFixedLotSize = false;                // Use fixed lot size instead of calculating from balance
+input double FixedLotSize = 0.01;                  // Fixed lot size if UseFixedLotSize is true
+input bool FallbackToManualMode = true;            // If true, will not trade automatically when ONNX fails
 
 // Indicators
 int rsi_handle;
@@ -51,14 +51,13 @@ int boll_period = 20;
 int adx_period = 14;
 
 // Global variables
-CTrade Trade;                // Trading object
-RecurrentPPOModel Model;     // DRL Model
-string last_error = "";      // Last error message
-bool onnx_available = false; // Flag indicating if ONNX runtime is available
+CTrade Trade;                   // Trading object
+RecurrentPPOModel Model;        // DRL Model
+string last_error = "";         // Last error message
+bool onnx_available = false;    // Flag indicating if ONNX runtime is available
 
 // Position tracking
-struct Position
-{
+struct Position {
     int direction;      // 1 for long, -1 for short, 0 for none
     double entryPrice;  // Position entry price
     double lotSize;     // Position size in lots
@@ -90,17 +89,16 @@ double adx_values[];
 //+------------------------------------------------------------------+
 //| Initialize indicators                                              |
 //+------------------------------------------------------------------+
-bool InitializeIndicators()
-{
+bool InitializeIndicators() {
     // Initialize standard MT5 indicators
     rsi_handle = iRSI(_Symbol, _Period, rsi_period, PRICE_CLOSE);
     atr_handle = iATR(_Symbol, _Period, atr_period);
     macd_handle = iMACD(_Symbol, _Period, 12, 26, 9, PRICE_CLOSE);
     bb_handle = iBands(_Symbol, _Period, boll_period, 0, 2, PRICE_CLOSE);
     adx_handle = iADX(_Symbol, _Period, adx_period);
-
-    return rsi_handle != INVALID_HANDLE &&
-           atr_handle != INVALID_HANDLE &&
+    
+    return rsi_handle != INVALID_HANDLE && 
+           atr_handle != INVALID_HANDLE && 
            bb_handle != INVALID_HANDLE &&
            macd_handle != INVALID_HANDLE &&
            adx_handle != INVALID_HANDLE;
@@ -109,8 +107,7 @@ bool InitializeIndicators()
 //+------------------------------------------------------------------+
 //| Release indicators                                                |
 //+------------------------------------------------------------------+
-void ReleaseIndicators()
-{
+void ReleaseIndicators() {
     IndicatorRelease(rsi_handle);
     IndicatorRelease(atr_handle);
     IndicatorRelease(macd_handle);
@@ -121,27 +118,26 @@ void ReleaseIndicators()
 //+------------------------------------------------------------------+
 //| Calculate stop loss price                                          |
 //+------------------------------------------------------------------+
-double CalculateStopLoss(const double entryPrice, const bool isBuy)
-{
+double CalculateStopLoss(const double entryPrice, const bool isBuy) {
     double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-
+    
     // For XAUUSD, 1 pip = 0.1 points
     double pipValue = StringFind(_Symbol, "XAU") >= 0 ? point * 10 : point;
-
+    
     // Calculate stop loss price
-    double slPrice = isBuy ? entryPrice - (StopLoss * pipValue) : entryPrice + (StopLoss * pipValue);
-
+    double slPrice = isBuy ? 
+                    entryPrice - (StopLoss * pipValue) : 
+                    entryPrice + (StopLoss * pipValue);
+    
     return NormalizeDouble(slPrice, digits);
 }
 
 //+------------------------------------------------------------------+
 //| Calculate position size                                            |
 //+------------------------------------------------------------------+
-double CalculateLotSize()
-{
-    if (UseFixedLotSize)
-    {
+double CalculateLotSize() {
+    if(UseFixedLotSize) {
         return FixedLotSize;
     }
 
@@ -149,22 +145,21 @@ double CalculateLotSize()
     double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
     double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
     double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-
+    
     double lotSize = (balance / BalancePerLot) * minLot;
     lotSize = MathRound(lotSize / lotStep) * lotStep;
     lotSize = MathMax(minLot, MathMin(maxLot, lotSize));
-
+    
     return lotSize;
 }
 
 //+------------------------------------------------------------------+
 //| Collect historical data                                           |
 //+------------------------------------------------------------------+
-bool CollectHistoricalData(int bars_to_collect)
-{
+bool CollectHistoricalData(int bars_to_collect) {
     // Add +1 to include current bar, but we'll exclude it later
     int total_bars_to_collect = bars_to_collect + 1;
-
+    
     // Resize arrays
     ArrayResize(open_prices, bars_to_collect);
     ArrayResize(high_prices, bars_to_collect);
@@ -173,7 +168,7 @@ bool CollectHistoricalData(int bars_to_collect)
     ArrayResize(spread_values, bars_to_collect);
     ArrayResize(volume_values, bars_to_collect);
     ArrayResize(time_values, bars_to_collect);
-
+    
     // Set arrays as series
     ArraySetAsSeries(open_prices, true);
     ArraySetAsSeries(high_prices, true);
@@ -182,7 +177,7 @@ bool CollectHistoricalData(int bars_to_collect)
     ArraySetAsSeries(spread_values, true);
     ArraySetAsSeries(volume_values, true);
     ArraySetAsSeries(time_values, true);
-
+    
     // Temporary arrays for data collection
     double temp_open[];
     double temp_high[];
@@ -190,38 +185,31 @@ bool CollectHistoricalData(int bars_to_collect)
     double temp_close[];
     long temp_volume[];
     datetime temp_time[];
-
+    
     ArrayResize(temp_open, total_bars_to_collect);
     ArrayResize(temp_high, total_bars_to_collect);
     ArrayResize(temp_low, total_bars_to_collect);
     ArrayResize(temp_close, total_bars_to_collect);
     ArrayResize(temp_volume, total_bars_to_collect);
     ArrayResize(temp_time, total_bars_to_collect);
-
+    
     ArraySetAsSeries(temp_open, true);
     ArraySetAsSeries(temp_high, true);
     ArraySetAsSeries(temp_low, true);
     ArraySetAsSeries(temp_close, true);
     ArraySetAsSeries(temp_volume, true);
     ArraySetAsSeries(temp_time, true);
-
+    
     // Copy price data including current bar
-    if (CopyOpen(_Symbol, _Period, 0, total_bars_to_collect, temp_open) != total_bars_to_collect)
-        return false;
-    if (CopyHigh(_Symbol, _Period, 0, total_bars_to_collect, temp_high) != total_bars_to_collect)
-        return false;
-    if (CopyLow(_Symbol, _Period, 0, total_bars_to_collect, temp_low) != total_bars_to_collect)
-        return false;
-    if (CopyClose(_Symbol, _Period, 0, total_bars_to_collect, temp_close) != total_bars_to_collect)
-        return false;
-    if (CopyTickVolume(_Symbol, _Period, 0, total_bars_to_collect, temp_volume) != total_bars_to_collect)
-        return false;
-    if (CopyTime(_Symbol, _Period, 0, total_bars_to_collect, temp_time) != total_bars_to_collect)
-        return false;
-
+    if (CopyOpen(_Symbol, _Period, 0, total_bars_to_collect, temp_open) != total_bars_to_collect) return false;
+    if (CopyHigh(_Symbol, _Period, 0, total_bars_to_collect, temp_high) != total_bars_to_collect) return false;
+    if (CopyLow(_Symbol, _Period, 0, total_bars_to_collect, temp_low) != total_bars_to_collect) return false;
+    if (CopyClose(_Symbol, _Period, 0, total_bars_to_collect, temp_close) != total_bars_to_collect) return false;
+    if (CopyTickVolume(_Symbol, _Period, 0, total_bars_to_collect, temp_volume) != total_bars_to_collect) return false;
+    if (CopyTime(_Symbol, _Period, 0, total_bars_to_collect, temp_time) != total_bars_to_collect) return false;
+    
     // Skip current bar (index 0) and copy only completed bars
-    for (int i = 0; i < bars_to_collect; i++)
-    {
+    for (int i = 0; i < bars_to_collect; i++) {
         open_prices[i] = temp_open[i + 1];
         high_prices[i] = temp_high[i + 1];
         low_prices[i] = temp_low[i + 1];
@@ -229,56 +217,49 @@ bool CollectHistoricalData(int bars_to_collect)
         volume_values[i] = temp_volume[i + 1];
         time_values[i] = temp_time[i + 1];
     }
-
+    
     // Calculate spread values (as points)
-    for (int i = 0; i < bars_to_collect; i++)
-    {
+    for (int i = 0; i < bars_to_collect; i++) {
         spread_values[i] = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) * SymbolInfoDouble(_Symbol, SYMBOL_POINT);
     }
-
+    
     // Log what we're doing for debugging
-    Print("Using data from ", time_values[0], " to ", time_values[bars_to_collect - 1],
+    Print("Using data from ", time_values[0], " to ", time_values[bars_to_collect-1], 
           " (excluding current incomplete bar)");
-
+    
     return true;
 }
 
 //+------------------------------------------------------------------+
 //| Prepare model input data                                          |
 //+------------------------------------------------------------------+
-bool PrepareModelInput()
-{
+bool PrepareModelInput() {
     int sequence_length = MathMin(SequenceLength, ArraySize(close_prices));
-
+    
     // Resize model input data array based on sequence length and feature count
     ArrayResize(model_input_data, sequence_length * NumFeatures);
     ArrayInitialize(model_input_data, 0.0);
-
+    
     // Calculate additional indicators needed for features
     ArrayResize(rsi_values, sequence_length);
     ArrayResize(atr_values, sequence_length);
     ArrayResize(upper_band_values, sequence_length);
     ArrayResize(lower_band_values, sequence_length);
     ArrayResize(adx_values, sequence_length);
-
+    
     ArraySetAsSeries(rsi_values, true);
     ArraySetAsSeries(atr_values, true);
     ArraySetAsSeries(upper_band_values, true);
     ArraySetAsSeries(lower_band_values, true);
     ArraySetAsSeries(adx_values, true);
-
+    
     // Copy indicator values
-    if (CopyBuffer(rsi_handle, 0, 0, sequence_length, rsi_values) != sequence_length)
-        return false;
-    if (CopyBuffer(atr_handle, 0, 0, sequence_length, atr_values) != sequence_length)
-        return false;
-    if (CopyBuffer(bb_handle, 1, 0, sequence_length, upper_band_values) != sequence_length)
-        return false;
-    if (CopyBuffer(bb_handle, 2, 0, sequence_length, lower_band_values) != sequence_length)
-        return false;
-    if (CopyBuffer(adx_handle, 0, 0, sequence_length, adx_values) != sequence_length)
-        return false;
-
+    if(CopyBuffer(rsi_handle, 0, 0, sequence_length, rsi_values) != sequence_length) return false;
+    if(CopyBuffer(atr_handle, 0, 0, sequence_length, atr_values) != sequence_length) return false;
+    if(CopyBuffer(bb_handle, 1, 0, sequence_length, upper_band_values) != sequence_length) return false;
+    if(CopyBuffer(bb_handle, 2, 0, sequence_length, lower_band_values) != sequence_length) return false;
+    if(CopyBuffer(adx_handle, 0, 0, sequence_length, adx_values) != sequence_length) return false;
+    
     // Find min/max for normalization
     double min_price = DBL_MAX;
     double max_price = DBL_MIN;
@@ -288,129 +269,131 @@ bool PrepareModelInput()
     double max_spread = DBL_MIN;
     double min_atr = DBL_MAX;
     double max_atr = DBL_MIN;
-
-    for (int i = 0; i < sequence_length; i++)
-    {
+    
+    for(int i = 0; i < sequence_length; i++) {
         // Find min/max price
         min_price = MathMin(min_price, MathMin(open_prices[i], MathMin(high_prices[i], MathMin(low_prices[i], close_prices[i]))));
         max_price = MathMax(max_price, MathMax(open_prices[i], MathMax(high_prices[i], MathMax(low_prices[i], close_prices[i]))));
-
+        
         // Find min/max volume
         min_volume = MathMin(min_volume, (double)volume_values[i]);
         max_volume = MathMax(max_volume, (double)volume_values[i]);
-
+        
         // Find min/max spread
         min_spread = MathMin(min_spread, spread_values[i]);
         max_spread = MathMax(max_spread, spread_values[i]);
-
+        
         // Find min/max ATR
         min_atr = MathMin(min_atr, atr_values[i]);
         max_atr = MathMax(max_atr, atr_values[i]);
     }
-
+    
     // Avoid division by zero
-    if (max_price == min_price)
-        max_price = min_price + 1;
-    if (max_volume == min_volume)
-        max_volume = min_volume + 1;
-    if (max_spread == min_spread)
-        max_spread = min_spread + 1;
-    if (max_atr == min_atr)
-        max_atr = min_atr + 1;
-
+    if(max_price == min_price) max_price = min_price + 1;
+    if(max_volume == min_volume) max_volume = min_volume + 1;
+    if(max_spread == min_spread) max_spread = min_spread + 1;
+    if(max_atr == min_atr) max_atr = min_atr + 1;
+    
     // Calculate ATR moving average (20-period) for ATR ratio feature
     double atr_sma[];
     ArrayResize(atr_sma, sequence_length);
     ArraySetAsSeries(atr_sma, true);
-
-    for (int i = 0; i < sequence_length; i++)
-    {
+    
+    for(int i = 0; i < sequence_length; i++) {
         double sum = 0.0;
         int count = 0;
-        for (int j = i; j < i + 20 && j < sequence_length; j++)
-        {
+        for(int j = i; j < i + 20 && j < sequence_length; j++) {
             sum += atr_values[j];
             count++;
         }
         atr_sma[i] = sum / count;
     }
-
+    
     // Create array to store feature values for logging
     double feature_values[11];
-
+    
     // Fill model input array with all 11 features
-    for (int i = 0; i < sequence_length; i++)
-    {
+    for(int i = 0; i < sequence_length; i++) {
         int idx = i * NumFeatures;
-
-        // In Python: returns = np.diff(close) / close[:-1]
-        // This is (current_price - previous_price) / previous_price
-        // In our reversed array, this is:
-        returns = (close_prices[i - 1] - close_prices[i]) / close_prices[i];
-
-        // Debug the calculation for the second bar
-        if (i == 1)
-        {
-            Print("DEBUG: Returns calculation - Bar[1] - Current:", close_prices[i - 1],
-                  ", Previous:", close_prices[i],
-                  ", Calculated return:", returns);
+        
+        // Feature 0: Returns
+        double returns = 0.0;
+        // Most recent bar should have returns=0 just like Python
+        if(i == 0) {
+            returns = 0.0;
+            Print("DEBUG: Returns calculation - Using 0 for most recent bar (i=0) as in Python");
+        } 
+        // For older bars (i > 0), calculate returns from prior price
+        else if(i < sequence_length) {
+            // In Python: returns = np.diff(close) / close[:-1]
+            // This is (current_price - previous_price) / previous_price
+            // In our reversed array, this is:
+            returns = (close_prices[i-1] - close_prices[i]) / close_prices[i];
+            
+            // Debug the calculation for the second bar
+            if(i == 1) {
+                Print("DEBUG: Returns calculation - Bar[1] - Current:", close_prices[i-1], 
+                      ", Previous:", close_prices[i],
+                      ", Calculated return:", returns);
+            } 
         }
-
-        returns = MathMin(MathMax(returns, -0.1), 0.1); // Clip between -0.1 and 0.1
+        
+        // Debug the final returns value for the first bar (most recent)
+        if(i == 0) {
+            Print("DEBUG: Returns final value for most recent bar (i=0): ", returns);
+        }
+        
+        returns = MathMin(MathMax(returns, -0.1), 0.1);  // Clip between -0.1 and 0.1
         model_input_data[idx + 0] = (float)returns;
         feature_values[0] = returns;
-
+        
         // Feature 1: RSI normalized to [-1, 1]
         model_input_data[idx + 1] = (float)(rsi_values[i] / 50.0 - 1.0);
         feature_values[1] = rsi_values[i] / 50.0 - 1.0;
-
+        
         // Feature 2: ATR ratio normalized to [-1, 1]
         double atr_ratio = atr_values[i] / (atr_sma[i] + 1e-8);
         double min_expected_ratio = 0.5;
         double max_expected_ratio = 2.0;
         double expected_range = max_expected_ratio - min_expected_ratio;
         double atr_norm = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
-
+        
         // Debug ATR calculation
-        if (i == 0)
-        {
-            Print("DEBUG: ATR calculation - Value:", atr_values[i],
-                  ", SMA:", atr_sma[i],
+        if(i == 0) {
+            Print("DEBUG: ATR calculation - Value:", atr_values[i], 
+                  ", SMA:", atr_sma[i], 
                   ", Ratio:", atr_ratio,
                   ", Normalized:", atr_norm);
         }
-
+        
         atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0);
         model_input_data[idx + 2] = (float)atr_norm;
         feature_values[2] = atr_norm;
-
+        
         // Feature 3: Volume change
         double volume_pct = 0.0;
-        if (i < sequence_length - 1 && volume_values[i + 1] > 0)
-        {
+        if(i < sequence_length - 1 && volume_values[i+1] > 0) {
             // Debug pre-calculation values
-            if (i == 0)
-            {
-                Print("DEBUG: Volume calc - current:", volume_values[i],
-                      ", previous:", volume_values[i + 1]);
+            if(i == 0) {
+                Print("DEBUG: Volume calc - current:", volume_values[i], 
+                      ", previous:", volume_values[i+1]);
             }
-
+            
             // Calculate the same way as Python: (current - previous) / previous
-            volume_pct = ((double)volume_values[i] - volume_values[i + 1]) / volume_values[i + 1];
+            volume_pct = ((double)volume_values[i] - volume_values[i+1]) / volume_values[i+1];
         }
         volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0);
         model_input_data[idx + 3] = (float)volume_pct;
         feature_values[3] = volume_pct;
-
+        
         // Feature 4: Volatility breakout [0,1]
         double band_range = upper_band_values[i] - lower_band_values[i];
         band_range = band_range < 1e-8 ? 1e-8 : band_range;
         double position = close_prices[i] - lower_band_values[i];
         double volatility_breakout = position / band_range;
         // Debug the BB calculation for the first bar (latest bar)
-        if (i == 0)
-        {
-            Print("DEBUG: BB values - Upper:", upper_band_values[i],
+        if(i == 0) {
+            Print("DEBUG: BB values - Upper:", upper_band_values[i], 
                   ", Lower:", lower_band_values[i],
                   ", Close:", close_prices[i],
                   ", Position from lower:", position,
@@ -419,22 +402,22 @@ bool PrepareModelInput()
         volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);
         model_input_data[idx + 4] = (float)volatility_breakout;
         feature_values[4] = volatility_breakout;
-
+        
         // Feature 5: Trend strength [-1,1]
-        double trend_strength = MathMin(MathMax(adx_values[i] / 25.0 - 1.0, -1.0), 1.0);
+        double trend_strength = MathMin(MathMax(adx_values[i]/25.0 - 1.0, -1.0), 1.0);
         model_input_data[idx + 5] = (float)trend_strength;
         feature_values[5] = trend_strength;
-
+        
         // Feature 6: Candle pattern [-1,1]
         double body = close_prices[i] - open_prices[i];
         double upper_wick = high_prices[i] - MathMax(close_prices[i], open_prices[i]);
         double lower_wick = MathMin(close_prices[i], open_prices[i]) - low_prices[i];
         double range = high_prices[i] - low_prices[i] + 1e-8;
-        double candle_pattern = (body / range + (upper_wick - lower_wick) / (upper_wick + lower_wick + 1e-8)) / 2.0;
+        double candle_pattern = (body/range + (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2.0;
         candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0);
         model_input_data[idx + 6] = (float)candle_pattern;
         feature_values[6] = candle_pattern;
-
+        
         // Feature 7-8: Time encoding using sin/cos
         MqlDateTime time_struct;
         TimeToStruct(time_values[i], time_struct);
@@ -446,43 +429,41 @@ bool PrepareModelInput()
         model_input_data[idx + 8] = (float)cos_time;
         feature_values[7] = sin_time;
         feature_values[8] = cos_time;
-
+        
         // Feature 9: Position type [-1,0,1]
         int position_type = CurrentPosition.direction;
         model_input_data[idx + 9] = (float)position_type;
         feature_values[9] = position_type;
-
+        
         // Feature 10: Normalized unrealized PnL [-1,1]
         double unrealized_pnl = 0.0;
-        if (CurrentPosition.direction != 0)
-        {
+        if(CurrentPosition.direction != 0) {
             double current_price = CurrentPosition.direction > 0 ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
             double point_value = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
             double pip_size = StringFind(_Symbol, "XAU") >= 0 ? point_value * 10 : point_value;
             double price_diff = (current_price - CurrentPosition.entryPrice) * CurrentPosition.direction;
-
+            
             // Calculate actual PnL in account currency
             double contract_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
             double tick_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
             double tick_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
             double point_cost = tick_value / tick_size * point_value;
-
+            
             // Calculate PnL in account currency
             double pnl_currency = price_diff * CurrentPosition.lotSize * contract_size;
-
+            
             // Get account balance for normalization (matches Python implementation)
             double account_balance = AccountInfoDouble(ACCOUNT_BALANCE);
-
+            
             // Normalize by account balance, just like in Python
             unrealized_pnl = pnl_currency / account_balance;
-
+            
             // Clip to [-1, 1] range
             unrealized_pnl = MathMin(MathMax(unrealized_pnl, -1.0), 1.0);
-
+            
             // Debug info
-            if (i == 0)
-            {
-                Print("PnL Debug: Price diff=", price_diff, ", PnL currency=", pnl_currency,
+            if(i == 0) {
+                Print("PnL Debug: Price diff=", price_diff, ", PnL currency=", pnl_currency, 
                       ", Balance=", account_balance, ", Normalized=", unrealized_pnl);
             }
         }
@@ -490,233 +471,204 @@ bool PrepareModelInput()
         feature_values[10] = unrealized_pnl;
 
         // Only log features for the last (most recent) time step
-        if (i == 0)
-        {
-            string feature_names[] = {"returns", "rsi", "atr", "volume_change", "volatility_breakout",
-                                      "trend_strength", "candle_pattern", "sin_time", "cos_time",
-                                      "position_type", "unrealized_pnl"};
-
+        if(i == 0) {
+            string feature_names[] = {"returns", "rsi", "atr", "volume_change", "volatility_breakout", 
+                                     "trend_strength", "candle_pattern", "sin_time", "cos_time", 
+                                     "position_type", "unrealized_pnl"};
+            
             string feature_log = "MQL5 Feature Values:\n";
-            for (int f = 0; f < ArraySize(feature_names); f++)
-            {
+            for(int f = 0; f < ArraySize(feature_names); f++) {
                 feature_log += StringFormat("  %s: %.6f\n", feature_names[f], feature_values[f]);
             }
             Print(feature_log);
         }
     }
-
+    
     return true;
 }
 
 //+------------------------------------------------------------------+
 //| Get prediction from the model                                     |
 //+------------------------------------------------------------------+
-bool GetPrediction(int &action, string &description)
-{
+bool GetPrediction(int &action, string &description) {
     // Check if ONNX is available
-    if (!onnx_available)
-    {
+    if(!onnx_available) {
         action = 0; // Hold
         description = "Manual mode - ONNX runtime not available";
         return false;
     }
-
+    
     // Prepare model input data
-    if (!PrepareModelInput())
-    {
+    if(!PrepareModelInput()) {
         Print("Failed to prepare model input data");
         return false;
     }
-
+    
     // Run prediction
     double actionProbabilities[];
-
-    if (!Model.Predict(model_input_data, action, description, actionProbabilities))
-    {
+    
+    if(!Model.Predict(model_input_data, action, description, actionProbabilities)) {
         Print("Model prediction failed: ", Model.LastError());
         return false;
     }
-
+    
     // Debug output
     string probs = "";
-    for (int i = 0; i < ArraySize(actionProbabilities); i++)
-    {
+    for(int i = 0; i < ArraySize(actionProbabilities); i++) {
         probs += StringFormat("%.2f", actionProbabilities[i] * 100.0) + "% ";
     }
-
+    
     string action_names[] = {"Hold", "Buy", "Sell", "Close"};
-    Print("Model prediction: Action=", action_names[action],
+    Print("Model prediction: Action=", action_names[action], 
           ", Probabilities=[", probs, "], Description=", description);
-
+    
     return true;
 }
 
 //+------------------------------------------------------------------+
 //| Execute trades based on model prediction                          |
 //+------------------------------------------------------------------+
-void ExecuteTrade(const int action, const string &description)
-{
+void ExecuteTrade(const int action, const string &description) {
     double lotSize = CalculateLotSize();
-    if (lotSize <= 0)
-        return;
-
+    if(lotSize <= 0) return;
+    
     // Map action string to action code
     // 0 = Hold, 1 = Buy, 2 = Sell, 3 = Close
-
+    
     // Debug output
     string action_names[] = {"Hold", "Buy", "Sell", "Close"};
     Print("Selected action: ", action_names[action], " with description: ", description);
-
-    switch (action)
-    {
-    case 1: // Buy
-        if (CurrentPosition.direction == 0)
-        {
-            double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-            double stopLoss = CalculateStopLoss(askPrice, true);
-
-            if (Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0, Label))
-            {
-                CurrentPosition.direction = 1;
-                CurrentPosition.entryPrice = Trade.ResultPrice();
-                CurrentPosition.lotSize = lotSize;
-                CurrentPosition.entryTime = TimeCurrent();
-                CurrentPosition.entryBar = 0; // Current bar
-                Print("BUY position opened: ", lotSize, " lots @ ", CurrentPosition.entryPrice);
+    
+    switch(action) {
+        case 1: // Buy
+            if(CurrentPosition.direction == 0) {
+                double askPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+                double stopLoss = CalculateStopLoss(askPrice, true);
+                
+                if(Trade.Buy(lotSize, _Symbol, 0, stopLoss, 0, Label)) {
+                    CurrentPosition.direction = 1;
+                    CurrentPosition.entryPrice = Trade.ResultPrice();
+                    CurrentPosition.lotSize = lotSize;
+                    CurrentPosition.entryTime = TimeCurrent();
+                    CurrentPosition.entryBar = 0; // Current bar
+                    Print("BUY position opened: ", lotSize, " lots @ ", CurrentPosition.entryPrice);
+                }
+                else {
+                    Print("Failed to open BUY position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
+                }
             }
-            else
-            {
-                Print("Failed to open BUY position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
+            break;
+            
+        case 2: // Sell
+            if(CurrentPosition.direction == 0) {
+                double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+                double stopLoss = CalculateStopLoss(bidPrice, false);
+                
+                if(Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0, Label)) {
+                    CurrentPosition.direction = -1;
+                    CurrentPosition.entryPrice = Trade.ResultPrice();
+                    CurrentPosition.lotSize = lotSize;
+                    CurrentPosition.entryTime = TimeCurrent();
+                    CurrentPosition.entryBar = 0; // Current bar
+                    Print("SELL position opened: ", lotSize, " lots @ ", CurrentPosition.entryPrice);
+                }
+                else {
+                    Print("Failed to open SELL position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
+                }
             }
-        }
-        break;
-
-    case 2: // Sell
-        if (CurrentPosition.direction == 0)
-        {
-            double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-            double stopLoss = CalculateStopLoss(bidPrice, false);
-
-            if (Trade.Sell(lotSize, _Symbol, 0, stopLoss, 0, Label))
-            {
-                CurrentPosition.direction = -1;
-                CurrentPosition.entryPrice = Trade.ResultPrice();
-                CurrentPosition.lotSize = lotSize;
-                CurrentPosition.entryTime = TimeCurrent();
-                CurrentPosition.entryBar = 0; // Current bar
-                Print("SELL position opened: ", lotSize, " lots @ ", CurrentPosition.entryPrice);
+            break;
+            
+        case 3: // Close
+            if(CurrentPosition.direction != 0) {
+                if(Trade.PositionClose(_Symbol)) {
+                    Print("Position closed from ", CurrentPosition.direction > 0 ? "BUY" : "SELL", 
+                          " @ ", CurrentPosition.entryPrice);
+                    CurrentPosition.direction = 0;
+                    CurrentPosition.entryPrice = 0;
+                    CurrentPosition.lotSize = 0;
+                    CurrentPosition.entryTime = 0;
+                    CurrentPosition.entryBar = -1;
+                }
+                else {
+                    Print("Failed to close position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
+                }
             }
-            else
-            {
-                Print("Failed to open SELL position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
-            }
-        }
-        break;
-
-    case 3: // Close
-        if (CurrentPosition.direction != 0)
-        {
-            if (Trade.PositionClose(_Symbol))
-            {
-                Print("Position closed from ", CurrentPosition.direction > 0 ? "BUY" : "SELL",
-                      " @ ", CurrentPosition.entryPrice);
-                CurrentPosition.direction = 0;
-                CurrentPosition.entryPrice = 0;
-                CurrentPosition.lotSize = 0;
-                CurrentPosition.entryTime = 0;
-                CurrentPosition.entryBar = -1;
-            }
-            else
-            {
-                Print("Failed to close position: ", Trade.ResultRetcode(), ", ", Trade.ResultRetcodeDescription());
-            }
-        }
-        break;
-
-    case 0: // Hold - do nothing
-    default:
-        // No action needed for hold
-        break;
+            break;
+            
+        case 0: // Hold - do nothing
+        default:
+            // No action needed for hold
+            break;
     }
 }
 
 //+------------------------------------------------------------------+
 //| Verify position tracking is synchronized with actual positions    |
 //+------------------------------------------------------------------+
-void VerifyPositions()
-{
+void VerifyPositions() {
     bool has_mt5_position = false;
-
+    
     // Debugging info - print all positions before verification
     Print("DEBUG: Position verification - Checking all positions");
-
+    
     // Check all positions
-    for (int i = 0; i < PositionsTotal(); i++)
-    {
+    for(int i = 0; i < PositionsTotal(); i++) {
         ulong ticket = PositionGetTicket(i);
-        if (PositionSelectByTicket(ticket))
-        {
-            if (PositionGetString(POSITION_SYMBOL) == _Symbol)
-            {
+        if(PositionSelectByTicket(ticket)) {
+            if(PositionGetString(POSITION_SYMBOL) == _Symbol) {
                 // Debug output for all positions on this symbol
                 Print("DEBUG: Found position - Symbol: ", PositionGetString(POSITION_SYMBOL),
-                      ", Type: ", PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "BUY" : "SELL",
-                      ", Comment: ", PositionGetString(POSITION_COMMENT),
-                      ", Magic: ", PositionGetInteger(POSITION_MAGIC),
-                      ", Label match: ", (PositionGetString(POSITION_COMMENT) == Label));
-
+                     ", Type: ", PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? "BUY" : "SELL",
+                     ", Comment: ", PositionGetString(POSITION_COMMENT),
+                     ", Magic: ", PositionGetInteger(POSITION_MAGIC),
+                     ", Label match: ", (PositionGetString(POSITION_COMMENT) == Label));
+                
                 // Check if this position belongs to our EA
-                if (PositionGetString(POSITION_COMMENT) == Label)
-                {
-
+                if(PositionGetString(POSITION_COMMENT) == Label) {
+                    
                     has_mt5_position = true;
                     int mt5_direction = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
                     double mt5_lot_size = PositionGetDouble(POSITION_VOLUME);
                     double mt5_entry_price = PositionGetDouble(POSITION_PRICE_OPEN);
-
+                    
                     // Case 1: We think we don't have a position but MT5 shows one
-                    if (CurrentPosition.direction == 0)
-                    {
+                    if(CurrentPosition.direction == 0) {
                         Print("Position tracking mismatch: Found MT5 position but no internal tracking. Updating internal tracking.");
                         CurrentPosition.direction = mt5_direction;
                         CurrentPosition.entryPrice = mt5_entry_price;
                         CurrentPosition.lotSize = mt5_lot_size;
                         CurrentPosition.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
                         CurrentPosition.entryBar = 0; // Approximate with current bar
-                        Print("Updated position tracking to: ",
+                        Print("Updated position tracking to: ", 
                               CurrentPosition.direction > 0 ? "BUY" : "SELL",
                               ", Size: ", CurrentPosition.lotSize,
                               ", Entry: ", CurrentPosition.entryPrice);
                     }
                     // Case 2: Position details mismatch
-                    else if (mt5_direction != CurrentPosition.direction ||
-                             MathAbs(mt5_lot_size - CurrentPosition.lotSize) > 0.001)
-                    {
-                        Print("Position details mismatch - MT5: ", mt5_direction > 0 ? "BUY" : "SELL", " ",
+                    else if(mt5_direction != CurrentPosition.direction || 
+                           MathAbs(mt5_lot_size - CurrentPosition.lotSize) > 0.001) {
+                        Print("Position details mismatch - MT5: ", mt5_direction > 0 ? "BUY" : "SELL", " ", 
                               mt5_lot_size, " lots @ ", mt5_entry_price,
                               ", Internal: ", CurrentPosition.direction > 0 ? "BUY" : "SELL", " ",
                               CurrentPosition.lotSize, " lots @ ", CurrentPosition.entryPrice);
-
+                        
                         CurrentPosition.direction = mt5_direction;
                         CurrentPosition.entryPrice = mt5_entry_price;
                         CurrentPosition.lotSize = mt5_lot_size;
                         Print("Updated position tracking to match MT5 position");
+                    } else {
+                        Print("Position tracking is in sync, direction: ", 
+                             CurrentPosition.direction > 0 ? "LONG(+1)" : "SHORT(-1)");
                     }
-                    else
-                    {
-                        Print("Position tracking is in sync, direction: ",
-                              CurrentPosition.direction > 0 ? "LONG(+1)" : "SHORT(-1)");
-                    }
-
+                    
                     break; // Only process first matching position
                 }
             }
         }
     }
-
+    
     // Case 3: We think we have a position but MT5 doesn't
-    if (CurrentPosition.direction != 0 && !has_mt5_position)
-    {
+    if(CurrentPosition.direction != 0 && !has_mt5_position) {
         Print("Position tracking mismatch: Internal position exists but no MT5 position found. Clearing internal tracking.");
         Print("Previous tracking had direction: ", CurrentPosition.direction > 0 ? "LONG(+1)" : "SHORT(-1)");
         CurrentPosition.direction = 0;
@@ -725,35 +677,32 @@ void VerifyPositions()
         CurrentPosition.entryTime = 0;
         CurrentPosition.entryBar = -1;
     }
-
+    
     Print("Current position direction after verification: ", CurrentPosition.direction);
 }
 
 //+------------------------------------------------------------------+
 //| Initialize the RecurrentPPO model                                 |
 //+------------------------------------------------------------------+
-bool InitializeModel()
-{
+bool InitializeModel() {
     ModelSettings settings;
     settings.sequenceLength = SequenceLength;
     settings.numFeatures = NumFeatures;
     settings.lstmLayers = LSTMNumLayers;
     settings.lstmHiddenSize = LSTMHiddenSize;
     settings.numActions = NumActions;
-
-    if (!Model.Initialize(ModelPath, settings))
-    {
+    
+    if(!Model.Initialize(ModelPath, settings)) {
         Print("Failed to initialize RecurrentPPO model: ", Model.LastError());
-
-        if (FallbackToManualMode)
-        {
+        
+        if(FallbackToManualMode) {
             Print("OPERATING IN MANUAL MODE: DRL model unavailable, automatic trading disabled");
             return true; // Continue execution without the model
         }
-
+        
         return false;
     }
-
+    
     onnx_available = true;
     Print("RecurrentPPO model initialized successfully from: ", ModelPath);
     return true;
@@ -762,47 +711,41 @@ bool InitializeModel()
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
 //+------------------------------------------------------------------+
-int OnInit()
-{
+int OnInit() {
     Print("Initializing DRLTrader with ONNX model...");
-
+    
     // Initialize indicators
-    if (!InitializeIndicators())
-    {
+    if(!InitializeIndicators()) {
         Print("Failed to initialize indicators");
         return INIT_FAILED;
     }
-
+    
     // Initialize trade object
     Trade.SetExpertMagicNumber(MAGIC_NUMBER);
     Trade.SetMarginMode();
     Trade.SetTypeFillingBySymbol(_Symbol);
-
+    
     // Initialize position tracking
     CurrentPosition.direction = 0;
     CurrentPosition.entryPrice = 0;
     CurrentPosition.lotSize = 0;
     CurrentPosition.entryTime = 0;
     CurrentPosition.entryBar = -1;
-
+    
     // Check for existing positions
-    if (PositionsTotal() > 0)
-    {
-        for (int i = 0; i < PositionsTotal(); i++)
-        {
+    if(PositionsTotal() > 0) {
+        for(int i = 0; i < PositionsTotal(); i++) {
             ulong ticket = PositionGetTicket(i);
-            if (PositionSelectByTicket(ticket))
-            {
-                if (PositionGetString(POSITION_SYMBOL) == _Symbol &&
-                    PositionGetInteger(POSITION_MAGIC) == MAGIC_NUMBER)
-                {
-                    CurrentPosition.direction =
+            if(PositionSelectByTicket(ticket)) {
+                if(PositionGetString(POSITION_SYMBOL) == _Symbol &&
+                   PositionGetInteger(POSITION_MAGIC) == MAGIC_NUMBER) {
+                    CurrentPosition.direction = 
                         PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 1 : -1;
                     CurrentPosition.entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
                     CurrentPosition.lotSize = PositionGetDouble(POSITION_VOLUME);
                     CurrentPosition.entryTime = (datetime)PositionGetInteger(POSITION_TIME);
                     CurrentPosition.entryBar = 0; // Approximate with current bar
-                    Print("Recovered existing position: ",
+                    Print("Recovered existing position: ", 
                           CurrentPosition.direction > 0 ? "LONG" : "SHORT", " ",
                           CurrentPosition.lotSize, " lots @ ", CurrentPosition.entryPrice);
                     break;
@@ -810,31 +753,26 @@ int OnInit()
             }
         }
     }
-
+    
     // Initialize the model
-    if (!InitializeModel())
-    {
+    if(!InitializeModel()) {
         return INIT_FAILED;
     }
-
-    if (onnx_available)
-    {
+    
+    if(onnx_available) {
         Print("DRLTrader initialized with ONNX model: ", ModelPath);
-    }
-    else if (FallbackToManualMode)
-    {
+    } else if(FallbackToManualMode) {
         Print("DRLTrader initialized in MANUAL MODE (no automatic trading)");
         Print("To use manual mode, place buy/sell orders with the EA's magic number: ", MAGIC_NUMBER);
     }
-
+    
     return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
 //| Expert deinitialization function                                   |
 //+------------------------------------------------------------------+
-void OnDeinit(const int reason)
-{
+void OnDeinit(const int reason) {
     ReleaseIndicators();
     Model.Cleanup();
     Print("DRLTrader deinitialized");
@@ -843,58 +781,50 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 //| Expert tick function                                               |
 //+------------------------------------------------------------------+
-void OnTick()
-{
+void OnTick() {
     // Skip if spread is too high
-    if (SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) > MaxSpread)
-    {
+    if(SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) > MaxSpread) {
         Print("Skipping tick - spread too high: ", SymbolInfoInteger(_Symbol, SYMBOL_SPREAD));
         return;
     }
-
+    
     // Skip if not a new bar
     static datetime last_bar_time = 0;
     datetime current_bar_time = iTime(_Symbol, _Period, 0);
-    if (current_bar_time == last_bar_time)
-        return;
+    if(current_bar_time == last_bar_time) return;
     last_bar_time = current_bar_time;
-
+    
     // Verify position tracking is synchronized with MT5 positions
     VerifyPositions();
-
+    
     // Collect historical data
-    if (!CollectHistoricalData(MinDataBars))
-    {
+    if(!CollectHistoricalData(MinDataBars)) {
         Print("Failed to collect historical data");
         return;
     }
-
+    
     // In manual mode (ONNX unavailable), just track positions
-    if (!onnx_available && FallbackToManualMode)
-    {
+    if(!onnx_available && FallbackToManualMode) {
         // Update entryBar if we have a position
-        if (CurrentPosition.direction != 0)
-        {
+        if(CurrentPosition.direction != 0) {
             CurrentPosition.entryBar++;
         }
         return;
     }
-
+    
     // Get prediction
     int action = 0;
     string description = "";
-    if (!GetPrediction(action, description))
-    {
+    if(!GetPrediction(action, description)) {
         Print("Failed to get prediction: ", last_error);
         return;
     }
-
+    
     // Execute trades based on prediction
     ExecuteTrade(action, description);
-
+    
     // Update entryBar if we have a position
-    if (CurrentPosition.direction != 0)
-    {
+    if(CurrentPosition.direction != 0) {
         CurrentPosition.entryBar++;
     }
 }
