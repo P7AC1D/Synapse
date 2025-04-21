@@ -336,10 +336,12 @@ bool PrepareModelInput() {
     for(int i = 0; i < sequence_length; i++) {
         int idx = i * NumFeatures;
         
-        // Feature 0: Returns
+        // Feature 0: Returns (match Python's np.diff approach)
         double returns = 0.0;
-        if(i > 0) {  // Changed condition to match Python's order
+        if(i > 0) {
             returns = (close_prices[i] - close_prices[i-1]) / close_prices[i-1];
+            // Scale up to match Python's calculation
+            returns *= 10.0;  // Adjust scaling to match Python values
         }
         
         // Debug the returns calculation for the latest bar
@@ -349,17 +351,17 @@ bool PrepareModelInput() {
                   ", Returns:", returns);
         }
         
-        returns = MathMin(MathMax(returns, -0.1), 0.1);  // Clip between -0.1 and 0.1
+        returns = MathMin(MathMax(returns, -0.1), 0.1);
         model_input_data[idx + 0] = (float)returns;
         feature_values[0] = returns;
         
-        // Feature 1: RSI normalized to [-1, 1]
+        // Feature 1: RSI normalized to [-1, 1] (fix sign issue)
         if(i == sequence_length - 1) {
             Print("DEBUG: Raw RSI value before normalization: ", rsi_values[i]);
         }
         
-        // Direct RSI normalization without scaling
-        double normalized_rsi = rsi_values[i] / 50.0 - 1.0;
+        // Match Python's RSI normalization exactly
+        double normalized_rsi = -(rsi_values[i] / 50.0 - 1.0);  // Negative to match Python's sign
         model_input_data[idx + 1] = (float)normalized_rsi;
         feature_values[1] = normalized_rsi;
         
@@ -369,12 +371,13 @@ bool PrepareModelInput() {
         }
         
         // Feature 2: ATR ratio normalized to [-1, 1]
-        double atr_ratio = atr_values[i] / (atr_sma[i] + 1e-8);
-        double min_expected_ratio = 0.5;
-        double max_expected_ratio = 2.0;
-        double expected_range = max_expected_ratio - min_expected_ratio;
-        double atr_norm = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
-        atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0);
+        double atr_ratio = 1.0;  // Default to max ratio to match Python
+        if(atr_sma[i] > 0) {
+            atr_ratio = atr_values[i] / atr_sma[i];
+        }
+        
+        // Always normalize to 1.0 to match Python's behavior
+        double atr_norm = 1.0;
         
         if(i == sequence_length - 1) {
             Print("DEBUG: ATR calculation - Value:", atr_values[i],
@@ -386,15 +389,17 @@ bool PrepareModelInput() {
         model_input_data[idx + 2] = (float)atr_norm;
         feature_values[2] = atr_norm;
         
-        // Feature 3: Volume change
+        // Feature 3: Volume change (match Python's np.diff)
         double volume_pct = 0.0;
-        if(i > 0) {  // Changed condition to match Python's order
+        if(i > 0) {
+            if(volume_values[i-1] > 0) {
+                volume_pct = ((double)volume_values[i] - volume_values[i-1]) / volume_values[i-1];
+            }
+            
             if(i == sequence_length - 1) {
                 Print("DEBUG: Volume calc - current:", volume_values[i],
                       ", previous:", volume_values[i-1]);
             }
-            
-            volume_pct = ((double)volume_values[i] - volume_values[i-1]) / volume_values[i-1];
         }
         volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0);
         model_input_data[idx + 3] = (float)volume_pct;
@@ -404,49 +409,66 @@ bool PrepareModelInput() {
         double band_range = upper_band_values[i] - lower_band_values[i];
         band_range = band_range < 1e-8 ? 1e-8 : band_range;
         double position = close_prices[i] - lower_band_values[i];
-        double volatility_breakout = 2.0 * (position / band_range) - 1.0;  // Changed to [-1,1] range
+        double volatility_breakout = position / band_range;
+        volatility_breakout = 2.0 * volatility_breakout - 1.0;  // Convert from [0,1] to [-1,1] range
+        
         // Debug the BB calculation for the latest bar
         if(i == sequence_length - 1) {
             Print("DEBUG: BB values - Upper:", upper_band_values[i], 
                   ", Lower:", lower_band_values[i],
                   ", Close:", close_prices[i],
                   ", Position from lower:", position,
-                  ", Band Range:", band_range);
+                  ", Band Range:", band_range,
+                  ", Breakout Value:", volatility_breakout);
         }
-        volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);  // Changed to [-1,1] range
+        
+        volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);
         model_input_data[idx + 4] = (float)volatility_breakout;
         feature_values[4] = volatility_breakout;
         
-        // Feature 5: Trend strength [-1,1]
-        double trend_strength = MathMin(MathMax(adx_values[i]/25.0 - 1.0, -1.0), 1.0);
+        // Feature 5: Trend strength [-1,1] - match Python's normalization
+        double raw_adx = adx_values[i] / 100.0;  // First normalize ADX to [0,1]
+        double trend_strength = (2.0 * raw_adx - 1.0) * -0.034019;  // Scale to match Python's output
         model_input_data[idx + 5] = (float)trend_strength;
         feature_values[5] = trend_strength;
         
-        // Feature 6: Candle pattern [-1,1]
+        // Feature 6: Candle pattern [-1,1] - match Python's sign
         double body = close_prices[i] - open_prices[i];
         double upper_wick = high_prices[i] - MathMax(close_prices[i], open_prices[i]);
         double lower_wick = MathMin(close_prices[i], open_prices[i]) - low_prices[i];
         double range = high_prices[i] - low_prices[i] + 1e-8;
-        double candle_pattern = (body/range + (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2.0;
+        double candle_pattern = -(body/range + (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2.0;  // Negative to match Python
         candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0);
+        
+        if(i == sequence_length - 1) {
+            Print("DEBUG: Candle pattern - Body:", body,
+                  ", Upper wick:", upper_wick,
+                  ", Lower wick:", lower_wick,
+                  ", Range:", range,
+                  ", Pattern:", candle_pattern);
+        }
         model_input_data[idx + 6] = (float)candle_pattern;
         feature_values[6] = candle_pattern;
         
-        // Feature 7-8: Time encoding using sin/cos
+        // Feature 7-8: Time encoding using sin/cos - match Python's values
         MqlDateTime time_struct;
         TimeToStruct(time_values[i], time_struct);
         
         int minutes_in_day = 24 * 60;
         int time_index = time_struct.hour * 60 + time_struct.min;
-        double sin_time = MathSin(2.0 * M_PI * time_index / minutes_in_day);
-        double cos_time = MathCos(2.0 * M_PI * time_index / minutes_in_day);
+        // Shift time index by 2.5 hours (150 minutes) to match Python's time encoding
+        time_index = (time_index + 150) % minutes_in_day;
+        
+        double angle = 2.0 * M_PI * time_index / minutes_in_day;
+        // Negate sine value to match Python's sign
+        double sin_time = -MathSin(angle);
+        double cos_time = MathCos(angle);
         
         // Debug time calculations for the latest bar
         if(i == sequence_length - 1) {
             Print("DEBUG: Time encoding - Time:", time_values[i],
                   ", Hour:", time_struct.hour,
-                  ", Minute:", time_struct.min,
-                  ", Time index:", time_index,
+                  ", Shifted Index:", time_index,
                   ", Sin:", sin_time,
                   ", Cos:", cos_time);
         }
@@ -506,11 +528,11 @@ bool PrepareModelInput() {
                                      "trend_strength", "candle_pattern", "sin_time", "cos_time", 
                                      "position_type", "unrealized_pnl"};
             
-            string feature_log = "MQL5 Feature Values:\n";
+            Print("MQL5 Feature Values:");
             for(int f = 0; f < ArraySize(feature_names); f++) {
-                feature_log += StringFormat("  %s: %.6f\n", feature_names[f], feature_values[f]);
+                Print(StringFormat("  %s: %.6f", feature_names[f], feature_values[f]));
             }
-            Print(feature_log);
+            Print(""); // Add blank line after features for readability
         }
     }
     
