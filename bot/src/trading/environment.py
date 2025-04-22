@@ -243,9 +243,15 @@ class TradingEnv(gym.Env, EzPickle):
         position_type = self.current_position["direction"] if self.current_position else 0
         
         if self.current_position:
-            unrealized_pnl, _ = self.action_handler.manage_position()
-            normalized_pnl = np.clip(unrealized_pnl / self.metrics.balance, -1, 1)
+            unrealized_pnl, profit_pips = self.action_handler.manage_position()
+            # Store profit_pips for info
+            self.current_position["current_profit_pips"] = profit_pips
+            # Update metrics with unrealized PnL for accurate drawdown tracking
+            self.metrics.update_unrealized_pnl(unrealized_pnl)
+            # Leave PnL as is - already normalized in manage_position
+            normalized_pnl = unrealized_pnl
         else:
+            self.metrics.update_unrealized_pnl(0.0)
             normalized_pnl = 0.0
             
         return np.append(features, [position_type, normalized_pnl])
