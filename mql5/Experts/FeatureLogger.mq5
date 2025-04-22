@@ -32,6 +32,9 @@ int handle_bb;      // Bollinger Bands indicator handle
 int handle_adx;     // ADX indicator handle
 int handle_atr_sma; // ATR SMA indicator handle
 
+// Create a numpy object
+CNumpy np;
+
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
@@ -167,56 +170,42 @@ void ProcessAndLogFeatures()
 
   // ===== Using NumPy-like functions for calculations =====
 
-  // Calculate returns - using NumPy-like diff and divide
+  // Calculate returns - MATCHING PYTHON EXACTLY
   double returns = 0.0;
   if (idx < num_bars - 1)
   {
-    double diff_result[];
-    Numpy::diff(close, diff_result); // Calculate close[i] - close[i+1]
-
-    double returns_array[];
-    ArrayResize(returns_array, ArraySize(diff_result));
-    double divisor[] = {close[idx + 1]}; // We only need this element for the calculation
-    Numpy::divide(diff_result, divisor, returns_array);
-    returns = returns_array[0]; // Get the first element (most recent)
+    // Python: returns = np.diff(close) / close[:-1]
+    // In MQL5 with reversed arrays: (close[idx-1] - close[idx]) / close[idx]
+    returns = (close[idx - 1] - close[idx]) / close[idx];
   }
   // Clip returns to [-0.1, 0.1] range
   returns = MathMin(MathMax(returns, -0.1), 0.1);
 
-  // Normalize RSI from [0, 100] to [-1, 1]
+  // Normalize RSI from [0, 100] to [-1, 1] just like Python
   double rsi_norm = rsi[idx] / 50.0 - 1.0;
 
   // Normalize ATR (relative to its own moving average)
-  // Using NumPy-like divide for atr / atr_sma
   double atr_ratio = atr[idx] / (atr_sma[idx] + 1e-8);
   double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / (MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO) - 1.0;
   atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
 
-  // Volatility breakout feature
+  // Volatility breakout feature - MATCHING PYTHON
   double band_range = upper_bb[idx] - lower_bb[idx];
   band_range = band_range < 1e-8 ? 1e-8 : band_range;
   double position = close[idx] - lower_bb[idx];
   double volatility_breakout = position / band_range;
   volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0); // clip to [0, 1]
-  // Convert to [-1, 1] range
-  volatility_breakout = volatility_breakout * 2.0 - 1.0;
-  volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);
+  // Convert to [-1, 1] range for comparison purposes
+  double volatility_breakout_norm = volatility_breakout * 2.0 - 1.0;
+  volatility_breakout_norm = MathMin(MathMax(volatility_breakout_norm, -1.0), 1.0);
 
-  // Trend strength from ADX
+  // Trend strength from ADX - MATCHING PYTHON
   double trend_strength = MathMin(MathMax(adx[idx] / 25.0 - 1.0, -1.0), 1.0);
 
-  // Candle pattern - Using NumPy-like maximum and minimum
+  // Candle pattern - MATCHING PYTHON EXACTLY
   double body = close[idx] - open[idx];
-  double max_price[] = {close[idx], open[idx]};
-  double min_price[] = {close[idx], open[idx]};
-  double max_result[], min_result[];
-
-  // Using element-wise max/min to simulate np.maximum and np.minimum
-  Numpy::maximum(close, open, max_result);
-  Numpy::minimum(close, open, min_result);
-
-  double upper_wick = high[idx] - max_result[0];
-  double lower_wick = min_result[0] - low[idx];
+  double upper_wick = high[idx] - MathMax(close[idx], open[idx]);
+  double lower_wick = MathMin(close[idx], open[idx]) - low[idx];
   double range = MathMax(high[idx] - low[idx], 1e-8);
 
   double body_ratio = body / range;
@@ -228,25 +217,19 @@ void ProcessAndLogFeatures()
   double candle_pattern = (body_ratio + wick_ratio) / 2.0;
   candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0); // clip to [-1, 1]
 
-  // Time encoding features - Using NumPy-like sin and cos
+  // Time encoding features - MATCHING PYTHON EXACTLY
   datetime time = iTime(_Symbol, PERIOD_CURRENT, idx);
   MqlDateTime dt;
   TimeToStruct(time, dt);
   int minutes_in_day = 24 * 60;
   int time_index = dt.hour * 60 + dt.min;
-  double time_array[] = {2.0 * M_PI * time_index / minutes_in_day};
-  double sin_result[], cos_result[];
+  double sin_time = MathSin(2.0 * M_PI * time_index / minutes_in_day);
+  double cos_time = MathCos(2.0 * M_PI * time_index / minutes_in_day);
 
-  Numpy::sin(time_array, sin_result);
-  Numpy::cos(time_array, cos_result);
-  double sin_time = sin_result[0];
-  double cos_time = cos_result[0];
-
-  // Volume change
+  // Volume change - MATCHING PYTHON EXACTLY
   double volume_pct = 0;
   if (idx < num_bars - 1 && volume[idx + 1] > 0)
   {
-    // Cast to double before division to prevent loss of precision
     volume_pct = ((double)volume[idx] - (double)volume[idx + 1]) / (double)volume[idx + 1];
   }
   volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
@@ -256,7 +239,8 @@ void ProcessAndLogFeatures()
   Print("returns = ", DoubleToString(returns, 8), " | [-0.1, 0.1]");
   Print("rsi = ", DoubleToString(rsi_norm, 8), " | [-1, 1] (raw: ", DoubleToString(rsi[idx], 2), ")");
   Print("atr = ", DoubleToString(atr_norm, 8), " | [-1, 1] (raw: ", DoubleToString(atr[idx], 8), ", ratio: ", DoubleToString(atr_ratio, 8), ")");
-  Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [-1, 1]");
+  Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [0, 1]");
+  Print("volatility_breakout_norm = ", DoubleToString(volatility_breakout_norm, 8), " | [-1, 1]");
   Print("trend_strength = ", DoubleToString(trend_strength, 8), " | [-1, 1] (raw ADX: ", DoubleToString(adx[idx], 2), ")");
   Print("candle_pattern = ", DoubleToString(candle_pattern, 8), " | [-1, 1]");
   Print("sin_time = ", DoubleToString(sin_time, 8), " | [-1, 1]");
@@ -264,16 +248,43 @@ void ProcessAndLogFeatures()
   Print("volume_change = ", DoubleToString(volume_pct, 8), " | [-1, 1]");
 
   // Print comparisons to Python features
-  Print("\nCompare with Python (expected values):");
-  Print("returns        MQL5: ", DoubleToString(returns, 6), " | Python: -0.001007");
-  Print("rsi            MQL5: ", DoubleToString(rsi_norm, 6), " | Python: -0.258830");
-  Print("atr            MQL5: ", DoubleToString(atr_norm, 6), " | Python: 1.000000");
-  Print("volatility_bo  MQL5: ", DoubleToString(volatility_breakout, 6), " | Python: -1.000000");
-  Print("trend_strength MQL5: ", DoubleToString(trend_strength, 6), " | Python: 0.089612");
-  Print("candle_pattern MQL5: ", DoubleToString(candle_pattern, 6), " | Python: 0.130526");
-  Print("sin_time       MQL5: ", DoubleToString(sin_time, 6), " | Python: 0.991445");
-  Print("cos_time       MQL5: ", DoubleToString(cos_time, 6), " | Python: -0.079550");
-  Print("volume_change  MQL5: ", DoubleToString(volume_pct, 6), " | Python: 0.279712");
+  datetime current_time = TimeCurrent();
+  Print("\nMQL5 vs Python comparison at ", TimeToString(current_time, TIME_DATE | TIME_MINUTES | TIME_SECONDS));
+  Print("Feature         | MQL5      | Python    | Status");
+  Print("----------------|-----------|-----------|-------");
+
+  // Get Python values from most recent run
+  double py_returns = -0.000788;
+  double py_rsi = -0.095425;
+  double py_atr = 1.000000;
+  double py_vol_bo = -1.000000;
+  double py_trend = -0.833975;
+  double py_candle = 0.946930;
+  double py_sin = 0.321439;
+  double py_cos = 0.128239;
+  double py_vol_chg = 0.366211;
+
+  // Calculate differences
+  double diff_returns = MathAbs(returns - py_returns);
+  double diff_rsi = MathAbs(rsi_norm - py_rsi);
+  double diff_atr = MathAbs(atr_norm - py_atr);
+  double diff_vol_bo = MathAbs(volatility_breakout_norm - py_vol_bo);
+  double diff_trend = MathAbs(trend_strength - py_trend);
+  double diff_candle = MathAbs(candle_pattern - py_candle);
+  double diff_sin = MathAbs(sin_time - py_sin);
+  double diff_cos = MathAbs(cos_time - py_cos);
+  double diff_vol_chg = MathAbs(volume_pct - py_vol_chg);
+
+  // Status check (✓ if difference < 0.05, otherwise ✗)
+  Print("returns        | ", DoubleToString(returns, 6), " | ", DoubleToString(py_returns, 6), " | ", (diff_returns < 0.05 ? "✓" : "✗"));
+  Print("rsi            | ", DoubleToString(rsi_norm, 6), " | ", DoubleToString(py_rsi, 6), " | ", (diff_rsi < 0.05 ? "✓" : "✗"));
+  Print("atr            | ", DoubleToString(atr_norm, 6), " | ", DoubleToString(py_atr, 6), " | ", (diff_atr < 0.05 ? "✓" : "✗"));
+  Print("volatility_bo  | ", DoubleToString(volatility_breakout_norm, 6), " | ", DoubleToString(py_vol_bo, 6), " | ", (diff_vol_bo < 0.05 ? "✓" : "✗"));
+  Print("trend_strength | ", DoubleToString(trend_strength, 6), " | ", DoubleToString(py_trend, 6), " | ", (diff_trend < 0.05 ? "✓" : "✗"));
+  Print("candle_pattern | ", DoubleToString(candle_pattern, 6), " | ", DoubleToString(py_candle, 6), " | ", (diff_candle < 0.05 ? "✓" : "✗"));
+  Print("sin_time       | ", DoubleToString(sin_time, 6), " | ", DoubleToString(py_sin, 6), " | ", (diff_sin < 0.05 ? "✓" : "✗"));
+  Print("cos_time       | ", DoubleToString(cos_time, 6), " | ", DoubleToString(py_cos, 6), " | ", (diff_cos < 0.05 ? "✓" : "✗"));
+  Print("volume_change  | ", DoubleToString(volume_pct, 6), " | ", DoubleToString(py_vol_chg, 6), " | ", (diff_vol_chg < 0.05 ? "✓" : "✗"));
 
   // Log feature values in comma-separated format for easy copying
   string csv_format = StringFormat("%s,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f",
