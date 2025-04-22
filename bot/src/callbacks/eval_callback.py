@@ -422,78 +422,14 @@ class UnifiedEvalCallback(BaseCallback):
                     'validation': val_metrics
                 })
                 
-                iteration_file = os.path.join(self.log_path, f"eval_results_iter_{self.iteration}.json")
+                # Create iterations subdirectory
+                iterations_dir = os.path.join(self.log_path, "iterations")
+                os.makedirs(iterations_dir, exist_ok=True)
+                
+                # Save iteration results in the subdirectory
+                iteration_file = os.path.join(iterations_dir, f"eval_results_iter_{self.iteration}.json")
                 with open(iteration_file, "w") as f:
                     json.dump(self.eval_results, f, indent=2)
-                    
-                combined_file = os.path.join(self.log_path, "eval_results_all.json")
-                try:
-                    with open(combined_file, "r") as f:
-                        all_results = json.load(f)
-                except (FileNotFoundError, json.JSONDecodeError):
-                    all_results = {}
-                    
-                eval_env = self.eval_env
-                while hasattr(eval_env, 'env'):
-                    eval_env = eval_env.env
-                    if isinstance(eval_env, TradingEnv):
-                        break
-
-                # Calculate drawdown metrics
-                running_balance = eval_env.initial_balance
-                max_balance = eval_env.initial_balance
-                period_max_drawdown = 0.0
-                
-                # Calculate running drawdown using trade history
-                for trade in eval_env.trades:
-                    running_balance += trade['pnl']
-                    max_balance = max(max_balance, running_balance)
-                    if max_balance > 0:
-                        current_drawdown = (max_balance - running_balance) / max_balance
-                        period_max_drawdown = max(period_max_drawdown, current_drawdown)
-
-                # Update historical max drawdown
-                self.max_drawdown = max(self.max_drawdown, period_max_drawdown)
-
-                # Calculate basic metrics
-                active_position = 1 if eval_env.current_position else 0
-                num_winning_trades = len([t for t in eval_env.trades if t['pnl'] > 0])
-                num_losing_trades = len([t for t in eval_env.trades if t['pnl'] <= 0])
-                
-                try:
-                    period_start = str(eval_env.original_index[0])
-                    period_end = str(eval_env.original_index[-1])
-                except (AttributeError, IndexError) as e:
-                    period_start = period_end = "NA"
-                    print(f"Warning: Could not get period timestamps: {str(e)}")
-
-                # Calculate win rate directly from trades
-                win_rate = (num_winning_trades / len(eval_env.trades) * 100) if eval_env.trades else 0.0
-                
-                # Create metadata for this evaluation run
-                period_info = {
-                    'timestep': self.num_timesteps,
-                    'iteration': self.iteration,
-                    'period': {
-                        'start': period_start,
-                        'end': period_end
-                    },
-                    'account': {
-                        'balance': float(eval_env.balance),
-                        'active_position': bool(active_position),
-                        'total_trades': len(eval_env.trades),
-                        'win_count': num_winning_trades,
-                        'loss_count': num_losing_trades,
-                        'win_rate': win_rate,
-                        'max_drawdown': period_max_drawdown * 100,
-                        'historical_max_drawdown': self.max_drawdown * 100
-                    }
-                }
-
-                all_results[f"iteration_{self.iteration}"] = period_info
-                
-                with open(combined_file, "w") as f:
-                    json.dump(all_results, f, indent=2)
             
             should_save = False
             
