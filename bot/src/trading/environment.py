@@ -36,7 +36,7 @@ class TradingEnv(gym.Env, EzPickle):
         
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
                  balance_per_lot: float = 1000.0, random_start: bool = False,
-                 live_price: Optional[float] = None):
+                 live_price: Optional[float] = None, currency_conversion: Optional[float] = None):
         """Initialize trading environment.
         
         Args:
@@ -45,6 +45,7 @@ class TradingEnv(gym.Env, EzPickle):
             balance_per_lot: Account balance required per 0.01 lot
             random_start: Whether to start from random positions
             live_price: Optional current market price for live trading
+            currency_conversion: Optional conversion rate for account currency (e.g. USD/ZAR)
         """
         super().__init__()
         EzPickle.__init__(self)
@@ -59,6 +60,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.MAX_DRAWDOWN = 0.4      # Maximum drawdown
         self.initial_balance = initial_balance
         self.live_price = live_price  # Store live price for P&L calculations
+        self.currency_conversion = currency_conversion or 1.0  # Default to 1.0 if not provided
         
         # Initialize components
         self.feature_processor = FeatureProcessor()

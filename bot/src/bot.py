@@ -24,6 +24,7 @@ from trade_executor import TradeExecutor
 from trading.environment import TradingEnv
 from config import (
     LOG_FILE_PATH,
+    MT5_BASE_SYMBOL,
     MT5_SYMBOL,
     MT5_TIMEFRAME_MINUTES,
     BARS_TO_FETCH,
@@ -211,6 +212,12 @@ class TradingBot:
                     self.logger.info(f"Significant data gap detected ({time_diff/60:.1f} minutes), resetting LSTM states")
                     self.lstm_states = None
 
+            # Get USD/ZAR rate for currency conversion
+            usd_zar_rate = self.mt5.get_symbol_info_tick(MT5_BASE_SYMBOL)[0]  # Use bid price
+            if usd_zar_rate is None:
+                self.logger.warning("Failed to get USD/ZAR rate, using 1.0")
+                usd_zar_rate = 1.0
+
             # Update position info for prediction
             if self.current_position:
                 # Update entry step relative to current data window
@@ -226,17 +233,18 @@ class TradingBot:
                 self.logger.warning("Failed to get current price")
                 return
                 
-            # Use bid price for unrealized P&L calculation (matches MQL5)
-            live_price = current_price[0]  # bid price
+            # Use bid price for P&L calculation (matches MQL5)
+            live_price = current_price[0]
             
             data = data.iloc[:-1]  # Exclude the last row for prediction as its not completed yet
             
-            # Make prediction with position context and live price
+            # Make prediction with position context, live price, and currency conversion
             prediction = self.model.predict_single(
                 data,
                 current_position=self.current_position,
                 verbose=True,
-                live_price=live_price
+                live_price=live_price,
+                currency_conversion=usd_zar_rate
             )
             self.lstm_states = self.model.lstm_states  # Update LSTM states
             

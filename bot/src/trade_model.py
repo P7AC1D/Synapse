@@ -83,7 +83,9 @@ class TradeModel:
             
         return data
         
-    def predict_single(self, data_frame: pd.DataFrame, current_position: Optional[Dict] = None, verbose: bool = False, live_price: Optional[float] = None) -> Dict[str, Any]:
+    def predict_single(self, data_frame: pd.DataFrame, current_position: Optional[Dict] = None, 
+                     verbose: bool = False, live_price: Optional[float] = None,
+                     currency_conversion: Optional[float] = None) -> Dict[str, Any]:
         """
         Make a prediction for the latest data point.
         
@@ -100,12 +102,10 @@ class TradeModel:
                             }
             verbose: Whether to log detailed feature values (default: False)
             live_price: Optional current market price for live trading PnL calculation
+            currency_conversion: Optional conversion rate from trading to account currency (e.g. USD/ZAR)
             
         Returns:
             Dictionary with prediction details including 'action' (0-3) and 'description'
-        
-        Raises:
-            ValueError: If model not loaded or data preparation fails
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_model() first.")
@@ -123,7 +123,8 @@ class TradeModel:
             initial_balance=self.initial_balance,
             random_start=False,
             balance_per_lot=self.balance_per_lot,
-            live_price=live_price  # Pass live price to env
+            live_price=live_price,
+            currency_conversion=currency_conversion
         )
         
         # Set predict_context flag to use the latest data point
