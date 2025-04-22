@@ -156,7 +156,8 @@ class ActionHandler:
             profit_points = entry_price - current_exit_price
             
         # Calculate P&L in account currency
-        pnl = profit_points * lot_size * self.env.POINT_VALUE
+        pip_value = self.env.POINT_VALUE * self.env.CONTRACT_SIZE  # For gold, CONTRACT_SIZE = 100
+        pnl = profit_points * lot_size * pip_value
         
         # Normalize P&L as percentage of balance (between -1 and 1)
         normalized_pnl = min(max(pnl / self.env.balance, -1.0), 1.0)
