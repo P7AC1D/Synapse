@@ -310,15 +310,21 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     """
     print("Running step-by-step prediction backtest (simulates live trading)...")
     
+    # Create a trading environment for tracking trades and metrics
+    # This will handle all the lot size calculations, PnL calculations, etc.
+    env = TradingEnv(
+        data=data,
+        initial_balance=initial_balance,
+        balance_per_lot=balance_per_lot,
+        random_start=False
+    )
+    env.reset()
+    action_handler = env.action_handler
+    
     # Initialize tracking variables
     current_position = None
     total_steps = 0
     current_step = 0
-    balance = initial_balance
-    
-    # For metrics calculation - we'll create an environment at the end
-    trade_history = []
-    rewards = []
     
     # Progress tracking
     progress_steps = max(1, len(data) // 100)  # Update every 1%
@@ -331,14 +337,31 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     min_context_size = 100  
     
     # Skip initial bars to ensure we have enough context
+    # For the feature processor, we need more data to compute indicators
+    # Based on error messages, we need at least 120 bars to avoid "too much data lost in preprocessing"
+    initial_warmup = 120
+    
+    # Preload the model with initial data before starting actual predictions
+    print(f"Preloading LSTM states with {initial_warmup} initial bars...")
+    try:
+        initial_data = data.iloc[:initial_warmup].copy()
+        model.preload_states(initial_data)
+        print(f"Successfully preloaded LSTM states with initial data")
+    except Exception as e:
+        print(f"Warning during state preloading: {e}")
+        print("Continuing with standard processing...")
+    
     # Start processing from a position with sufficient history
-    start_step = min_context_size
+    start_step = initial_warmup
+    env.current_step = start_step  # Set environment's step to match our starting point
+    
+    print(f"Starting predictions from bar {start_step} (skipping initial bars to ensure sufficient data)")
     
     # We'll use a sliding window approach to process the data
     while current_step + start_step < len(data) - 1:  # -1 because we need at least one future bar
         
         # Print progress
-        if current_step % progress_steps == 0:
+        if current_step % progress_steps == 0 or current_step == 0:
             progress = current_step / (len(data) - start_step) * 100
             print(f"\rProgress: {progress:.1f}% (step {current_step}/{len(data) - start_step})", end="")
             
@@ -354,133 +377,74 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                 verbose=verbose
             )
             
-            # Apply the action 
+            # Get the action 
             action = prediction['action']
             
-            # Update position tracking similar to the bot
-            if action == 3 and current_position:  # Close position
-                # Calculate PnL for the trade
-                exit_price = current_data['close'].iloc[-1]
-                entry_price = current_position["entry_price"]
-                direction = current_position["direction"]
-                lot_size = current_position["lot_size"]
-                
-                # Calculate profit/loss in account currency
-                pip_value = 0.1 if hasattr(data, 'name') and 'XAU' in data.name else 0.0001
-                contract_size = 100.0  # Standard for gold
-                
-                # Calculate profit in pips
-                profit_points = (exit_price - entry_price) * direction
-                profit_pips = profit_points / pip_value
-                
-                # Calculate monetary profit
-                profit = profit_points * lot_size * contract_size
-                
-                # Update balance
-                balance += profit
-                
-                # Record trade information
-                trade_info = {
-                    "entry_time": current_position["entry_time"],
-                    "exit_time": str(current_data.index[-1]),
-                    "entry_price": entry_price,
-                    "exit_price": exit_price,
-                    "direction": direction,
-                    "lot_size": lot_size,
-                    "hold_time": current_step - current_position["entry_step"] + min_context_size,
-                    "pnl": profit,
-                    "profit_pips": profit_pips,
-                    "exit_balance": balance
-                }
-                trade_history.append(trade_info)
-                
-                # Clear position
-                current_position = None
-                
-            elif action in [1, 2] and not current_position:  # New position
-                direction = 1 if action == 1 else -1
-                entry_price = current_data['close'].iloc[-1]
-                
-                # Calculate lot size like the bot would
-                lot_size = max(0.01, min(1.0, round((balance / balance_per_lot) * 0.01, 2)))
-                
-                current_position = {
-                    "direction": direction,
-                    "entry_price": entry_price,
-                    "lot_size": lot_size,
-                    "entry_step": current_step,
-                    "entry_time": str(current_data.index[-1])
-                }
+            # Update environment's current step
+            env.current_step = start_step + current_step
             
-            # Record reward (not used in this version but could be useful)
-            rewards.append(0)  # We don't calculate rewards directly here
+            # Use ActionHandler to manage positions based on action
+            if action == 3 and current_position:  # Close
+                # Use the environment's close_position method
+                pnl, trade_info = action_handler.close_position()
                 
+                # Update environment metrics
+                if pnl != 0:
+                    env.trades.append(trade_info)
+                    env.metrics.add_trade(trade_info)
+                    env.metrics.update_balance(pnl)
+                
+                # Reset position tracking
+                current_position = None
+                env.current_position = None
+                
+            elif action in [1, 2] and not current_position:  # Buy or Sell
+                # Get current spread for price adjustment
+                current_spread = env.prices['spread'][env.current_step] * env.POINT_VALUE
+                
+                # Execute trade using environment's action handler
+                action_handler.execute_trade(action, current_spread)
+                
+                # Update our position tracking to stay in sync with environment
+                current_position = env.current_position.copy() if env.current_position else None
+            
             # Increment step
             current_step += 1
             total_steps += 1
             
         except Exception as e:
             # Log the error and continue with the next step
-            print(f"\nError at step {current_step}: {str(e)}")
-            print(f"Continuing with next step...")
-            current_step += 1
-            continue
+            print(f"\nError at step {current_step + start_step}: {str(e)}")
+            
+            # If we're still getting preprocessing errors after initial warmup,
+            # we might need to skip more steps
+            if "data lost in preprocessing" in str(e) and current_step < 20:
+                print(f"Skipping early steps until sufficient data is available...")
+                current_step += 1
+                env.current_step = start_step + current_step
+                continue
+            else:
+                print(f"Continuing with next step...")
+                current_step += 1
+                env.current_step = start_step + current_step
+                continue
     
     print(f"\rBacktest completed: {total_steps} steps processed")
     
     # Handle any open position at the end
-    if current_position:
-        # Close the final position at the last price
-        exit_price = data['close'].iloc[-1]
-        entry_price = current_position["entry_price"]
-        direction = current_position["direction"]
-        lot_size = current_position["lot_size"]
+    if env.current_position:
+        # Use the environment's close_position to close the final position
+        env.current_step = len(data) - 1  # Set to last step
+        pnl, trade_info = action_handler.close_position()
         
-        # Calculate profit
-        pip_value = 0.1 if hasattr(data, 'name') and 'XAU' in data.name else 0.0001
-        contract_size = 100.0
-        
-        profit_points = (exit_price - entry_price) * direction
-        profit_pips = profit_points / pip_value
-        profit = profit_points * lot_size * contract_size
-        
-        # Update balance
-        balance += profit
-        
-        # Record final trade
-        trade_info = {
-            "entry_time": current_position["entry_time"],
-            "exit_time": str(data.index[-1]),
-            "entry_price": entry_price,
-            "exit_price": exit_price,
-            "direction": direction,
-            "lot_size": lot_size,
-            "hold_time": len(data) - 1 - current_position["entry_step"],
-            "pnl": profit,
-            "profit_pips": profit_pips,
-            "exit_balance": balance
-        }
-        trade_history.append(trade_info)
-    
-    # Now create a TradingEnv just to calculate metrics in a consistent format
-    env = TradingEnv(
-        data=data,
-        initial_balance=initial_balance,
-        balance_per_lot=balance_per_lot,
-        random_start=False
-    )
-    
-    # Set up the environment with our results
-    env.reset()
-    env.metrics.balance = balance  # Update final balance
-    env.trades = trade_history     # Set trades history
-    
-    # Update wins/losses count
-    env.metrics.wins = sum(1 for trade in trade_history if trade['pnl'] > 0)
-    env.metrics.losses = sum(1 for trade in trade_history if trade['pnl'] <= 0)
+        # Update environment metrics
+        if pnl != 0:
+            env.trades.append(trade_info)
+            env.metrics.add_trade(trade_info)
+            env.metrics.update_balance(pnl)
     
     # Calculate metrics using the model's function
-    return model._calculate_backtest_metrics(env, total_steps, sum(rewards))
+    return model._calculate_backtest_metrics(env, total_steps, 0)
 
 def main():
     parser = argparse.ArgumentParser(description='Backtest trained trading model')
