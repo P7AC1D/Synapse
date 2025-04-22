@@ -103,7 +103,8 @@ void ProcessAndLogFeatures()
    int num_bars = MathMin(100, Bars(_Symbol, PERIOD_CURRENT)); // Limit to 100 bars for efficiency
    
    // Prepare arrays
-   double close[], high[], low[], open[], volume[];
+   double close[], high[], low[], open[];
+   long volume[];    // Changed from double[] to long[]
    double rsi[], atr[], atr_sma[], upper_bb[], lower_bb[], adx[];
    
    ArraySetAsSeries(close, true);
