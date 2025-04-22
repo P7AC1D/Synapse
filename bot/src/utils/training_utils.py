@@ -370,7 +370,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 estimated_time = remaining_iterations * state['avg_iteration_time']
                 print(f"\nEstimated time remaining: {format_time_remaining(estimated_time)}")
                 print(f"Average iteration time: {state['avg_iteration_time']/60:.1f} minutes")
-                print(f"Completed iterations: {state['completed_iterations']}/{total_iterations}")
+                print(f"Completed iterations: {state.get('completed_iterations', 0) - 1}/{total_iterations}")
             
             # Calculate window boundaries using validation size parameter
             val_size = int(initial_window * args.validation_size)
