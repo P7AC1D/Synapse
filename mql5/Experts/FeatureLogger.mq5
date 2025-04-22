@@ -133,15 +133,21 @@ void ProcessAndLogFeatures()
    if(CopyBuffer(handle_bb, 2, 0, num_bars, lower_bb) <= 0) return;  // Lower band = 2
    if(CopyBuffer(handle_adx, 0, 0, num_bars, adx) <= 0) return;      // ADX line = 0
    
-   // Only process current bar (index 0)
-   int idx = 0;
+   // Use the last completed bar (index 1), not the current incomplete bar (index 0)
+   int idx = 1;
+   
+   // Make sure we have enough bars
+   if(num_bars <= idx) {
+      Print("Not enough bars for processing (need at least ", idx + 1, ")");
+      return;
+   }
    
    // Calculate returns - IMPORTANT: Use the right formula that matches Python
    // Python: returns = np.diff(close) / close[:-1]
    double returns = 0.0;
    if(idx < num_bars-1) {
       // In Python: returns[i] = (close[i+1] - close[i]) / close[i]
-      // With ArraySetAsSeries=true, idx=0 is current and idx=1 is previous
+      // With ArraySetAsSeries=true, idx=1 is the last completed bar
       returns = (close[idx] - close[idx+1]) / close[idx+1];
    }
    returns = MathMin(MathMax(returns, -0.1), 0.1); // clip to [-0.1, 0.1]
