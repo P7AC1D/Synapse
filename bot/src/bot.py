@@ -225,7 +225,8 @@ class TradingBot:
             # Make prediction with position context
             prediction = self.model.predict_single(
                 data,
-                current_position=self.current_position
+                current_position=self.current_position,
+                verbose=True
             )
             self.lstm_states = self.model.lstm_states  # Update LSTM states
             

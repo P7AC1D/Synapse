@@ -1,8 +1,5 @@
 """Backtesting script for single trained trading model."""
 
-import os
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-
 import argparse
 import logging
 import numpy as np
@@ -11,6 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib import gridspec
 from typing import Dict, Any
 from trade_model import TradeModel
+from trading.environment import TradingEnv
 import time
 import sys
 import threading
@@ -296,6 +294,194 @@ def show_progress(message="Running backtest"):
         sys.stdout.flush()
         time.sleep(0.1)
 
+def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: float = 1000.0, verbose: bool = False) -> Dict[str, Any]:
+    """
+    Run a backtest using the predict_single method to simulate the live trading process.
+    
+    Args:
+        model: Loaded TradeModel instance
+        data: DataFrame with market data
+        initial_balance: Starting account balance
+        balance_per_lot: Account balance required per 0.01 lot
+        verbose: Whether to log detailed feature values (default: False)
+        
+    Returns:
+        Dictionary with backtest results
+    """
+    print("Running step-by-step prediction backtest (simulates live trading)...")
+    
+    # Initialize tracking variables
+    current_position = None
+    total_steps = 0
+    current_step = 0
+    balance = initial_balance
+    
+    # For metrics calculation - we'll create an environment at the end
+    trade_history = []
+    rewards = []
+    
+    # Progress tracking
+    progress_steps = max(1, len(data) // 100)  # Update every 1%
+    
+    # Reset model states at the start
+    model.reset_states()
+    
+    # Determine minimum data needed for prediction (LSTM needs context)
+    # For PPO-LSTM models, typically 100 bars is a safe minimum
+    min_context_size = 100  
+    
+    # Skip initial bars to ensure we have enough context
+    # Start processing from a position with sufficient history
+    start_step = min_context_size
+    
+    # We'll use a sliding window approach to process the data
+    while current_step + start_step < len(data) - 1:  # -1 because we need at least one future bar
+        
+        # Print progress
+        if current_step % progress_steps == 0:
+            progress = current_step / (len(data) - start_step) * 100
+            print(f"\rProgress: {progress:.1f}% (step {current_step}/{len(data) - start_step})", end="")
+            
+        # Extract the available data up to the current step (like the bot would see)
+        # Important: always include sufficient history for LSTM context
+        current_data = data.iloc[:start_step + current_step + 1].copy()
+        
+        # Make prediction
+        try:
+            prediction = model.predict_single(
+                current_data,
+                current_position=current_position,
+                verbose=verbose
+            )
+            
+            # Apply the action 
+            action = prediction['action']
+            
+            # Update position tracking similar to the bot
+            if action == 3 and current_position:  # Close position
+                # Calculate PnL for the trade
+                exit_price = current_data['close'].iloc[-1]
+                entry_price = current_position["entry_price"]
+                direction = current_position["direction"]
+                lot_size = current_position["lot_size"]
+                
+                # Calculate profit/loss in account currency
+                pip_value = 0.1 if hasattr(data, 'name') and 'XAU' in data.name else 0.0001
+                contract_size = 100.0  # Standard for gold
+                
+                # Calculate profit in pips
+                profit_points = (exit_price - entry_price) * direction
+                profit_pips = profit_points / pip_value
+                
+                # Calculate monetary profit
+                profit = profit_points * lot_size * contract_size
+                
+                # Update balance
+                balance += profit
+                
+                # Record trade information
+                trade_info = {
+                    "entry_time": current_position["entry_time"],
+                    "exit_time": str(current_data.index[-1]),
+                    "entry_price": entry_price,
+                    "exit_price": exit_price,
+                    "direction": direction,
+                    "lot_size": lot_size,
+                    "hold_time": current_step - current_position["entry_step"] + min_context_size,
+                    "pnl": profit,
+                    "profit_pips": profit_pips,
+                    "exit_balance": balance
+                }
+                trade_history.append(trade_info)
+                
+                # Clear position
+                current_position = None
+                
+            elif action in [1, 2] and not current_position:  # New position
+                direction = 1 if action == 1 else -1
+                entry_price = current_data['close'].iloc[-1]
+                
+                # Calculate lot size like the bot would
+                lot_size = max(0.01, min(1.0, round((balance / balance_per_lot) * 0.01, 2)))
+                
+                current_position = {
+                    "direction": direction,
+                    "entry_price": entry_price,
+                    "lot_size": lot_size,
+                    "entry_step": current_step,
+                    "entry_time": str(current_data.index[-1])
+                }
+            
+            # Record reward (not used in this version but could be useful)
+            rewards.append(0)  # We don't calculate rewards directly here
+                
+            # Increment step
+            current_step += 1
+            total_steps += 1
+            
+        except Exception as e:
+            # Log the error and continue with the next step
+            print(f"\nError at step {current_step}: {str(e)}")
+            print(f"Continuing with next step...")
+            current_step += 1
+            continue
+    
+    print(f"\rBacktest completed: {total_steps} steps processed")
+    
+    # Handle any open position at the end
+    if current_position:
+        # Close the final position at the last price
+        exit_price = data['close'].iloc[-1]
+        entry_price = current_position["entry_price"]
+        direction = current_position["direction"]
+        lot_size = current_position["lot_size"]
+        
+        # Calculate profit
+        pip_value = 0.1 if hasattr(data, 'name') and 'XAU' in data.name else 0.0001
+        contract_size = 100.0
+        
+        profit_points = (exit_price - entry_price) * direction
+        profit_pips = profit_points / pip_value
+        profit = profit_points * lot_size * contract_size
+        
+        # Update balance
+        balance += profit
+        
+        # Record final trade
+        trade_info = {
+            "entry_time": current_position["entry_time"],
+            "exit_time": str(data.index[-1]),
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "direction": direction,
+            "lot_size": lot_size,
+            "hold_time": len(data) - 1 - current_position["entry_step"],
+            "pnl": profit,
+            "profit_pips": profit_pips,
+            "exit_balance": balance
+        }
+        trade_history.append(trade_info)
+    
+    # Now create a TradingEnv just to calculate metrics in a consistent format
+    env = TradingEnv(
+        data=data,
+        initial_balance=initial_balance,
+        balance_per_lot=balance_per_lot,
+        random_start=False
+    )
+    
+    # Set up the environment with our results
+    env.reset()
+    env.metrics.balance = balance  # Update final balance
+    env.trades = trade_history     # Set trades history
+    
+    # Update wins/losses count
+    env.metrics.wins = sum(1 for trade in trade_history if trade['pnl'] > 0)
+    env.metrics.losses = sum(1 for trade in trade_history if trade['pnl'] <= 0)
+    
+    # Calculate metrics using the model's function
+    return model._calculate_backtest_metrics(env, total_steps, sum(rewards))
+
 def main():
     parser = argparse.ArgumentParser(description='Backtest trained trading model')
     
@@ -319,6 +505,10 @@ def main():
                       help='Path to save backtest results in JSON format')
     parser.add_argument('--output_plot', type=str, default=None,
                       help='Path to save backtest plot')
+    parser.add_argument('--method', type=str, choices=['evaluate', 'backtest', 'predict_single'], default='evaluate',
+                      help='Backtesting method to use: evaluate (quiet), backtest (verbose), or predict_single (simulates live trading)')
+    parser.add_argument('--verbose_features', action='store_true',
+                      help='Log detailed feature values during prediction (only applicable with predict_single method)')
     
     args = parser.parse_args()
     
@@ -357,9 +547,19 @@ def main():
             balance_per_lot=args.balance_per_lot  # Pass the parameter consistently
         )
         
-        # Run backtest
-        if args.quiet:
-            print("Running quiet backtest...")
+        # Run backtest based on selected method
+        if args.method == 'predict_single':
+            # Use the new method that simulates live trading
+            print("\nRunning backtest with predict_single method (simulates live trading)...")
+            results = backtest_with_predictions(
+                model=model,
+                data=df,
+                initial_balance=args.initial_balance,
+                balance_per_lot=args.balance_per_lot,
+                verbose=args.verbose_features
+            )
+        elif args.method == 'evaluate' or args.quiet:
+            print("\nRunning quiet backtest with evaluate method...")
             progress_thread = None
             
             # Start continuous progress indicator
@@ -381,8 +581,8 @@ def main():
                 # Always stop the progress indicator
                 if progress_thread and progress_thread.is_alive():
                     stop_progress_indicator()
-        else:
-            print("Running detailed backtest...")
+        else:  # method == 'backtest'
+            print("\nRunning detailed backtest with verbose logging...")
             results = model.backtest(
                 data=df,
                 initial_balance=args.initial_balance,
