@@ -158,11 +158,12 @@ void ProcessAndLogFeatures()
    
    // Normalize ATR (relative to its own moving average)
    double atr_ratio = atr[idx] / (atr_sma[idx] + 1e-8);
-   // Fix scaling to match Python using the MIN/MAX_EXPECTED_ATR_RATIO constants
-   double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / (MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO) - 1.0;
+   
+   // Python: atr_norm = 2 * (atr_ratio - min_expected_ratio) / expected_range - 1
+   double expected_range = MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO;
+   double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / expected_range - 1.0;
    atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
    
-   // Volume change - match Python's calculation exactly
    // Python: volume_pct[1:] = np.diff(volume) / volume[:-1]
    double volume_pct = 0;
    if(idx < num_bars-1 && volume[idx+1] > 0) {
