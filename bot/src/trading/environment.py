@@ -215,7 +215,6 @@ class TradingEnv(gym.Env, EzPickle):
         self.metrics.reset()
         self.reward_calculator.previous_balance_high = self.initial_balance
         self.reward_calculator.last_direction = None
-        self.reward_calculator.bars_since_consolidation = 0
         self.reward_calculator.max_unrealized_pnl = 0.0  # Reset max unrealized PnL tracking
         
         return self.get_observation(), self._get_info()

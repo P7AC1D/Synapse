@@ -16,9 +16,7 @@ class RewardCalculator:
         self.previous_balance_high = env.initial_balance
         self.trade_entry_balance = env.initial_balance  # Track balance at trade entry
         self.last_direction = None  # Track trade direction for reversals
-        self.bars_since_consolidation = 0
         self.min_hold_bars = 20  # Minimum bars for long hold reward
-        self.consolidation_threshold = 0.0015  # BB width threshold for consolidation
         
         # Track max unrealized profit for each trade
         self.max_unrealized_pnl = 0.0
@@ -30,12 +28,19 @@ class RewardCalculator:
         self.TIME_PRESSURE_THRESHOLD = 100  # Bars before time pressure kicks in
         
     def _is_market_flat(self) -> bool:
-        """Check if market is in consolidation based on volatility breakout."""
+        """Check if market is in consolidation using raw price action."""
         current_idx = self.env.current_step
-        # volatility_breakout close to 0.5 indicates price near middle of range
-        # values between 0.4-0.6 suggest consolidation
-        volatility_breakout = self.env.raw_data['volatility_breakout'].iloc[current_idx]
-        return 0.4 <= volatility_breakout <= 0.6
+        returns = abs(self.env.raw_data['returns'].iloc[current_idx])
+        pattern = abs(self.env.raw_data['candle_pattern'].iloc[current_idx])
+        volume = abs(self.env.raw_data['volume_change'].iloc[current_idx])
+        
+        # Market is flat when:
+        # - Returns are small (less than 0.02 or 2%)
+        # - Candle patterns are indecisive (close to 0)
+        # - Volume is not spiking
+        return (returns < 0.02 and 
+                pattern < 0.3 and 
+                volume < 0.5)
         
     def _is_successful_reversal(self, position_type: int, pnl: float) -> bool:
         """Check if a trade reversal was successful."""
@@ -108,10 +113,7 @@ class RewardCalculator:
             # Reward for staying out during consolidation
             if action == Action.HOLD:
                 if self._is_market_flat():
-                    reward += 0.1
-                    self.bars_since_consolidation = 0
-                else:
-                    self.bars_since_consolidation += 1
+                    reward += 0.1  # Reward for staying out of consolidating market
                     
         # New Balance High bonus (applies to all situations)
         if self.env.balance > self.previous_balance_high:
