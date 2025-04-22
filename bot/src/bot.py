@@ -219,14 +219,24 @@ class TradingBot:
             # Update model's balance before prediction
             current_balance = self.mt5.get_account_balance()
             self.model.initial_balance = current_balance
+
+            # Get current price for live P&L calculation
+            current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)
+            if current_price is None:
+                self.logger.warning("Failed to get current price")
+                return
+                
+            # Use bid price for unrealized P&L calculation (matches MQL5)
+            live_price = current_price[0]  # bid price
             
             data = data.iloc[:-1]  # Exclude the last row for prediction as its not completed yet
             
-            # Make prediction with position context
+            # Make prediction with position context and live price
             prediction = self.model.predict_single(
                 data,
                 current_position=self.current_position,
-                verbose=True
+                verbose=True,
+                live_price=live_price
             )
             self.lstm_states = self.model.lstm_states  # Update LSTM states
             

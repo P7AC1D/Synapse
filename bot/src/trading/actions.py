@@ -139,7 +139,9 @@ class ActionHandler:
         if not self.env.current_position:
             return 0.0, 0.0
             
-        current_price = self.env.prices['close'][self.env.current_step]
+        # Use live price if available, otherwise use historical price
+        current_price = self.env.live_price if self.env.live_price is not None else self.env.prices['close'][self.env.current_step]
+            
         direction = self.env.current_position["direction"]
         entry_price = self.env.current_position["entry_price"]
         lot_size = self.env.current_position["lot_size"]
@@ -147,15 +149,15 @@ class ActionHandler:
         # Get current spread for unrealized P&L calculation
         current_spread = self.env.prices['spread'][self.env.current_step] * self.env.POINT_VALUE
         
-        # Calculate unrealized P/L including spread impact
+        # Calculate raw P&L first - use current price without spread for display
         if direction == 1:  # Long position
-            current_exit_price = current_price - current_spread
+            current_exit_price = current_price - current_spread  # Subtract spread for long exits
             profit_points = current_exit_price - entry_price
         else:  # Short position
-            current_exit_price = current_price + current_spread
+            current_exit_price = current_price + current_spread  # Add spread for short exits
             profit_points = entry_price - current_exit_price
             
         unrealized_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
         profit_pips = profit_points / self.env.PIP_VALUE
-        
+
         return unrealized_pnl, profit_pips

@@ -83,7 +83,7 @@ class TradeModel:
             
         return data
         
-    def predict_single(self, data_frame: pd.DataFrame, current_position: Optional[Dict] = None, verbose: bool = False) -> Dict[str, Any]:
+    def predict_single(self, data_frame: pd.DataFrame, current_position: Optional[Dict] = None, verbose: bool = False, live_price: Optional[float] = None) -> Dict[str, Any]:
         """
         Make a prediction for the latest data point.
         
@@ -99,6 +99,7 @@ class TradeModel:
                                 "entry_time": str
                             }
             verbose: Whether to log detailed feature values (default: False)
+            live_price: Optional current market price for live trading PnL calculation
             
         Returns:
             Dictionary with prediction details including 'action' (0-3) and 'description'
@@ -119,9 +120,10 @@ class TradeModel:
         # Create environment with position state
         env = TradingEnv(
             data=data,
-            initial_balance=self.initial_balance,  # Use actual account balance
+            initial_balance=self.initial_balance,
             random_start=False,
-            balance_per_lot=self.balance_per_lot  # Use configured parameter
+            balance_per_lot=self.balance_per_lot,
+            live_price=live_price  # Pass live price to env
         )
         
         # Set predict_context flag to use the latest data point

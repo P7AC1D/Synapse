@@ -35,7 +35,8 @@ class TradingEnv(gym.Env, EzPickle):
         return self.initial_balance  # Fallback before metrics initialization
         
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
-                 balance_per_lot: float = 1000.0, random_start: bool = False):
+                 balance_per_lot: float = 1000.0, random_start: bool = False,
+                 live_price: Optional[float] = None):
         """Initialize trading environment.
         
         Args:
@@ -43,6 +44,7 @@ class TradingEnv(gym.Env, EzPickle):
             initial_balance: Starting account balance
             balance_per_lot: Account balance required per 0.01 lot
             random_start: Whether to start from random positions
+            live_price: Optional current market price for live trading
         """
         super().__init__()
         EzPickle.__init__(self)
@@ -51,11 +53,12 @@ class TradingEnv(gym.Env, EzPickle):
         self.POINT_VALUE = 0.01      # Gold moves in 0.01 increments
         self.PIP_VALUE = 0.01        # Gold pip and point values are the same
         self.MIN_LOTS = 0.01         # Minimum 0.01 lots
-        self.MAX_LOTS = 200.0         # Maximum lots
+        self.MAX_LOTS = 200.0        # Maximum lots
         self.CONTRACT_SIZE = 100.0   # Standard gold contract size
         self.BALANCE_PER_LOT = balance_per_lot
         self.MAX_DRAWDOWN = 0.4      # Maximum drawdown
         self.initial_balance = initial_balance
+        self.live_price = live_price  # Store live price for P&L calculations
         
         # Initialize components
         self.feature_processor = FeatureProcessor()
@@ -244,6 +247,7 @@ class TradingEnv(gym.Env, EzPickle):
         
         if self.current_position:
             unrealized_pnl, _ = self.action_handler.manage_position()
+            # Normalize unrealized PnL to be between -1 and 1 based on balance
             normalized_pnl = np.clip(unrealized_pnl / self.metrics.balance, -1, 1)
         else:
             normalized_pnl = 0.0
