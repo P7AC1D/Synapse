@@ -48,7 +48,6 @@ class ActionHandler:
         """
             
         current_price = self.env.prices['close'][self.env.current_step]
-        current_atr = self.env.prices['atr'][self.env.current_step]
         
         # Calculate lot size based on account balance (0.01 lots per BALANCE_PER_LOT amount)
         lot_size = max(
@@ -74,7 +73,6 @@ class ActionHandler:
             "lot_size": lot_size,
             "entry_time": str(self.env.original_index[self.env.current_step]),
             "entry_step": self.env.current_step,
-            "entry_atr": current_atr,
             "current_profit_pips": 0.0
         }
         

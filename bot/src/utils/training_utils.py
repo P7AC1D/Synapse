@@ -360,6 +360,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         while training_start + initial_window <= total_periods:
             iteration = training_start // step_size
             iteration_start_time = time.time()
+
+            # Load training state
+            _, _, state = load_training_state(state_path)
             
             # Display timing estimate if we have data
             if state.get('avg_iteration_time'):
