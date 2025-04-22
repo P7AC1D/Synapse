@@ -50,7 +50,7 @@ class RewardCalculator:
         return is_reversal and pnl > 0
 
     def calculate_reward(self, action: int, position_type: int, 
-                        pnl: float, atr: float, current_hold: int,
+                        pnl: float, current_hold: int,
                         optimal_hold: Optional[int] = None,
                         invalid_action: bool = False) -> float:
         """Calculate rewards combining sparse and scaled components."""
