@@ -234,7 +234,11 @@ class TradingEnv(gym.Env, EzPickle):
         
     def get_observation(self) -> np.ndarray:
         """Get current observation."""
-        features = self.raw_data.values[self.current_step]
+        # In predict_single context, we want the most recent data point
+        if hasattr(self, 'predict_context') and self.predict_context:
+            features = self.raw_data.values[-1]  # Get the last (most recent) element
+        else:
+            features = self.raw_data.values[self.current_step]
         
         position_type = self.current_position["direction"] if self.current_position else 0
         

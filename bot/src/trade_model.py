@@ -124,6 +124,9 @@ class TradeModel:
             balance_per_lot=self.balance_per_lot  # Use configured parameter
         )
         
+        # Set predict_context flag to use the latest data point
+        env.predict_context = True
+        
         # Set current position if provided
         if current_position:
             env.current_position = current_position.copy()  # Use copy to avoid reference issues
