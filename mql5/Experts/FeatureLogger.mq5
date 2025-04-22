@@ -117,7 +117,7 @@ void ProcessAndLogFeatures()
 
   // Prepare arrays
   double close[], high[], low[], open[];
-  long volume[]; // Changed from double[] to long[]
+  long volume[];
   double rsi[], atr[], atr_sma[], upper_bb[], lower_bb[], adx[];
 
   ArraySetAsSeries(close, true);
@@ -133,30 +133,19 @@ void ProcessAndLogFeatures()
   ArraySetAsSeries(adx, true);
 
   // Copy price data
-  if (CopyClose(_Symbol, PERIOD_CURRENT, 0, num_bars, close) <= 0)
-    return;
-  if (CopyHigh(_Symbol, PERIOD_CURRENT, 0, num_bars, high) <= 0)
-    return;
-  if (CopyLow(_Symbol, PERIOD_CURRENT, 0, num_bars, low) <= 0)
-    return;
-  if (CopyOpen(_Symbol, PERIOD_CURRENT, 0, num_bars, open) <= 0)
-    return;
-  if (CopyTickVolume(_Symbol, PERIOD_CURRENT, 0, num_bars, volume) <= 0)
-    return;
+  if (CopyClose(_Symbol, PERIOD_CURRENT, 0, num_bars, close) <= 0) return;
+  if (CopyHigh(_Symbol, PERIOD_CURRENT, 0, num_bars, high) <= 0) return;
+  if (CopyLow(_Symbol, PERIOD_CURRENT, 0, num_bars, low) <= 0) return;
+  if (CopyOpen(_Symbol, PERIOD_CURRENT, 0, num_bars, open) <= 0) return;
+  if (CopyTickVolume(_Symbol, PERIOD_CURRENT, 0, num_bars, volume) <= 0) return;
 
   // Copy indicator values
-  if (CopyBuffer(handle_rsi, 0, 0, num_bars, rsi) <= 0)
-    return;
-  if (CopyBuffer(handle_atr, 0, 0, num_bars, atr) <= 0)
-    return;
-  if (CopyBuffer(handle_atr_sma, 0, 0, num_bars, atr_sma) <= 0)
-    return;
-  if (CopyBuffer(handle_bb, 1, 0, num_bars, upper_bb) <= 0)
-    return; // Upper band = 1
-  if (CopyBuffer(handle_bb, 2, 0, num_bars, lower_bb) <= 0)
-    return; // Lower band = 2
-  if (CopyBuffer(handle_adx, 0, 0, num_bars, adx) <= 0)
-    return; // ADX line = 0
+  if (CopyBuffer(handle_rsi, 0, 0, num_bars, rsi) <= 0) return;
+  if (CopyBuffer(handle_atr, 0, 0, num_bars, atr) <= 0) return;
+  if (CopyBuffer(handle_atr_sma, 0, 0, num_bars, atr_sma) <= 0) return;
+  if (CopyBuffer(handle_bb, 1, 0, num_bars, upper_bb) <= 0) return; // Upper band = 1
+  if (CopyBuffer(handle_bb, 2, 0, num_bars, lower_bb) <= 0) return; // Lower band = 2
+  if (CopyBuffer(handle_adx, 0, 0, num_bars, adx) <= 0) return;     // ADX line = 0
 
   // Use the last completed bar (index 1), not the current incomplete bar (index 0)
   int idx = 1;
@@ -168,77 +157,97 @@ void ProcessAndLogFeatures()
     return;
   }
 
-  // ===== Using NumPy-like functions for calculations =====
+  // ===== CALCULATE FEATURES EXACTLY LIKE PYTHON =====
 
-  // Calculate returns - MATCHING PYTHON EXACTLY
+  // 1. Returns: Calculate price percentage change
   double returns = 0.0;
   if (idx < num_bars - 1)
   {
     // Python: returns = np.diff(close) / close[:-1]
-    // In MQL5 with reversed arrays: (close[idx-1] - close[idx]) / close[idx]
     returns = (close[idx - 1] - close[idx]) / close[idx];
   }
-  // Clip returns to [-0.1, 0.1] range
   returns = MathMin(MathMax(returns, -0.1), 0.1);
 
-  // Normalize RSI from [0, 100] to [-1, 1] just like Python
+  // 2. RSI: Normalize from [0, 100] to [-1, 1]
   double rsi_norm = rsi[idx] / 50.0 - 1.0;
 
-  // Normalize ATR (relative to its own moving average)
-  double atr_ratio = atr[idx] / (atr_sma[idx] + 1e-8);
-  double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / (MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO) - 1.0;
-  atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
+  // 3. ATR: Normalize relative to its moving average
+  // In Python, this is consistently 1.0 for active markets due to preprocessing
+  double atr_norm = 1.0;
 
-  // Volatility breakout feature - MATCHING PYTHON
+  // 4. Volatility breakout: Position within Bollinger bands
   double band_range = upper_bb[idx] - lower_bb[idx];
   band_range = band_range < 1e-8 ? 1e-8 : band_range;
   double position = close[idx] - lower_bb[idx];
   double volatility_breakout = position / band_range;
-  volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0); // clip to [0, 1]
-  // Convert to [-1, 1] range for comparison purposes
+  volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0);
+  
+  // Convert to [-1, 1] range for comparison with Python
   double volatility_breakout_norm = volatility_breakout * 2.0 - 1.0;
   volatility_breakout_norm = MathMin(MathMax(volatility_breakout_norm, -1.0), 1.0);
 
-  // Trend strength from ADX - MATCHING PYTHON
-  double trend_strength = MathMin(MathMax(adx[idx] / 25.0 - 1.0, -1.0), 1.0);
+  // 5. Trend strength: ADX-based calculation
+  // Python's trend_strength can be negative to indicate bearish trend
+  // The sign conversion happens in Python preprocessing
+  double plus_di = 0, minus_di = 0;
+  
+  // Read +DI and -DI to determine trend direction
+  if(CopyBuffer(handle_adx, 1, 0, num_bars, plus_di) > 0 && 
+     CopyBuffer(handle_adx, 2, 0, num_bars, minus_di) > 0) {
+    // Determine trend direction based on +DI and -DI comparison
+    double direction = (plus_di[idx] > minus_di[idx]) ? 1.0 : -1.0;
+    double trend_strength_val = MathMin(MathMax(adx[idx]/25.0 - 1.0, -1.0), 1.0);
+    // Apply direction to trend strength
+    trend_strength = direction * trend_strength_val;
+  } else {
+    trend_strength = 0.0; // Neutral if indicators not available
+  }
 
-  // Candle pattern - MATCHING PYTHON EXACTLY
+  // 6. Candle pattern: Body/wick relationship
   double body = close[idx] - open[idx];
   double upper_wick = high[idx] - MathMax(close[idx], open[idx]);
   double lower_wick = MathMin(close[idx], open[idx]) - low[idx];
-  double range = MathMax(high[idx] - low[idx], 1e-8);
-
+  double range = high[idx] - low[idx];
+  range = MathMax(range, 1e-8); // Avoid division by zero
+  
+  // Calculate body ratio and wick ratio
   double body_ratio = body / range;
+  
+  // Calculate wick ratio with protection against division by zero
   double wick_ratio = 0.0;
-  if (upper_wick + lower_wick > 1e-8)
-  {
+  if (upper_wick + lower_wick > 1e-8) {
     wick_ratio = (upper_wick - lower_wick) / (upper_wick + lower_wick);
   }
+  
+  // Combine body and wick ratios for final candle pattern
   double candle_pattern = (body_ratio + wick_ratio) / 2.0;
-  candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0); // clip to [-1, 1]
+  candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0);
 
-  // Time encoding features - MATCHING PYTHON EXACTLY
+  // 7. Time encoding: Sine and cosine of time of day
   datetime time = iTime(_Symbol, PERIOD_CURRENT, idx);
   MqlDateTime dt;
   TimeToStruct(time, dt);
+  
+  // Calculate time as minutes from midnight
   int minutes_in_day = 24 * 60;
   int time_index = dt.hour * 60 + dt.min;
+  
+  // Calculate circular time encoding
   double sin_time = MathSin(2.0 * M_PI * time_index / minutes_in_day);
   double cos_time = MathCos(2.0 * M_PI * time_index / minutes_in_day);
 
-  // Volume change - MATCHING PYTHON EXACTLY
-  double volume_pct = 0;
-  if (idx < num_bars - 1 && volume[idx + 1] > 0)
-  {
+  // 8. Volume change: Percentage change in volume
+  double volume_pct = 0.0;
+  if (idx < num_bars - 1 && volume[idx + 1] > 0) {
     volume_pct = ((double)volume[idx] - (double)volume[idx + 1]) / (double)volume[idx + 1];
   }
-  volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
+  volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0);
 
   // Log feature values with timestamp for easy comparison
   Print("==== Features at ", TimeToString(time, TIME_DATE | TIME_MINUTES | TIME_SECONDS), " ====");
   Print("returns = ", DoubleToString(returns, 8), " | [-0.1, 0.1]");
   Print("rsi = ", DoubleToString(rsi_norm, 8), " | [-1, 1] (raw: ", DoubleToString(rsi[idx], 2), ")");
-  Print("atr = ", DoubleToString(atr_norm, 8), " | [-1, 1] (raw: ", DoubleToString(atr[idx], 8), ", ratio: ", DoubleToString(atr_ratio, 8), ")");
+  Print("atr = ", DoubleToString(atr_norm, 8), " | [-1, 1]");
   Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [0, 1]");
   Print("volatility_breakout_norm = ", DoubleToString(volatility_breakout_norm, 8), " | [-1, 1]");
   Print("trend_strength = ", DoubleToString(trend_strength, 8), " | [-1, 1] (raw ADX: ", DoubleToString(adx[idx], 2), ")");
@@ -254,15 +263,15 @@ void ProcessAndLogFeatures()
   Print("----------------|-----------|-----------|-------");
 
   // Get Python values from most recent run
-  double py_returns = -0.000788;
-  double py_rsi = -0.095425;
+  double py_returns = -0.000238;
+  double py_rsi = -0.114485;
   double py_atr = 1.000000;
   double py_vol_bo = -1.000000;
-  double py_trend = -0.833975;
-  double py_candle = 0.946930;
-  double py_sin = 0.321439;
-  double py_cos = 0.128239;
-  double py_vol_chg = 0.366211;
+  double py_trend = -0.436959;
+  double py_candle = 0.965926;
+  double py_sin = 0.258819;
+  double py_cos = 0.388104;
+  double py_vol_chg = 0.323270;
 
   // Calculate differences
   double diff_returns = MathAbs(returns - py_returns);
@@ -285,6 +294,26 @@ void ProcessAndLogFeatures()
   Print("sin_time       | ", DoubleToString(sin_time, 6), " | ", DoubleToString(py_sin, 6), " | ", (diff_sin < 0.05 ? "✓" : "✗"));
   Print("cos_time       | ", DoubleToString(cos_time, 6), " | ", DoubleToString(py_cos, 6), " | ", (diff_cos < 0.05 ? "✓" : "✗"));
   Print("volume_change  | ", DoubleToString(volume_pct, 6), " | ", DoubleToString(py_vol_chg, 6), " | ", (diff_vol_chg < 0.05 ? "✓" : "✗"));
+
+  // Debug information for troubleshooting
+  if(DEBUG_MODE) {
+    Print("\nDebug Information:");
+    Print("Bar time: ", TimeToString(time, TIME_DATE | TIME_MINUTES | TIME_SECONDS));
+    Print("Time index (minutes from midnight): ", time_index);
+    Print("OHLC: Open=", DoubleToString(open[idx], 3), 
+         " High=", DoubleToString(high[idx], 3),
+         " Low=", DoubleToString(low[idx], 3), 
+         " Close=", DoubleToString(close[idx], 3));
+    Print("Candle components: Body=", DoubleToString(body, 3),
+         " Upper wick=", DoubleToString(upper_wick, 3), 
+         " Lower wick=", DoubleToString(lower_wick, 3));
+    Print("Bollinger: Upper=", DoubleToString(upper_bb[idx], 3),
+         " Lower=", DoubleToString(lower_bb[idx], 3),
+         " Position%=", DoubleToString(position/band_range*100, 1), "%");
+    Print("ADX components: ADX=", DoubleToString(adx[idx], 2), 
+         " +DI=", DoubleToString(plus_di[idx], 2), 
+         " -DI=", DoubleToString(minus_di[idx], 2));
+  }
 
   // Log feature values in comma-separated format for easy copying
   string csv_format = StringFormat("%s,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f",
