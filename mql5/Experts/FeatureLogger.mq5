@@ -206,7 +206,8 @@ void ProcessAndLogFeatures()
    double volume_pct = 0;
    if(idx < num_bars-1 && volume[idx+1] > 0) {
       // Calculate volume change exactly like in Python
-      volume_pct = (volume[idx] - volume[idx+1]) / volume[idx+1];
+      // Cast to double before division to prevent loss of precision
+      volume_pct = ((double)volume[idx] - (double)volume[idx+1]) / (double)volume[idx+1];
    }
    volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
    
