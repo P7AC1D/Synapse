@@ -3,57 +3,54 @@
 //|                                       Feature Processing Debugger |
 //+------------------------------------------------------------------+
 #property copyright "DRL Trader"
-#property version "1.00"
+#property version   "1.00"
 #property strict
 #property description "Logs processed features for comparison with Python implementation"
 
 // Include standard libraries
 #include <Arrays\ArrayObj.mqh>
-// Include NumPy-like functions
-#include <MQL5\Numpy\Numpy.mqh>
 
 // Input parameters
-input int ATR_PERIOD = 14;     // ATR period
-input int RSI_PERIOD = 14;     // RSI period
-input int BOLL_PERIOD = 20;    // Bollinger Bands period
-input int ATR_SMA_PERIOD = 20; // ATR SMA period
-input bool DEBUG_MODE = true;  // Enable debug logging
+input int ATR_PERIOD = 14;             // ATR period
+input int RSI_PERIOD = 14;             // RSI period
+input int BOLL_PERIOD = 20;            // Bollinger Bands period
+input int ATR_SMA_PERIOD = 20;         // ATR SMA period
+input bool DEBUG_MODE = true;          // Enable debug logging
 
 // Constants
-const int LOOKBACK = 20;                   // Maximum lookback period for indicators
-const int MIN_BARS = 100;                  // Minimum bars needed for valid features
-const double MIN_EXPECTED_ATR_RATIO = 0.5; // Min expected ATR/SMA ratio
-const double MAX_EXPECTED_ATR_RATIO = 2.0; // Max expected ATR/SMA ratio
+const int LOOKBACK = 20;               // Maximum lookback period for indicators
+const int MIN_BARS = 100;              // Minimum bars needed for valid features
+const double MIN_EXPECTED_ATR_RATIO = 0.5;  // Min expected ATR/SMA ratio
+const double MAX_EXPECTED_ATR_RATIO = 2.0;  // Max expected ATR/SMA ratio
 
 // Global variables
-int handle_rsi;     // RSI indicator handle
-int handle_atr;     // ATR indicator handle
-int handle_bb;      // Bollinger Bands indicator handle
-int handle_adx;     // ADX indicator handle
-int handle_atr_sma; // ATR SMA indicator handle
+int handle_rsi;                        // RSI indicator handle
+int handle_atr;                        // ATR indicator handle
+int handle_bb;                         // Bollinger Bands indicator handle  
+int handle_adx;                        // ADX indicator handle
+int handle_atr_sma;                    // ATR SMA indicator handle
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-  // Initialize indicators
-  handle_rsi = iRSI(_Symbol, PERIOD_CURRENT, RSI_PERIOD, PRICE_CLOSE);
-  handle_atr = iATR(_Symbol, PERIOD_CURRENT, ATR_PERIOD);
-  handle_bb = iBands(_Symbol, PERIOD_CURRENT, BOLL_PERIOD, 2, 0, PRICE_CLOSE);
-  handle_adx = iADX(_Symbol, PERIOD_CURRENT, ATR_PERIOD);
-  handle_atr_sma = iMA(_Symbol, PERIOD_CURRENT, ATR_SMA_PERIOD, 0, MODE_SMA, handle_atr);
-
-  if (handle_rsi == INVALID_HANDLE || handle_atr == INVALID_HANDLE ||
+   // Initialize indicators
+   handle_rsi = iRSI(_Symbol, PERIOD_CURRENT, RSI_PERIOD, PRICE_CLOSE);
+   handle_atr = iATR(_Symbol, PERIOD_CURRENT, ATR_PERIOD);
+   handle_bb = iBands(_Symbol, PERIOD_CURRENT, BOLL_PERIOD, 2, 0, PRICE_CLOSE);
+   handle_adx = iADX(_Symbol, PERIOD_CURRENT, ATR_PERIOD);
+   handle_atr_sma = iMA(_Symbol, PERIOD_CURRENT, ATR_SMA_PERIOD, 0, MODE_SMA, handle_atr);
+   
+   if(handle_rsi == INVALID_HANDLE || handle_atr == INVALID_HANDLE || 
       handle_bb == INVALID_HANDLE || handle_adx == INVALID_HANDLE ||
-      handle_atr_sma == INVALID_HANDLE)
-  {
-    Print("Failed to create indicator handles");
-    return INIT_FAILED;
-  }
-
-  Print("FeatureLogger initialized successfully.");
-  return (INIT_SUCCEEDED);
+      handle_atr_sma == INVALID_HANDLE) {
+      Print("Failed to create indicator handles");
+      return INIT_FAILED;
+   }
+   
+   Print("FeatureLogger initialized successfully.");
+   return(INIT_SUCCEEDED);
 }
 
 //+------------------------------------------------------------------+
@@ -61,19 +58,14 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-  // Clean up indicator handles
-  if (handle_rsi != INVALID_HANDLE)
-    IndicatorRelease(handle_rsi);
-  if (handle_atr != INVALID_HANDLE)
-    IndicatorRelease(handle_atr);
-  if (handle_bb != INVALID_HANDLE)
-    IndicatorRelease(handle_bb);
-  if (handle_adx != INVALID_HANDLE)
-    IndicatorRelease(handle_adx);
-  if (handle_atr_sma != INVALID_HANDLE)
-    IndicatorRelease(handle_atr_sma);
-
-  Print("FeatureLogger deinitialized.");
+   // Clean up indicator handles
+   if(handle_rsi != INVALID_HANDLE) IndicatorRelease(handle_rsi);
+   if(handle_atr != INVALID_HANDLE) IndicatorRelease(handle_atr);
+   if(handle_bb != INVALID_HANDLE) IndicatorRelease(handle_bb);
+   if(handle_adx != INVALID_HANDLE) IndicatorRelease(handle_adx);
+   if(handle_atr_sma != INVALID_HANDLE) IndicatorRelease(handle_atr_sma);
+   
+   Print("FeatureLogger deinitialized.");
 }
 
 //+------------------------------------------------------------------+
@@ -81,27 +73,25 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-  // Only process features on completed bars
-  static datetime last_bar_time = 0;
-  datetime current_bar_time = iTime(_Symbol, PERIOD_CURRENT, 0);
-
-  if (last_bar_time == current_bar_time)
-  {
-    return; // Skip if not a new bar
-  }
-
-  last_bar_time = current_bar_time;
-
-  // Check if enough bars are available
-  int bars = Bars(_Symbol, PERIOD_CURRENT);
-  if (bars < MIN_BARS)
-  {
-    Print("Not enough historical bars available: ", bars, " (need at least ", MIN_BARS, ")");
-    return;
-  }
-
-  // Process features
-  ProcessAndLogFeatures();
+   // Only process features on completed bars
+   static datetime last_bar_time = 0;
+   datetime current_bar_time = iTime(_Symbol, PERIOD_CURRENT, 0);
+   
+   if(last_bar_time == current_bar_time) {
+      return;  // Skip if not a new bar
+   }
+   
+   last_bar_time = current_bar_time;
+   
+   // Check if enough bars are available
+   int bars = Bars(_Symbol, PERIOD_CURRENT);
+   if(bars < MIN_BARS) {
+      Print("Not enough historical bars available: ", bars, " (need at least ", MIN_BARS, ")");
+      return;
+   }
+   
+   // Process features
+   ProcessAndLogFeatures();
 }
 
 //+------------------------------------------------------------------+
@@ -109,177 +99,147 @@ void OnTick()
 //+------------------------------------------------------------------+
 void ProcessAndLogFeatures()
 {
-  // Copy indicator values with sufficient buffer for calculations
-  int num_bars = MathMin(100, Bars(_Symbol, PERIOD_CURRENT)); // Limit to 100 bars for efficiency
-
-  // Prepare arrays
-  double close[], high[], low[], open[];
-  long volume[]; // Changed from double[] to long[]
-  double rsi[], atr[], atr_sma[], upper_bb[], lower_bb[], adx[];
-
-  ArraySetAsSeries(close, true);
-  ArraySetAsSeries(high, true);
-  ArraySetAsSeries(low, true);
-  ArraySetAsSeries(open, true);
-  ArraySetAsSeries(volume, true);
-  ArraySetAsSeries(rsi, true);
-  ArraySetAsSeries(atr, true);
-  ArraySetAsSeries(atr_sma, true);
-  ArraySetAsSeries(upper_bb, true);
-  ArraySetAsSeries(lower_bb, true);
-  ArraySetAsSeries(adx, true);
-
-  // Copy price data
-  if (CopyClose(_Symbol, PERIOD_CURRENT, 0, num_bars, close) <= 0)
-    return;
-  if (CopyHigh(_Symbol, PERIOD_CURRENT, 0, num_bars, high) <= 0)
-    return;
-  if (CopyLow(_Symbol, PERIOD_CURRENT, 0, num_bars, low) <= 0)
-    return;
-  if (CopyOpen(_Symbol, PERIOD_CURRENT, 0, num_bars, open) <= 0)
-    return;
-  if (CopyTickVolume(_Symbol, PERIOD_CURRENT, 0, num_bars, volume) <= 0)
-    return;
-
-  // Copy indicator values
-  if (CopyBuffer(handle_rsi, 0, 0, num_bars, rsi) <= 0)
-    return;
-  if (CopyBuffer(handle_atr, 0, 0, num_bars, atr) <= 0)
-    return;
-  if (CopyBuffer(handle_atr_sma, 0, 0, num_bars, atr_sma) <= 0)
-    return;
-  if (CopyBuffer(handle_bb, 1, 0, num_bars, upper_bb) <= 0)
-    return; // Upper band = 1
-  if (CopyBuffer(handle_bb, 2, 0, num_bars, lower_bb) <= 0)
-    return; // Lower band = 2
-  if (CopyBuffer(handle_adx, 0, 0, num_bars, adx) <= 0)
-    return; // ADX line = 0
-
-  // Use the last completed bar (index 1), not the current incomplete bar (index 0)
-  int idx = 1;
-
-  // Make sure we have enough bars
-  if (num_bars <= idx)
-  {
-    Print("Not enough bars for processing (need at least ", idx + 1, ")");
-    return;
-  }
-
-  // ===== Using NumPy-like functions for calculations =====
-
-  // Calculate returns - using NumPy-like diff and divide
-  double returns = 0.0;
-  if (idx < num_bars - 1)
-  {
-    double diff_result[];
-    Numpy::diff(close, diff_result); // Calculate close[i] - close[i+1]
-
-    double returns_array[];
-    ArrayResize(returns_array, ArraySize(diff_result));
-    double divisor[] = {close[idx + 1]}; // We only need this element for the calculation
-    Numpy::divide(diff_result, divisor, returns_array);
-    returns = returns_array[0]; // Get the first element (most recent)
-  }
-  // Clip returns to [-0.1, 0.1] range
-  returns = MathMin(MathMax(returns, -0.1), 0.1);
-
-  // Normalize RSI from [0, 100] to [-1, 1]
-  double rsi_norm = rsi[idx] / 50.0 - 1.0;
-
-  // Normalize ATR (relative to its own moving average)
-  // Using NumPy-like divide for atr / atr_sma
-  double atr_ratio = atr[idx] / (atr_sma[idx] + 1e-8);
-  double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / (MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO) - 1.0;
-  atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
-
-  // Volatility breakout feature
-  double band_range = upper_bb[idx] - lower_bb[idx];
-  band_range = band_range < 1e-8 ? 1e-8 : band_range;
-  double position = close[idx] - lower_bb[idx];
-  double volatility_breakout = position / band_range;
-  volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0); // clip to [0, 1]
-  // Convert to [-1, 1] range
-  volatility_breakout = volatility_breakout * 2.0 - 1.0;
-  volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0);
-
-  // Trend strength from ADX
-  double trend_strength = MathMin(MathMax(adx[idx] / 25.0 - 1.0, -1.0), 1.0);
-
-  // Candle pattern - Using NumPy-like maximum and minimum
-  double body = close[idx] - open[idx];
-  double max_price[] = {close[idx], open[idx]};
-  double min_price[] = {close[idx], open[idx]};
-  double max_result[], min_result[];
-
-  // Using element-wise max/min to simulate np.maximum and np.minimum
-  Numpy::maximum(close, open, max_result);
-  Numpy::minimum(close, open, min_result);
-
-  double upper_wick = high[idx] - max_result[0];
-  double lower_wick = min_result[0] - low[idx];
-  double range = MathMax(high[idx] - low[idx], 1e-8);
-
-  double body_ratio = body / range;
-  double wick_ratio = 0.0;
-  if (upper_wick + lower_wick > 1e-8)
-  {
-    wick_ratio = (upper_wick - lower_wick) / (upper_wick + lower_wick);
-  }
-  double candle_pattern = (body_ratio + wick_ratio) / 2.0;
-  candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0); // clip to [-1, 1]
-
-  // Time encoding features - Using NumPy-like sin and cos
-  datetime time = iTime(_Symbol, PERIOD_CURRENT, idx);
-  MqlDateTime dt;
-  TimeToStruct(time, dt);
-  int minutes_in_day = 24 * 60;
-  int time_index = dt.hour * 60 + dt.min;
-  double time_array[] = {2.0 * M_PI * time_index / minutes_in_day};
-  double sin_result[], cos_result[];
-
-  Numpy::sin(time_array, sin_result);
-  Numpy::cos(time_array, cos_result);
-  double sin_time = sin_result[0];
-  double cos_time = cos_result[0];
-
-  // Volume change
-  double volume_pct = 0;
-  if (idx < num_bars - 1 && volume[idx + 1] > 0)
-  {
-    // Cast to double before division to prevent loss of precision
-    volume_pct = ((double)volume[idx] - (double)volume[idx + 1]) / (double)volume[idx + 1];
-  }
-  volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
-
-  // Log feature values with timestamp for easy comparison
-  Print("==== Features at ", TimeToString(time, TIME_DATE | TIME_MINUTES | TIME_SECONDS), " ====");
-  Print("returns = ", DoubleToString(returns, 8), " | [-0.1, 0.1]");
-  Print("rsi = ", DoubleToString(rsi_norm, 8), " | [-1, 1] (raw: ", DoubleToString(rsi[idx], 2), ")");
-  Print("atr = ", DoubleToString(atr_norm, 8), " | [-1, 1] (raw: ", DoubleToString(atr[idx], 8), ", ratio: ", DoubleToString(atr_ratio, 8), ")");
-  Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [-1, 1]");
-  Print("trend_strength = ", DoubleToString(trend_strength, 8), " | [-1, 1] (raw ADX: ", DoubleToString(adx[idx], 2), ")");
-  Print("candle_pattern = ", DoubleToString(candle_pattern, 8), " | [-1, 1]");
-  Print("sin_time = ", DoubleToString(sin_time, 8), " | [-1, 1]");
-  Print("cos_time = ", DoubleToString(cos_time, 8), " | [-1, 1]");
-  Print("volume_change = ", DoubleToString(volume_pct, 8), " | [-1, 1]");
-
-  // Print comparisons to Python features
-  Print("\nCompare with Python (expected values):");
-  Print("returns        MQL5: ", DoubleToString(returns, 6), " | Python: -0.001007");
-  Print("rsi            MQL5: ", DoubleToString(rsi_norm, 6), " | Python: -0.258830");
-  Print("atr            MQL5: ", DoubleToString(atr_norm, 6), " | Python: 1.000000");
-  Print("volatility_bo  MQL5: ", DoubleToString(volatility_breakout, 6), " | Python: -1.000000");
-  Print("trend_strength MQL5: ", DoubleToString(trend_strength, 6), " | Python: 0.089612");
-  Print("candle_pattern MQL5: ", DoubleToString(candle_pattern, 6), " | Python: 0.130526");
-  Print("sin_time       MQL5: ", DoubleToString(sin_time, 6), " | Python: 0.991445");
-  Print("cos_time       MQL5: ", DoubleToString(cos_time, 6), " | Python: -0.079550");
-  Print("volume_change  MQL5: ", DoubleToString(volume_pct, 6), " | Python: 0.279712");
-
-  // Log feature values in comma-separated format for easy copying
-  string csv_format = StringFormat("%s,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f",
-                                   TimeToString(time, TIME_DATE | TIME_MINUTES | TIME_SECONDS),
-                                   returns, rsi_norm, atr_norm, volatility_breakout,
+   // Copy indicator values with sufficient buffer for calculations
+   int num_bars = MathMin(100, Bars(_Symbol, PERIOD_CURRENT)); // Limit to 100 bars for efficiency
+   
+   // Prepare arrays
+   double close[], high[], low[], open[];
+   long volume[];    // Changed from double[] to long[]
+   double rsi[], atr[], atr_sma[], upper_bb[], lower_bb[], adx[];
+   
+   ArraySetAsSeries(close, true);
+   ArraySetAsSeries(high, true);
+   ArraySetAsSeries(low, true);
+   ArraySetAsSeries(open, true);
+   ArraySetAsSeries(volume, true);
+   ArraySetAsSeries(rsi, true);
+   ArraySetAsSeries(atr, true);
+   ArraySetAsSeries(atr_sma, true);
+   ArraySetAsSeries(upper_bb, true);
+   ArraySetAsSeries(lower_bb, true);
+   ArraySetAsSeries(adx, true);
+   
+   // Copy price data
+   if(CopyClose(_Symbol, PERIOD_CURRENT, 0, num_bars, close) <= 0) return;
+   if(CopyHigh(_Symbol, PERIOD_CURRENT, 0, num_bars, high) <= 0) return;
+   if(CopyLow(_Symbol, PERIOD_CURRENT, 0, num_bars, low) <= 0) return;
+   if(CopyOpen(_Symbol, PERIOD_CURRENT, 0, num_bars, open) <= 0) return;
+   if(CopyTickVolume(_Symbol, PERIOD_CURRENT, 0, num_bars, volume) <= 0) return;
+   
+   // Copy indicator values
+   if(CopyBuffer(handle_rsi, 0, 0, num_bars, rsi) <= 0) return;
+   if(CopyBuffer(handle_atr, 0, 0, num_bars, atr) <= 0) return;
+   if(CopyBuffer(handle_atr_sma, 0, 0, num_bars, atr_sma) <= 0) return;
+   if(CopyBuffer(handle_bb, 1, 0, num_bars, upper_bb) <= 0) return;  // Upper band = 1
+   if(CopyBuffer(handle_bb, 2, 0, num_bars, lower_bb) <= 0) return;  // Lower band = 2
+   if(CopyBuffer(handle_adx, 0, 0, num_bars, adx) <= 0) return;      // ADX line = 0
+   
+   // Use the last completed bar (index 1), not the current incomplete bar (index 0)
+   int idx = 1;
+   
+   // Make sure we have enough bars
+   if(num_bars <= idx) {
+      Print("Not enough bars for processing (need at least ", idx + 1, ")");
+      return;
+   }
+   
+   // Calculate returns - IMPORTANT: Use the right formula that matches Python
+   // Python: returns = np.diff(close) / close[:-1]
+   double returns = 0.0;
+   if(idx < num_bars-1) {
+      // In Python: returns[i] = (close[i+1] - close[i]) / close[i]
+      // With ArraySetAsSeries=true, idx=1 is the last completed bar
+      returns = (close[idx] - close[idx+1]) / close[idx+1];
+   }
+   returns = MathMin(MathMax(returns, -0.1), 0.1); // clip to [-0.1, 0.1]
+   
+   // Normalize RSI from [0, 100] to [-1, 1] - match Python exactly
+   double rsi_norm = rsi[idx] / 50.0 - 1.0;
+   
+   // Normalize ATR (relative to its own moving average)
+   double atr_ratio = atr[idx] / (atr_sma[idx] + 1e-8);
+   // Fix scaling to match Python using the MIN/MAX_EXPECTED_ATR_RATIO constants
+   double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / (MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO) - 1.0;
+   atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
+   
+   // Volatility breakout feature - match Python exactly
+   // In Python: position = close - lower_band; volatility_breakout = position / band_range
+   double band_range = upper_bb[idx] - lower_bb[idx];
+   band_range = band_range < 1e-8 ? 1e-8 : band_range;
+   double position = close[idx] - lower_bb[idx];
+   double volatility_breakout = position / band_range;
+   volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0); // clip to [0, 1]
+   // Convert to [-1, 1] range like in Python - IMPORTANT FIX
+   volatility_breakout = volatility_breakout * 2.0 - 1.0;
+   volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0); // ensure proper range
+   
+   // Trend strength from ADX - match Python exactly
+   // Python: trend_strength = np.clip(adx/25 - 1, -1, 1)
+   double trend_strength = MathMin(MathMax(adx[idx]/25.0 - 1.0, -1.0), 1.0); // clip to [-1, 1]
+   
+   // Candle pattern - match Python's calculation exactly
+   double body = close[idx] - open[idx];
+   double upper_wick = high[idx] - MathMax(close[idx], open[idx]);
+   double lower_wick = MathMin(close[idx], open[idx]) - low[idx];
+   double range = MathMax(high[idx] - low[idx], 1e-8);
+   
+   // Fix: Use separate components then average them
+   double body_ratio = body / range;
+   double wick_ratio = 0.0;
+   if(upper_wick + lower_wick > 1e-8) {
+      wick_ratio = (upper_wick - lower_wick) / (upper_wick + lower_wick);
+   }
+   double candle_pattern = (body_ratio + wick_ratio) / 2.0;
+   candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0); // clip to [-1, 1]
+   
+   // Time encoding features
+   datetime time = iTime(_Symbol, PERIOD_CURRENT, idx);
+   MqlDateTime dt;
+   TimeToStruct(time, dt);
+   int minutes_in_day = 24 * 60;
+   int time_index = dt.hour * 60 + dt.min;
+   double sin_time = MathSin(2 * M_PI * time_index / minutes_in_day);
+   double cos_time = MathCos(2 * M_PI * time_index / minutes_in_day);
+   
+   // Volume change - match Python's calculation exactly
+   // Python: volume_pct[1:] = np.diff(volume) / volume[:-1]
+   double volume_pct = 0;
+   if(idx < num_bars-1 && volume[idx+1] > 0) {
+      // Calculate volume change exactly like in Python
+      // Cast to double before division to prevent loss of precision
+      volume_pct = ((double)volume[idx] - (double)volume[idx+1]) / (double)volume[idx+1];
+   }
+   volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
+   
+   // Log feature values with timestamp for easy comparison
+   Print("==== Features at ", TimeToString(time, TIME_DATE|TIME_MINUTES|TIME_SECONDS), " ====");
+   Print("returns = ", DoubleToString(returns, 8), " | [-0.1, 0.1]");
+   Print("rsi = ", DoubleToString(rsi_norm, 8), " | [-1, 1] (raw: ", DoubleToString(rsi[idx], 2), ")");
+   Print("atr = ", DoubleToString(atr_norm, 8), " | [-1, 1] (raw: ", DoubleToString(atr[idx], 8), ", ratio: ", DoubleToString(atr_ratio, 8), ")");
+   Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [-1, 1]");
+   Print("trend_strength = ", DoubleToString(trend_strength, 8), " | [-1, 1] (raw ADX: ", DoubleToString(adx[idx], 2), ")");
+   Print("candle_pattern = ", DoubleToString(candle_pattern, 8), " | [-1, 1]");
+   Print("sin_time = ", DoubleToString(sin_time, 8), " | [-1, 1]");
+   Print("cos_time = ", DoubleToString(cos_time, 8), " | [-1, 1]");
+   Print("volume_change = ", DoubleToString(volume_pct, 8), " | [-1, 1]");
+   
+   // Print comparisons to Python features
+   Print("\nCompare with Python (expected values):");
+   Print("returns        MQL5: ", DoubleToString(returns, 6), " | Python: -0.001007");
+   Print("rsi            MQL5: ", DoubleToString(rsi_norm, 6), " | Python: -0.258830");
+   Print("atr            MQL5: ", DoubleToString(atr_norm, 6), " | Python: 1.000000");
+   Print("volatility_bo  MQL5: ", DoubleToString(volatility_breakout, 6), " | Python: -1.000000");
+   Print("trend_strength MQL5: ", DoubleToString(trend_strength, 6), " | Python: 0.089612");
+   Print("candle_pattern MQL5: ", DoubleToString(candle_pattern, 6), " | Python: 0.130526");
+   Print("sin_time       MQL5: ", DoubleToString(sin_time, 6), " | Python: 0.991445");
+   Print("cos_time       MQL5: ", DoubleToString(cos_time, 6), " | Python: -0.079550");
+   Print("volume_change  MQL5: ", DoubleToString(volume_pct, 6), " | Python: 0.279712");
+   
+   // Log feature values in comma-separated format for easy copying
+   string csv_format = StringFormat("%s,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f",
+                                   TimeToString(time, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
+                                   returns, rsi_norm, atr_norm, volatility_breakout, 
                                    trend_strength, candle_pattern, sin_time, cos_time, volume_pct);
-
-  Print("CSV Format: ", csv_format);
+   
+   Print("CSV Format: ", csv_format);
 }
