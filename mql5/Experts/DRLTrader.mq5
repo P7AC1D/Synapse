@@ -485,15 +485,12 @@ bool PrepareModelInput() {
                 SymbolInfoDouble(_Symbol, SYMBOL_ASK);
                 
             // Calculate raw P&L in currency units
-            double contract_size = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);  // 100 for Gold
             double point_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE) / 
                                SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
             double profit_points = ((current_price - CurrentPosition.entryPrice) / 
                                   SymbolInfoDouble(_Symbol, SYMBOL_POINT)) * 
                                  (CurrentPosition.direction > 0 ? 1 : -1);
-            
-            // Include contract size in P&L calculation
-            double pnl = profit_points * CurrentPosition.lotSize * point_value * contract_size;
+            double pnl = profit_points * CurrentPosition.lotSize * point_value;
             
             // Normalize against account balance (between -1 and 1)
             unrealized_pnl = MathMin(MathMax(pnl / AccountInfoDouble(ACCOUNT_BALANCE), -1.0), 1.0);
