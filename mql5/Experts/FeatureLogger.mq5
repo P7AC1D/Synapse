@@ -220,26 +220,4 @@ void ProcessAndLogFeatures()
    Print("candle_pattern = ", DoubleToString(candle_pattern, 8), " | [-1, 1]");
    Print("sin_time = ", DoubleToString(sin_time, 8), " | [-1, 1]");
    Print("cos_time = ", DoubleToString(cos_time, 8), " | [-1, 1]");
-   
-   // Print comparisons to Python features - IMPORTANT: Keep these comments updated with actual values
-   // This section should reflect the actual order from Python's get_feature_names()
-   Print("\nCompare with Python (expected values):");
-   Print("returns        MQL5: ", DoubleToString(returns, 6), " | Python: -0.001007");
-   Print("rsi            MQL5: ", DoubleToString(rsi_norm, 6), " | Python: -0.258830");
-   Print("atr            MQL5: ", DoubleToString(atr_norm, 6), " | Python: 1.000000");
-   Print("volume_change  MQL5: ", DoubleToString(volume_pct, 6), " | Python: 0.279712");
-   Print("volatility_bo  MQL5: ", DoubleToString(volatility_breakout, 6), " | Python: 0.000000");
-   Print("trend_strength MQL5: ", DoubleToString(trend_strength, 6), " | Python: 0.089612");
-   Print("candle_pattern MQL5: ", DoubleToString(candle_pattern, 6), " | Python: 0.130526");
-   Print("sin_time       MQL5: ", DoubleToString(sin_time, 6), " | Python: 0.991445");
-   Print("cos_time       MQL5: ", DoubleToString(cos_time, 6), " | Python: -0.079550");
-   
-   // Log feature values in comma-separated format for easy copying - MATCH THE ORDER IN PYTHON
-   string csv_format = StringFormat("%s,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f",
-                                   TimeToString(time, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
-                                   returns, rsi_norm, atr_norm, volume_pct,
-                                   volatility_breakout, trend_strength, candle_pattern, 
-                                   sin_time, cos_time);
-   
-   Print("CSV Format: ", csv_format);
 }
