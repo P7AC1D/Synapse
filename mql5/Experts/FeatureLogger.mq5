@@ -162,16 +162,23 @@ void ProcessAndLogFeatures()
    double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / (MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO) - 1.0;
    atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
    
+   // Volume change - match Python's calculation exactly
+   // Python: volume_pct[1:] = np.diff(volume) / volume[:-1]
+   double volume_pct = 0;
+   if(idx < num_bars-1 && volume[idx+1] > 0) {
+      // Calculate volume change exactly like in Python
+      // Cast to double before division to prevent loss of precision
+      volume_pct = ((double)volume[idx] - (double)volume[idx+1]) / (double)volume[idx+1];
+   }
+   volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
+   
    // Volatility breakout feature - match Python exactly
    // In Python: position = close - lower_band; volatility_breakout = position / band_range
    double band_range = upper_bb[idx] - lower_bb[idx];
    band_range = band_range < 1e-8 ? 1e-8 : band_range;
    double position = close[idx] - lower_bb[idx];
    double volatility_breakout = position / band_range;
-   volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0); // clip to [0, 1]
-   // Convert to [-1, 1] range like in Python - IMPORTANT FIX
-   volatility_breakout = volatility_breakout * 2.0 - 1.0;
-   volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0); // ensure proper range
+   volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0); // clip to [0, 1] to match Python
    
    // Trend strength from ADX - match Python exactly
    // Python: trend_strength = np.clip(adx/25 - 1, -1, 1)
@@ -201,45 +208,38 @@ void ProcessAndLogFeatures()
    double sin_time = MathSin(2 * M_PI * time_index / minutes_in_day);
    double cos_time = MathCos(2 * M_PI * time_index / minutes_in_day);
    
-   // Volume change - match Python's calculation exactly
-   // Python: volume_pct[1:] = np.diff(volume) / volume[:-1]
-   double volume_pct = 0;
-   if(idx < num_bars-1 && volume[idx+1] > 0) {
-      // Calculate volume change exactly like in Python
-      // Cast to double before division to prevent loss of precision
-      volume_pct = ((double)volume[idx] - (double)volume[idx+1]) / (double)volume[idx+1];
-   }
-   volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
-   
    // Log feature values with timestamp for easy comparison
    Print("==== Features at ", TimeToString(time, TIME_DATE|TIME_MINUTES|TIME_SECONDS), " ====");
+   // Match exactly the order in Python's get_feature_names() method:
    Print("returns = ", DoubleToString(returns, 8), " | [-0.1, 0.1]");
    Print("rsi = ", DoubleToString(rsi_norm, 8), " | [-1, 1] (raw: ", DoubleToString(rsi[idx], 2), ")");
    Print("atr = ", DoubleToString(atr_norm, 8), " | [-1, 1] (raw: ", DoubleToString(atr[idx], 8), ", ratio: ", DoubleToString(atr_ratio, 8), ")");
-   Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [-1, 1]");
+   Print("volume_change = ", DoubleToString(volume_pct, 8), " | [-1, 1]");
+   Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [0, 1]");
    Print("trend_strength = ", DoubleToString(trend_strength, 8), " | [-1, 1] (raw ADX: ", DoubleToString(adx[idx], 2), ")");
    Print("candle_pattern = ", DoubleToString(candle_pattern, 8), " | [-1, 1]");
    Print("sin_time = ", DoubleToString(sin_time, 8), " | [-1, 1]");
    Print("cos_time = ", DoubleToString(cos_time, 8), " | [-1, 1]");
-   Print("volume_change = ", DoubleToString(volume_pct, 8), " | [-1, 1]");
    
-   // Print comparisons to Python features
+   // Print comparisons to Python features - IMPORTANT: Keep these comments updated with actual values
+   // This section should reflect the actual order from Python's get_feature_names()
    Print("\nCompare with Python (expected values):");
    Print("returns        MQL5: ", DoubleToString(returns, 6), " | Python: -0.001007");
    Print("rsi            MQL5: ", DoubleToString(rsi_norm, 6), " | Python: -0.258830");
    Print("atr            MQL5: ", DoubleToString(atr_norm, 6), " | Python: 1.000000");
-   Print("volatility_bo  MQL5: ", DoubleToString(volatility_breakout, 6), " | Python: -1.000000");
+   Print("volume_change  MQL5: ", DoubleToString(volume_pct, 6), " | Python: 0.279712");
+   Print("volatility_bo  MQL5: ", DoubleToString(volatility_breakout, 6), " | Python: 0.000000");
    Print("trend_strength MQL5: ", DoubleToString(trend_strength, 6), " | Python: 0.089612");
    Print("candle_pattern MQL5: ", DoubleToString(candle_pattern, 6), " | Python: 0.130526");
    Print("sin_time       MQL5: ", DoubleToString(sin_time, 6), " | Python: 0.991445");
    Print("cos_time       MQL5: ", DoubleToString(cos_time, 6), " | Python: -0.079550");
-   Print("volume_change  MQL5: ", DoubleToString(volume_pct, 6), " | Python: 0.279712");
    
-   // Log feature values in comma-separated format for easy copying
+   // Log feature values in comma-separated format for easy copying - MATCH THE ORDER IN PYTHON
    string csv_format = StringFormat("%s,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f",
                                    TimeToString(time, TIME_DATE|TIME_MINUTES|TIME_SECONDS),
-                                   returns, rsi_norm, atr_norm, volatility_breakout, 
-                                   trend_strength, candle_pattern, sin_time, cos_time, volume_pct);
+                                   returns, rsi_norm, atr_norm, volume_pct,
+                                   volatility_breakout, trend_strength, candle_pattern, 
+                                   sin_time, cos_time);
    
    Print("CSV Format: ", csv_format);
 }
