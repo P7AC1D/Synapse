@@ -105,7 +105,7 @@ void ProcessAndLogFeatures()
    // Prepare arrays
    double close[], high[], low[], open[];
    long volume[];    // Changed from double[] to long[]
-   double rsi[], atr[], atr_sma[], upper_bb[], lower_bb[], adx[];
+   double rsi[], atr[], upper_bb[], lower_bb[], adx[];
    
    ArraySetAsSeries(close, true);
    ArraySetAsSeries(high, true);
@@ -114,7 +114,6 @@ void ProcessAndLogFeatures()
    ArraySetAsSeries(volume, true);
    ArraySetAsSeries(rsi, true);
    ArraySetAsSeries(atr, true);
-   ArraySetAsSeries(atr_sma, true);
    ArraySetAsSeries(upper_bb, true);
    ArraySetAsSeries(lower_bb, true);
    ArraySetAsSeries(adx, true);
@@ -129,7 +128,6 @@ void ProcessAndLogFeatures()
    // Copy indicator values
    if(CopyBuffer(handle_rsi, 0, 0, num_bars, rsi) <= 0) return;
    if(CopyBuffer(handle_atr, 0, 0, num_bars, atr) <= 0) return;
-   if(CopyBuffer(handle_atr_sma, 0, 0, num_bars, atr_sma) <= 0) return;
    if(CopyBuffer(handle_bb, 1, 0, num_bars, upper_bb) <= 0) return;  // Upper band = 1
    if(CopyBuffer(handle_bb, 2, 0, num_bars, lower_bb) <= 0) return;  // Lower band = 2
    if(CopyBuffer(handle_adx, 0, 0, num_bars, adx) <= 0) return;      // ADX line = 0
@@ -143,12 +141,39 @@ void ProcessAndLogFeatures()
       return;
    }
    
+   // ***NEW CODE: Calculate ATR SMA manually exactly like Python does***
+   // Python: window_size = 20
+   // Python: atr_sma = pd.Series(atr).rolling(window_size, min_periods=1).mean().values
+   int window_size = 20;
+   
+   // Manually calculate ATR SMA to exactly match Python's pd.Series.rolling().mean()
+   double atr_sma_value = 0;
+   int count = 0;
+   
+   // Loop through the rolling window (oldest to newest)
+   // Note: with ArraySetAsSeries=true, higher indices = older data
+   for(int i = idx; i < idx + window_size && i < num_bars; i++) {
+      atr_sma_value += atr[i];
+      count++;
+   }
+   
+   // Calculate mean with actual count (min_periods=1 in Python)
+   atr_sma_value = (count > 0) ? atr_sma_value / count : 0;
+   
+   // Normalize ATR exactly like Python does
+   double atr_ratio = atr[idx] / (atr_sma_value + 1e-8);  // Add small epsilon like Python
+   
+   // Scale from typical ATR/SMA ratio range [0.5, 2.0] to [-1, 1] - Exact Python formula
+   double min_expected_ratio = 0.5;
+   double max_expected_ratio = 2.0;
+   double expected_range = max_expected_ratio - min_expected_ratio;
+   double atr_norm = 2.0 * (atr_ratio - min_expected_ratio) / expected_range - 1.0;
+   atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
+  
+   
    // Calculate returns - IMPORTANT: Use the right formula that matches Python
-   // Python: returns = np.diff(close) / close[:-1]
    double returns = 0.0;
    if(idx < num_bars-1) {
-      // In Python: returns[i] = (close[i+1] - close[i]) / close[i]
-      // With ArraySetAsSeries=true, idx=1 is the last completed bar
       returns = (close[idx] - close[idx+1]) / close[idx+1];
    }
    returns = MathMin(MathMax(returns, -0.1), 0.1); // clip to [-0.1, 0.1]
@@ -156,15 +181,7 @@ void ProcessAndLogFeatures()
    // Normalize RSI from [0, 100] to [-1, 1] - match Python exactly
    double rsi_norm = rsi[idx] / 50.0 - 1.0;
    
-   // Normalize ATR (relative to its own moving average)
-   double atr_ratio = atr[idx] / (atr_sma[idx] + 1e-8);
-   
-   // Python: atr_norm = 2 * (atr_ratio - min_expected_ratio) / expected_range - 1
-   double expected_range = MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO;
-   double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / expected_range - 1.0;
-   atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
-   
-   // Python: volume_pct[1:] = np.diff(volume) / volume[:-1]
+   // Volume change - match Python's calculation exactly
    double volume_pct = 0;
    if(idx < num_bars-1 && volume[idx+1] > 0) {
       // Calculate volume change exactly like in Python
