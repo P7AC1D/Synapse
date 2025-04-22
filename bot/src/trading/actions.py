@@ -147,7 +147,7 @@ class ActionHandler:
         # Get current spread for unrealized P&L calculation
         current_spread = self.env.prices['spread'][self.env.current_step] * self.env.POINT_VALUE
         
-        # Calculate raw P&L first
+        # Calculate unrealized P/L including spread impact
         if direction == 1:  # Long position
             current_exit_price = current_price - current_spread
             profit_points = current_exit_price - entry_price
@@ -155,10 +155,7 @@ class ActionHandler:
             current_exit_price = current_price + current_spread
             profit_points = entry_price - current_exit_price
             
-        # Calculate P&L in account currency
-        pnl = profit_points * lot_size * self.env.POINT_VALUE
+        unrealized_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
+        profit_pips = profit_points / self.env.PIP_VALUE
         
-        # Normalize P&L as percentage of balance (between -1 and 1)
-        normalized_pnl = min(max(pnl / self.env.balance, -1.0), 1.0)
-        
-        return normalized_pnl, profit_points
+        return unrealized_pnl, profit_pips

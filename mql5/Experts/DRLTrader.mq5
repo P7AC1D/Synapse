@@ -484,16 +484,12 @@ bool PrepareModelInput() {
                 SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
                 SymbolInfoDouble(_Symbol, SYMBOL_ASK);
                 
-            // Calculate raw P&L in currency units
-            double point_value = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE) / 
-                               SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-            double profit_points = ((current_price - CurrentPosition.entryPrice) / 
-                                  SymbolInfoDouble(_Symbol, SYMBOL_POINT)) * 
-                                 (CurrentPosition.direction > 0 ? 1 : -1);
-            double pnl = profit_points * CurrentPosition.lotSize * point_value;
+            // Calculate PnL as percentage of entry price
+            unrealized_pnl = ((current_price - CurrentPosition.entryPrice) / CurrentPosition.entryPrice) * 
+                            (CurrentPosition.direction > 0 ? 1 : -1);
             
-            // Normalize against account balance (between -1 and 1)
-            unrealized_pnl = MathMin(MathMax(pnl / AccountInfoDouble(ACCOUNT_BALANCE), -1.0), 1.0);
+            // Scale to match Python's range
+            unrealized_pnl = MathMin(MathMax(unrealized_pnl, -1.0), 1.0);
         }
         
         model_input_data[idx + 9] = (float)position_type;
