@@ -220,6 +220,8 @@ class TradingBot:
             current_balance = self.mt5.get_account_balance()
             self.model.initial_balance = current_balance
             
+            data = data.iloc[:-1]  # Exclude the last row for prediction as its not completed yet
+            
             # Make prediction with position context
             prediction = self.model.predict_single(
                 data,

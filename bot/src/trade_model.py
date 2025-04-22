@@ -110,8 +110,7 @@ class TradeModel:
         
         # If no LSTM states exist, preload with historical data
         if self.lstm_states is None and len(data_frame) > 1:
-            historical_data = data_frame.iloc[:-1]  # All but the last bar
-            self.preload_states(historical_data)
+            self.preload_states(data)
             
         # Prepare data
         data = self.prepare_data(data_frame)
