@@ -103,8 +103,7 @@ void ProcessAndLogFeatures()
    int num_bars = MathMin(100, Bars(_Symbol, PERIOD_CURRENT)); // Limit to 100 bars for efficiency
    
    // Prepare arrays
-   double close[], high[], low[], open[];
-   long volume[];  // Changed from double to long
+   double close[], high[], low[], open[], volume[];
    double rsi[], atr[], atr_sma[], upper_bb[], lower_bb[], adx[];
    
    ArraySetAsSeries(close, true);
@@ -119,52 +118,71 @@ void ProcessAndLogFeatures()
    ArraySetAsSeries(lower_bb, true);
    ArraySetAsSeries(adx, true);
    
-   // Copy price data (start from 1 to skip current incomplete bar)
-   if(CopyClose(_Symbol, PERIOD_CURRENT, 1, num_bars, close) <= 0) return;
-   if(CopyHigh(_Symbol, PERIOD_CURRENT, 1, num_bars, high) <= 0) return;
-   if(CopyLow(_Symbol, PERIOD_CURRENT, 1, num_bars, low) <= 0) return;
-   if(CopyOpen(_Symbol, PERIOD_CURRENT, 1, num_bars, open) <= 0) return;
-   if(CopyTickVolume(_Symbol, PERIOD_CURRENT, 1, num_bars, volume) <= 0) return;
+   // Copy price data
+   if(CopyClose(_Symbol, PERIOD_CURRENT, 0, num_bars, close) <= 0) return;
+   if(CopyHigh(_Symbol, PERIOD_CURRENT, 0, num_bars, high) <= 0) return;
+   if(CopyLow(_Symbol, PERIOD_CURRENT, 0, num_bars, low) <= 0) return;
+   if(CopyOpen(_Symbol, PERIOD_CURRENT, 0, num_bars, open) <= 0) return;
+   if(CopyTickVolume(_Symbol, PERIOD_CURRENT, 0, num_bars, volume) <= 0) return;
    
-   // Copy indicator values (start from 1 to skip current incomplete bar)
-   if(CopyBuffer(handle_rsi, 0, 1, num_bars, rsi) <= 0) return;
-   if(CopyBuffer(handle_atr, 0, 1, num_bars, atr) <= 0) return;
-   if(CopyBuffer(handle_atr_sma, 0, 1, num_bars, atr_sma) <= 0) return;
-   if(CopyBuffer(handle_bb, 1, 1, num_bars, upper_bb) <= 0) return;  // Upper band = 1
-   if(CopyBuffer(handle_bb, 2, 1, num_bars, lower_bb) <= 0) return;  // Lower band = 2
-   if(CopyBuffer(handle_adx, 0, 1, num_bars, adx) <= 0) return;      // ADX line = 0
+   // Copy indicator values
+   if(CopyBuffer(handle_rsi, 0, 0, num_bars, rsi) <= 0) return;
+   if(CopyBuffer(handle_atr, 0, 0, num_bars, atr) <= 0) return;
+   if(CopyBuffer(handle_atr_sma, 0, 0, num_bars, atr_sma) <= 0) return;
+   if(CopyBuffer(handle_bb, 1, 0, num_bars, upper_bb) <= 0) return;  // Upper band = 1
+   if(CopyBuffer(handle_bb, 2, 0, num_bars, lower_bb) <= 0) return;  // Lower band = 2
+   if(CopyBuffer(handle_adx, 0, 0, num_bars, adx) <= 0) return;      // ADX line = 0
    
    // Only process current bar (index 0)
    int idx = 0;
    
-   // Calculate returns
-   double returns = idx < num_bars-1 ? (close[idx] - close[idx+1]) / close[idx+1] : 0;
+   // Calculate returns - IMPORTANT: Use the right formula that matches Python
+   // Python: returns = np.diff(close) / close[:-1]
+   double returns = 0.0;
+   if(idx < num_bars-1) {
+      // In Python: returns[i] = (close[i+1] - close[i]) / close[i]
+      // With ArraySetAsSeries=true, idx=0 is current and idx=1 is previous
+      returns = (close[idx] - close[idx+1]) / close[idx+1];
+   }
    returns = MathMin(MathMax(returns, -0.1), 0.1); // clip to [-0.1, 0.1]
    
-   // Normalize RSI from [0, 100] to [-1, 1]
+   // Normalize RSI from [0, 100] to [-1, 1] - match Python exactly
    double rsi_norm = rsi[idx] / 50.0 - 1.0;
    
    // Normalize ATR (relative to its own moving average)
    double atr_ratio = atr[idx] / (atr_sma[idx] + 1e-8);
+   // Fix scaling to match Python using the MIN/MAX_EXPECTED_ATR_RATIO constants
    double atr_norm = 2.0 * (atr_ratio - MIN_EXPECTED_ATR_RATIO) / (MAX_EXPECTED_ATR_RATIO - MIN_EXPECTED_ATR_RATIO) - 1.0;
    atr_norm = MathMin(MathMax(atr_norm, -1.0), 1.0); // clip to [-1, 1]
    
-   // Volatility breakout feature using Bollinger Bands
+   // Volatility breakout feature - match Python exactly
+   // In Python: position = close - lower_band; volatility_breakout = position / band_range
    double band_range = upper_bb[idx] - lower_bb[idx];
    band_range = band_range < 1e-8 ? 1e-8 : band_range;
    double position = close[idx] - lower_bb[idx];
    double volatility_breakout = position / band_range;
    volatility_breakout = MathMin(MathMax(volatility_breakout, 0.0), 1.0); // clip to [0, 1]
+   // Convert to [-1, 1] range like in Python - IMPORTANT FIX
+   volatility_breakout = volatility_breakout * 2.0 - 1.0;
+   volatility_breakout = MathMin(MathMax(volatility_breakout, -1.0), 1.0); // ensure proper range
    
-   // Trend strength from ADX
+   // Trend strength from ADX - match Python exactly
+   // Python: trend_strength = np.clip(adx/25 - 1, -1, 1)
    double trend_strength = MathMin(MathMax(adx[idx]/25.0 - 1.0, -1.0), 1.0); // clip to [-1, 1]
    
-   // Candle pattern
+   // Candle pattern - match Python's calculation exactly
    double body = close[idx] - open[idx];
    double upper_wick = high[idx] - MathMax(close[idx], open[idx]);
    double lower_wick = MathMin(close[idx], open[idx]) - low[idx];
    double range = MathMax(high[idx] - low[idx], 1e-8);
-   double candle_pattern = (body/range + (upper_wick - lower_wick)/(MathMax(upper_wick + lower_wick, 1e-8))) / 2.0;
+   
+   // Fix: Use separate components then average them
+   double body_ratio = body / range;
+   double wick_ratio = 0.0;
+   if(upper_wick + lower_wick > 1e-8) {
+      wick_ratio = (upper_wick - lower_wick) / (upper_wick + lower_wick);
+   }
+   double candle_pattern = (body_ratio + wick_ratio) / 2.0;
    candle_pattern = MathMin(MathMax(candle_pattern, -1.0), 1.0); // clip to [-1, 1]
    
    // Time encoding features
@@ -176,9 +194,11 @@ void ProcessAndLogFeatures()
    double sin_time = MathSin(2 * M_PI * time_index / minutes_in_day);
    double cos_time = MathCos(2 * M_PI * time_index / minutes_in_day);
    
-   // Volume change
+   // Volume change - match Python's calculation exactly
+   // Python: volume_pct[1:] = np.diff(volume) / volume[:-1]
    double volume_pct = 0;
    if(idx < num_bars-1 && volume[idx+1] > 0) {
+      // Calculate volume change exactly like in Python
       volume_pct = (volume[idx] - volume[idx+1]) / volume[idx+1];
    }
    volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
@@ -188,12 +208,24 @@ void ProcessAndLogFeatures()
    Print("returns = ", DoubleToString(returns, 8), " | [-0.1, 0.1]");
    Print("rsi = ", DoubleToString(rsi_norm, 8), " | [-1, 1] (raw: ", DoubleToString(rsi[idx], 2), ")");
    Print("atr = ", DoubleToString(atr_norm, 8), " | [-1, 1] (raw: ", DoubleToString(atr[idx], 8), ", ratio: ", DoubleToString(atr_ratio, 8), ")");
-   Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [0, 1]");
+   Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [-1, 1]");
    Print("trend_strength = ", DoubleToString(trend_strength, 8), " | [-1, 1] (raw ADX: ", DoubleToString(adx[idx], 2), ")");
    Print("candle_pattern = ", DoubleToString(candle_pattern, 8), " | [-1, 1]");
    Print("sin_time = ", DoubleToString(sin_time, 8), " | [-1, 1]");
    Print("cos_time = ", DoubleToString(cos_time, 8), " | [-1, 1]");
    Print("volume_change = ", DoubleToString(volume_pct, 8), " | [-1, 1]");
+   
+   // Print comparisons to Python features
+   Print("\nCompare with Python (expected values):");
+   Print("returns        MQL5: ", DoubleToString(returns, 6), " | Python: -0.001007");
+   Print("rsi            MQL5: ", DoubleToString(rsi_norm, 6), " | Python: -0.258830");
+   Print("atr            MQL5: ", DoubleToString(atr_norm, 6), " | Python: 1.000000");
+   Print("volatility_bo  MQL5: ", DoubleToString(volatility_breakout, 6), " | Python: -1.000000");
+   Print("trend_strength MQL5: ", DoubleToString(trend_strength, 6), " | Python: 0.089612");
+   Print("candle_pattern MQL5: ", DoubleToString(candle_pattern, 6), " | Python: 0.130526");
+   Print("sin_time       MQL5: ", DoubleToString(sin_time, 6), " | Python: 0.991445");
+   Print("cos_time       MQL5: ", DoubleToString(cos_time, 6), " | Python: -0.079550");
+   Print("volume_change  MQL5: ", DoubleToString(volume_pct, 6), " | Python: 0.279712");
    
    // Log feature values in comma-separated format for easy copying
    string csv_format = StringFormat("%s,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f,%.8f",
