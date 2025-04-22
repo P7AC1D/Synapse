@@ -65,15 +65,10 @@ class TradingEnv(gym.Env, EzPickle):
         self.reward_calculator = RewardCalculator(self)
         
         # Verify required columns
-        required_columns = ['open', 'close', 'high', 'low', 'spread']
+        required_columns = ['open', 'close', 'high', 'low', 'spread', 'volume']
         missing_columns = [col for col in required_columns if col not in data.columns]
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
-            
-        # Add volume if not present
-        if 'volume' not in data.columns:
-            print("Warning: 'volume' column not found, using synthetic volume data")
-            data['volume'] = np.ones(len(data))
             
         # Process data and setup spaces
         self.raw_data, self.atr_values = self.feature_processor.preprocess_data(data)
