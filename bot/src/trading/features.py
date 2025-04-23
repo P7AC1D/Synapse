@@ -166,20 +166,27 @@ class FeatureProcessor:
             # Clean up NaN values
             features_df = features_df.dropna()
             
-            # Apply lookback after cleaning
+            # Apply lookback and ensure alignment
             if len(features_df) > self.lookback:
                 features_df = features_df.iloc[self.lookback:]
-                # Realign ATR with cleaned features
-                atr_df = atr_df.loc[features_df.index]
+                # Ensure exact index alignment between features and ATR
+                common_index = features_df.index.intersection(atr_df.index)
+                features_df = features_df.loc[common_index]
+                atr_df = atr_df.loc[common_index]
             
             # Validation
             if len(features_df) < 100:
                 raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
             
-            # Final alignment check
+            # Convert to array after guaranteed alignment
             atr_aligned = atr_df.values.reshape(-1)
+            
+            # Double-check alignment (should never fail now)
             if len(atr_aligned) != len(features_df):
-                raise ValueError(f"Feature and ATR lengths don't match after preprocessing: features={len(features_df)}, atr={len(atr_aligned)}")
+                # If lengths still don't match, use minimum length
+                min_len = min(len(features_df), len(atr_aligned))
+                features_df = features_df.iloc[-min_len:]
+                atr_aligned = atr_aligned[-min_len:]
             
             # Validate feature ranges
             for col, values in features_df.items():

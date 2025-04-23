@@ -305,114 +305,71 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
         balance_per_lot=balance_per_lot,
         random_start=False
     )
-    env.reset()
+    obs, _ = env.reset()
     action_handler = env.action_handler
 
-    # Initialize tracking variables
+    # Initialize variables
     current_position = None
     total_steps = 0
-    current_step = 0
+    total_reward = 0.0
     
     # Progress tracking
     progress_steps = max(1, len(data) // 100)  # Update every 1%
     
-    # Reset model states at the start
+    # Initialize LSTM states
     model.reset_states()
-    
-    # For the feature processor and LSTM states, we need initial warmup data
-    initial_warmup = model.initial_warmup  # Use model's warmup value
-    window_size = model.window_size  # Use model's window size
+    lstm_states = None
     
     # Ensure we have enough data
-    required_bars = max(initial_warmup, window_size)
-    if len(data) < required_bars:
-        raise ValueError(f"Insufficient data: need at least {required_bars} bars, got {len(data)}")
+    if len(data) < 100:  # Minimum data requirement
+        raise ValueError(f"Insufficient data: need at least 100 bars, got {len(data)}")
     
-    # Preload the model with initial data
-    print(f"Preloading LSTM states with {initial_warmup} initial bars...")
-    try:
-        initial_data = data.iloc[:initial_warmup].copy()
-        model.preload_states(initial_data)
-        print("Successfully preloaded LSTM states with initial data")
-    except Exception as e:
-        print(f"Warning during state preloading: {e}")
-        print("Continuing with standard processing...")
+    # Main prediction loop
+    while True:
+        if total_steps % progress_steps == 0:
+            progress = (total_steps / len(data)) * 100
+            print(f"\rProgress: {progress:.1f}% (step {total_steps}/{len(data)})", end="")
     
-    # Start processing from a position with sufficient history
-    start_step = initial_warmup
-    env.current_step = start_step
-    
-    # Create initial rolling window that includes warmup period and ensures window_size
-    window_start = max(0, start_step - window_size + 1)
-    rolling_data = data.iloc[window_start:start_step + 1].copy()
-    
-    # If we don't have enough data for the full window, pad with the earliest data
-    if len(rolling_data) < window_size:
-        pad_data = data.iloc[:window_size-len(rolling_data)].copy()
-        rolling_data = pd.concat([pad_data, rolling_data])
-    
-    print(f"Starting predictions from bar {start_step} using {len(rolling_data)} bar rolling window")
-    
-    while current_step + start_step < len(data) - 1:
-        if current_step % progress_steps == 0 or current_step == 0:
-            progress = current_step / (len(data) - start_step) * 100
-            print(f"\rProgress: {progress:.1f}% (step {current_step}/{len(data) - start_step})", end="")
-            
         try:
-            # Update rolling window with new data point
-            new_idx = start_step + current_step
-            if new_idx < len(data):
-                # Remove oldest bar and add newest to maintain window size
-                rolling_data = pd.concat([
-                    rolling_data.iloc[1:],
-                    data.iloc[new_idx:new_idx + 1]
-                ])
-            
-            if len(rolling_data) < window_size:
-                raise ValueError(f"Rolling window too small: got {len(rolling_data)} bars, need {window_size}")
-            
-            # Make prediction using rolling window
-            prediction = model.predict_single(
-                rolling_data,
-                current_position=current_position,
-                verbose=verbose
+            # Process action with improved error handling (similar to evaluate method)
+            raw_action, lstm_states = model.model.predict(
+                obs,
+                state=lstm_states,
+                deterministic=True
             )
             
-            # Get the action
-            action = prediction['action']
-            
-            # Update environment's current step
-            env.current_step = start_step + current_step
-            
-            # Handle actions using ActionHandler
-            if action == 3 and current_position:  # Close
-                pnl, trade_info = action_handler.close_position()
-                if pnl != 0:
-                    env.trades.append(trade_info)
-                    env.metrics.add_trade(trade_info)
-                    env.metrics.update_balance(pnl)
-                current_position = None
-                env.current_position = None
+            # Convert action to discrete value with position check
+            try:
+                if isinstance(raw_action, np.ndarray):
+                    action_value = int(raw_action.item())
+                else:
+                    action_value = int(raw_action)
+                discrete_action = action_value % 4
                 
-            elif action in [1, 2] and not current_position:  # Buy or Sell
-                current_spread = env.prices['spread'][env.current_step] * env.POINT_VALUE
-                action_handler.execute_trade(action, current_spread)
-                current_position = env.current_position.copy() if env.current_position else None
+                # Add explicit position check and force hold if needed (same as evaluate)
+                if env.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
+                    discrete_action = 0  # Force HOLD
+            except (ValueError, TypeError):
+                discrete_action = 0
             
-            current_step += 1
+            # Execute step
+            obs, reward, done, truncated, info = env.step(discrete_action)
+            total_reward += reward
             total_steps += 1
             
+            # Update current position tracking
+            current_position = env.current_position.copy() if env.current_position else None
+            
+            if done or truncated:
+                break
+                
         except Exception as e:
-            print(f"\nError at step {current_step + start_step}: {str(e)}")
-            if "data lost in preprocessing" in str(e) and current_step < 20:
-                print("Skipping early steps until sufficient data is available...")
-            else:
-                print("Continuing with next step...")
-            current_step += 1
-            env.current_step = start_step + current_step
+            print(f"\nError at step {total_steps}: {str(e)}")
+            print("Continuing with next step...")
+            total_steps += 1
             continue
     
-    print(f"\rBacktest completed: {total_steps} steps processed")
+    print(f"\nBacktest completed: {total_steps} steps processed")
     
     # Handle any open position at the end
     if env.current_position:
@@ -422,8 +379,9 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             env.trades.append(trade_info)
             env.metrics.add_trade(trade_info)
             env.metrics.update_balance(pnl)
-            
-    return model._calculate_backtest_metrics(env, total_steps, 0)
+    
+    # Return metrics using same method as evaluate
+    return model._calculate_backtest_metrics(env, total_steps, total_reward)
 
 def main():
     parser = argparse.ArgumentParser(description='Backtest trained trading model')
