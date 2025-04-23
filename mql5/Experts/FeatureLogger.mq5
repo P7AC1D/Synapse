@@ -184,9 +184,8 @@ void ProcessAndLogFeatures()
    // Volume change - match Python's calculation exactly
    double volume_pct = 0;
    if(idx < num_bars-1 && volume[idx+1] > 0) {
-      // Calculate volume change exactly like in Python
-      // Cast to double before division to prevent loss of precision
-      volume_pct = ((double)volume[idx] - (double)volume[idx+1]) / (double)volume[idx+1];
+      // Calculate next - current instead of current - previous to match Python
+      volume_pct = ((double)volume[idx+1] - (double)volume[idx]) / (double)volume[idx];
    }
    volume_pct = MathMin(MathMax(volume_pct, -1.0), 1.0); // clip to [-1, 1]
    
@@ -235,7 +234,7 @@ void ProcessAndLogFeatures()
    Print("volume_change = ", DoubleToString(volume_pct, 8), " | [-1, 1]");
    Print("volatility_breakout = ", DoubleToString(volatility_breakout, 8), " | [0, 1]");
    Print("trend_strength = ", DoubleToString(trend_strength, 8), " | [-1, 1] (raw ADX: ", DoubleToString(adx[idx], 2), ")");
-   Print("candle_pattern = ", DoubleToString(candle_pattern, 8), " | [-1, 1]");
-   Print("sin_time = ", DoubleToString(sin_time, 8), " | [-1, 1]");
+   Print("sin_time = ", DoubleToString(sin_time, 8), " | [-1, 1]"); 
    Print("cos_time = ", DoubleToString(cos_time, 8), " | [-1, 1]");
+   Print("candle_pattern = ", DoubleToString(candle_pattern, 8), " | [-1, 1]");
 }
