@@ -295,9 +295,7 @@ def show_progress(message="Running backtest"):
         time.sleep(0.1)
 
 def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: float = 1000.0, verbose: bool = False) -> Dict[str, Any]:
-    """
-    Run a backtest using the predict_single method to simulate the live trading process.
-    """
+    """Run a backtest using the predict_single method to simulate the live trading process."""
     print("Running step-by-step prediction backtest (simulates live trading)...")
     
     # Create a trading environment for tracking trades and metrics
@@ -322,8 +320,13 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     model.reset_states()
     
     # For the feature processor and LSTM states, we need initial warmup data
-    initial_warmup = 120
-    window_size = 200  # Size of rolling window to maintain
+    initial_warmup = model.initial_warmup  # Use model's warmup value
+    window_size = model.window_size  # Use model's window size
+    
+    # Ensure we have enough data
+    required_bars = max(initial_warmup, window_size)
+    if len(data) < required_bars:
+        raise ValueError(f"Insufficient data: need at least {required_bars} bars, got {len(data)}")
     
     # Preload the model with initial data
     print(f"Preloading LSTM states with {initial_warmup} initial bars...")
@@ -339,10 +342,16 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     start_step = initial_warmup
     env.current_step = start_step
     
-    # Create initial rolling window
-    rolling_data = data.iloc[max(0, start_step - window_size):start_step + 1].copy()
+    # Create initial rolling window that includes warmup period and ensures window_size
+    window_start = max(0, start_step - window_size + 1)
+    rolling_data = data.iloc[window_start:start_step + 1].copy()
     
-    print(f"Starting predictions from bar {start_step}")
+    # If we don't have enough data for the full window, pad with the earliest data
+    if len(rolling_data) < window_size:
+        pad_data = data.iloc[:window_size-len(rolling_data)].copy()
+        rolling_data = pd.concat([pad_data, rolling_data])
+    
+    print(f"Starting predictions from bar {start_step} using {len(rolling_data)} bar rolling window")
     
     while current_step + start_step < len(data) - 1:
         if current_step % progress_steps == 0 or current_step == 0:
@@ -353,8 +362,14 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             # Update rolling window with new data point
             new_idx = start_step + current_step
             if new_idx < len(data):
-                new_data = data.iloc[new_idx:new_idx + 1]
-                rolling_data = pd.concat([rolling_data.iloc[1:], new_data])
+                # Remove oldest bar and add newest to maintain window size
+                rolling_data = pd.concat([
+                    rolling_data.iloc[1:],
+                    data.iloc[new_idx:new_idx + 1]
+                ])
+            
+            if len(rolling_data) < window_size:
+                raise ValueError(f"Rolling window too small: got {len(rolling_data)} bars, need {window_size}")
             
             # Make prediction using rolling window
             prediction = model.predict_single(
@@ -407,7 +422,7 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             env.trades.append(trade_info)
             env.metrics.add_trade(trade_info)
             env.metrics.update_balance(pnl)
-    
+            
     return model._calculate_backtest_metrics(env, total_steps, 0)
 
 def main():

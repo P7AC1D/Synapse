@@ -98,21 +98,24 @@ class FeatureProcessor:
             # Calculate technical indicators using TA-Lib
             atr, rsi, (upper_band, lower_band), trend_strength = self._calculate_indicators(high, low, close)
             
-            # Compare current ATR to its own moving average
-            window_size = 20  # Consider changing to match MQL5 if needed
+            # Store ATR in DataFrame immediately for proper alignment
+            atr_df = pd.DataFrame({'atr': atr}, index=data.index)
+            
+            # Calculate ATR normalization
+            window_size = 20
             atr_sma = pd.Series(atr).rolling(window_size, min_periods=1).mean().values
-            atr_ratio = atr / (atr_sma + 1e-8)  # How volatile is it compared to recent history?
-
-            # Scale from typical ATR/SMA ratio range [0.5, 2.0] to [-1, 1]
+            atr_ratio = atr / (atr_sma + 1e-8)
+            
+            # Scale ATR ratio
             min_expected_ratio = 0.5
             max_expected_ratio = 2.0
             expected_range = max_expected_ratio - min_expected_ratio
             atr_norm = 2 * (atr_ratio - min_expected_ratio) / expected_range - 1
-            atr_norm = np.clip(atr_norm, -1, 1)  # Ensure values stay within bounds
+            atr_norm = np.clip(atr_norm, -1, 1)
             
-            # Returns and time features
-            returns = np.diff(close) / close[:-1]
-            returns = np.insert(returns, 0, 0)
+            # Calculate other features
+            returns = np.zeros_like(close)
+            returns[1:] = np.diff(close) / close[:-1]
             returns = np.clip(returns, -0.1, 0.1)
             
             minutes_in_day = 24 * 60
@@ -120,36 +123,33 @@ class FeatureProcessor:
             sin_time = np.sin(2 * np.pi * time_index / minutes_in_day)
             cos_time = np.cos(2 * np.pi * time_index / minutes_in_day)
             
-            # Calculate price action signals
+            # Price action features
             body = close - opens
             upper_wick = high - np.maximum(close, opens)
             lower_wick = np.minimum(close, opens) - low
             range_ = high - low + 1e-8
-            
-            candle_pattern = (body/range_ + 
-                           (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2
+            candle_pattern = (body/range_ + (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2
             candle_pattern = np.clip(candle_pattern, -1, 1)
             
-            # Calculate volatility breakout
+            # Volatility breakout
             band_range = upper_band - lower_band
             band_range = np.where(band_range < 1e-8, 1e-8, band_range)
             position = close - lower_band
             volatility_breakout = np.divide(position, band_range, out=np.zeros_like(position), where=band_range!=0)
             volatility_breakout = np.clip(volatility_breakout, 0, 1)
             
-            # Calculate volume percentage change
-            volume = data['volume'].values.astype(np.float64)  # Convert to float64
-            volume_pct = np.zeros(len(volume), dtype=np.float64)  # Create float array
-            # Compare current volume with previous volume (current - previous) / previous
+            # Volume change
+            volume = data['volume'].values.astype(np.float64)
+            volume_pct = np.zeros_like(volume, dtype=np.float64)
             volume_pct[:-1] = np.divide(
                 volume[:-1] - volume[1:],
                 volume[1:],
                 out=np.zeros(len(volume)-1, dtype=np.float64),
                 where=volume[1:] != 0
             )
-            volume_pct = np.clip(volume_pct, -1, 1)  # Now safe to clip negative values
-
-            # Create features with preserved index
+            volume_pct = np.clip(volume_pct, -1, 1)
+            
+            # Create features DataFrame
             features = {
                 'returns': returns,
                 'rsi': rsi / 50 - 1,
@@ -161,63 +161,36 @@ class FeatureProcessor:
                 'cos_time': cos_time,
                 'volume_change': volume_pct
             }
-            
-            # Convert all features to DataFrame at once
             features_df = pd.DataFrame(features, index=data.index)
             
-            # Clean up features
-            orig_index = features_df.index
-            
+            # Clean up NaN values
             features_df = features_df.dropna()
-            dropped_index = orig_index.difference(features_df.index)
-            # Validate lookback size
-            if self.lookback > len(features_df) * 0.3:  # Don't allow more than 30% data loss
-                raise ValueError(f"Lookback window ({self.lookback}) is too large for data length ({len(features_df)})")
-                
-            if len(dropped_index) > 0:
-                print(f"\nDropped rows due to NaN at indices:")
-                print(dropped_index.to_list()[:5], "..." if len(dropped_index) > 5 else "")
             
-            features_df = features_df.iloc[self.lookback:]
+            # Apply lookback after cleaning
+            if len(features_df) > self.lookback:
+                features_df = features_df.iloc[self.lookback:]
+                # Realign ATR with cleaned features
+                atr_df = atr_df.loc[features_df.index]
             
-            # Validate remaining data
-            if len(features_df) < max(100, len(orig_index) * 0.5):
-                raise ValueError(f"Too much data lost in preprocessing: {len(features_df)} rows remaining from {len(orig_index)}")
-            
-            # Check for any remaining NaN values in features
-            nan_counts = features_df.isna().sum()
-            if nan_counts.any():
-                print("\nWarning: NaN values in features:")
-                for col in features_df.columns[nan_counts > 0]:
-                    print(f"  {col}: {nan_counts[col]} NaN values")
-            
+            # Validation
             if len(features_df) < 100:
-                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")            
+                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
             
-            # Convert ATR to DataFrame for proper index alignment
-            atr_df = pd.DataFrame({'atr': atr}, index=data.index)
-            
-            # Align ATR with features using index
-            atr_aligned = atr_df.loc[features_df.index].values
-            
-            # Validate alignment
+            # Final alignment check
+            atr_aligned = atr_df.values.reshape(-1)
             if len(atr_aligned) != len(features_df):
                 raise ValueError(f"Feature and ATR lengths don't match after preprocessing: features={len(features_df)}, atr={len(atr_aligned)}")
-            
-            # Final validation
-            if np.isnan(atr_aligned).any():
-                raise ValueError(f"Found {np.isnan(atr_aligned).sum()} NaN values in aligned ATR data")
             
             # Validate feature ranges
             for col, values in features_df.items():
                 if col in ['volatility_breakout']:
                     if (values < 0).any() or (values > 1).any():
                         raise ValueError(f"Feature {col} contains values outside [0, 1] range")
-                elif col not in ['returns']:  # Returns has special range [-0.1, 0.1]
+                elif col not in ['returns']:
                     if (values < -1).any() or (values > 1).any():
-                        raise ValueError(f"Feature {col} contains values outside [-1, 1] range")                        
-                
-            return features_df, atr_aligned.reshape(-1)  # Ensure 1D array
+                        raise ValueError(f"Feature {col} contains values outside [-1, 1] range")
+            
+            return features_df, atr_aligned
 
     def get_feature_names(self) -> list:
         """Get list of feature names."""

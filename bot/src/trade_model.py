@@ -36,7 +36,9 @@ class TradeModel:
             'spread'  # Price data
         ]
         
-        self.lstm_states = None  # Store LSTM states for continuous prediction
+        self.lstm_states = None  # Store LSTM states between predictions
+        self.initial_warmup = 120  # Match backtest warmup period
+        self.window_size = 200  # Match backtest rolling window
         
         # Load the model
         self.load_model()
@@ -76,139 +78,134 @@ class TradeModel:
         # Check if all required columns are present
         missing_columns = [col for col in self.required_columns if col not in data.columns]
         
-        if (missing_columns):
+        if missing_columns:
             error_msg = f"Data is missing required columns: {missing_columns}"
             self.logger.error(error_msg)
             raise ValueError(error_msg)
             
+        # Make sure we're not passing an empty dataset
+        if len(data) < 2:
+            raise ValueError(f"Data must contain at least 2 rows, got {len(data)}")
+            
         return data
         
-    def predict_single(self, data_frame: pd.DataFrame, current_position: Optional[Dict] = None, 
-                     verbose: bool = False, live_price: Optional[float] = None,
-                     currency_conversion: Optional[float] = None) -> Dict[str, Any]:
-        """
-        Make a prediction for the latest data point.
+    def predict_single(self, data: pd.DataFrame, current_position: Optional[Dict] = None, 
+                      verbose: bool = False) -> Dict[str, Any]:
+        """Make a single prediction for live trading.
         
         Args:
-            data_frame: DataFrame with market data containing at minimum:
-                       'open', 'close', 'high', 'low', 'spread' columns
-            current_position: Optional dictionary with current position info:
-                            {
-                                "direction": 1 for long/-1 for short,
-                                "entry_price": float,
-                                "lot_size": float,
-                                "entry_step": int,
-                                "entry_time": str
-                            }
-            verbose: Whether to log detailed feature values (default: False)
-            live_price: Optional current market price for live trading PnL calculation
-            currency_conversion: Optional conversion rate from trading to account currency (e.g. USD/ZAR)
+            data: DataFrame with market data
+            current_position: Optional dictionary with current position info
+            verbose: Whether to log detailed feature values
             
         Returns:
-            Dictionary with prediction details including 'action' (0-3) and 'description'
+            Dictionary with prediction and description
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_model() first.")
-        
-        # If no LSTM states exist, preload with historical data
-        if self.lstm_states is None and len(data_frame) > 1:
-            self.preload_states(data_frame)
             
-        # Prepare data
-        data = self.prepare_data(data_frame)
+        # Prepare data and environment
+        data = self.prepare_data(data)
         
-        # Create environment with position state
+        # Make sure we have enough data for the window
+        if len(data) < self.window_size:
+            raise ValueError(f"Insufficient data: need at least {self.window_size} bars, got {len(data)}")
+            
+        # Use the last window_size bars for prediction
+        window_data = data.iloc[-self.window_size:].copy()
+        
+        # Initialize states if needed
+        if self.lstm_states is None and len(data) >= self.initial_warmup:
+            self.logger.info("Initializing LSTM states with warmup data")
+            warmup_data = data.iloc[:self.initial_warmup].copy()
+            self.preload_states(warmup_data)
+            
+        # Create environment
         env = TradingEnv(
-            data=data,
+            data=window_data,
             initial_balance=self.initial_balance,
-            random_start=False,
             balance_per_lot=self.balance_per_lot,
-            live_price=live_price,
-            currency_conversion=currency_conversion
+            random_start=False
         )
+        obs, _ = env.reset()
         
-        # Set predict_context flag to use the latest data point
-        env.predict_context = True
-        
-        # Set current position if provided
+        # Get current position type
+        position_type = 0
         if current_position:
-            env.current_position = current_position.copy()  # Use copy to avoid reference issues
+            position_type = current_position.get('direction', 0)
+            env.current_position = current_position
         
-        # Get normalized observation
-        observation = env.get_observation()
-            
-        # Log features if verbose mode is enabled
-        if verbose:
-            # Get feature names from feature processor
-            feature_names = env.feature_processor.get_feature_names()
-            
-            # Create feature dictionary
-            feature_dict = dict(zip(feature_names, observation))
-            
-            # Log features
-            feature_log = "Python Feature Values:\n"
-            for name, value in feature_dict.items():
-                feature_log += f"  {name}: {value:.6f}\n"
-            
-            self.logger.info(feature_log)
-        
-        # Make prediction with LSTM state management and proper deterministic setting
-        action, self.lstm_states = self.model.predict(
-            observation, 
+        # Make prediction with state maintenance
+        action, new_lstm_states = self.model.predict(
+            obs,
             state=self.lstm_states,
-            deterministic=True     # Use deterministic for backtesting
+            deterministic=True  # Use deterministic mode for consistency
         )
+        self.lstm_states = new_lstm_states
         
-        # Process action (0=hold, 1=buy, 2=sell, 3=close) with better error handling
-        discrete_action = int(action) % 4
+        # Generate prediction description
+        description = self._generate_prediction_description(int(action), position_type)
         
-        # Create prediction result
-        result = {
-            'action': discrete_action,
-            'description': ['hold', 'buy', 'sell', 'close'][discrete_action]
+        return {
+            'action': int(action),
+            'description': description
         }
-
-        self.logger.debug(f"Prediction: {result}")
-        return result
-    
+        
+    def _generate_prediction_description(self, action: int, position_type: int) -> str:
+        """Generate a human-readable description of the prediction.
+        
+        Args:
+            action: The predicted action (0=hold, 1=buy, 2=sell, 3=close)
+            position_type: Current position type (0=none, 1=long, -1=short)
+            
+        Returns:
+            str: Description of the prediction
+        """
+        action_map = {0: 'hold', 1: 'buy', 2: 'sell', 3: 'close'}
+        position_map = {0: 'no position', 1: 'long', -1: 'short'}
+        
+        base_desc = f"Model predicts {action_map[action]}"
+        
+        if action == 0:  # Hold
+            if position_type != 0:
+                return f"{base_desc} current {position_map[position_type]} position"
+            return f"{base_desc} - stay out of market"
+            
+        elif action in [1, 2]:  # Buy or Sell
+            if position_type != 0:
+                return f"{base_desc} but rejected - {position_map[position_type]} position exists"
+            return f"{base_desc} - open new {'long' if action == 1 else 'short'} position"
+            
+        else:  # Close
+            if position_type != 0:
+                return f"{base_desc} current {position_map[position_type]} position"
+            return f"{base_desc} but rejected - no position exists"
+            
     def reset_states(self) -> None:
         """Reset the LSTM states. Call this when starting a new prediction sequence."""
         self.lstm_states = None
         
-    def preload_states(self, historical_data: pd.DataFrame) -> None:
+    def preload_states(self, data: pd.DataFrame) -> None:
         """
-        Preload LSTM states with historical data to build context.
-        
-        This is critical for LSTM models as they need sequential context.
-        Call this before making predictions on new data to ensure proper context.
+        Preload LSTM states with historical data.
         
         Args:
-            historical_data: DataFrame with past market data containing at minimum:
-                             'open', 'close', 'high', 'low', 'spread' columns
-            
-        Raises:
-            ValueError: If model not loaded or data preparation fails
+            data: DataFrame with market data for warmup
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_model() first.")
             
-        # Prepare and validate data
-        data = self.prepare_data(historical_data)
-        
-        # Reset states before preloading
-        self.reset_states()
-        
-        # Create environment for preloading
+        # Create environment for state preloading
         env = TradingEnv(
             data=data,
-            initial_balance=self.initial_balance,  # Use actual balance
-            random_start=False,
-            balance_per_lot=self.balance_per_lot  # Use configured parameter
+            initial_balance=self.initial_balance,
+            balance_per_lot=self.balance_per_lot,
+            random_start=False
         )
-        
-        # Step through historical data to build up LSTM state
         obs, _ = env.reset()
-        for _ in range(len(data)):
+        
+        # Run prediction steps to initialize states
+        while True:
             # Action doesn't matter for preloading, we only care about state updates
             _, new_lstm_states = self.model.predict(
                 obs,
@@ -216,12 +213,11 @@ class TradeModel:
                 deterministic=True
             )
             self.lstm_states = new_lstm_states  # Update states
-            obs, _, done, _, _ = env.step(1)
-            if done:
+            obs, _, done, truncated, _ = env.step(0)  # Use 0 (hold) to minimize impact
+            if done or truncated:
                 break
-                
         self.logger.info(f"LSTM states preloaded with {len(data)} historical bars")
-    
+        
     def backtest(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: float = 1000.0) -> Dict[str, Any]:
         """
         Run a backtest with the model.

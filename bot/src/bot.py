@@ -48,6 +48,7 @@ class TradingBot:
         self.last_bar_index = None
         self.lstm_states = None  # Store LSTM states between predictions
         self.current_position = None  # Track current position info
+        self.data_window = None  # Store rolling data window
         
     def setup_logging(self) -> None:
         """Configure logging with both console and file output."""
@@ -144,6 +145,23 @@ class TradingBot:
                 balance_per_lot=BALANCE_PER_LOT
             )
             
+            # Get initial data for warmup
+            initial_data = self.data_fetcher.fetch_data()
+            if initial_data is None or len(initial_data) < self.model.initial_warmup:
+                self.logger.error(f"Failed to fetch enough initial data (need {self.model.initial_warmup} bars)")
+                return False
+                
+            # Initialize data window with warmup data
+            self.data_window = initial_data.copy()
+            
+            # Preload LSTM states
+            try:
+                self.model.preload_states(initial_data)
+                self.logger.info("Successfully preloaded LSTM states")
+            except Exception as e:
+                self.logger.error(f"Failed to preload LSTM states: {e}")
+                return False
+
             # Get initial bar data
             current_bar = self.data_fetcher.fetch_current_bar()
             if current_bar is None or len(current_bar.index) == 0:
