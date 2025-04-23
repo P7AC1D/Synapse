@@ -22,10 +22,12 @@ class RewardCalculator:
         self.max_unrealized_pnl = 0.0
         
         # Reward constants
-        self.INVALID_ACTION_PENALTY = -1.0  # Penalty for invalid actions
-        self.GOOD_HOLD_REWARD = 0.2   # Base reward for holding profitable positions
-        self.LOSING_HOLD_PENALTY = -0.1  # Penalty for holding losing positions
-        self.TIME_PRESSURE_THRESHOLD = 100  # Bars before time pressure kicks in
+        self.INVALID_ACTION_PENALTY = -1.0      # Penalty for invalid actions
+        self.GOOD_HOLD_REWARD = 0.1            # Reduced reward for holding profitable positions
+        self.LOSING_HOLD_PENALTY = -0.2        # Increased penalty for holding losing positions
+        self.TIME_PRESSURE_THRESHOLD = 50       # Reduced threshold for time pressure
+        self.MAX_HOLD_TIME = 100               # Maximum hold time before forced penalties
+        self.PNL_SCALE = 1000.0               # Fixed scale for PnL rewards
         
     def _is_market_flat(self) -> bool:
         """Check if market is in consolidation using raw price action."""
@@ -76,24 +78,30 @@ class RewardCalculator:
                 reward -= profit_drawdown * 0.5
             
             if action == Action.HOLD:
+                # Enhanced hold rewards/penalties with stronger time pressure
                 if pnl > 0:
-                    # Decay the hold reward over time
-                    hold_decay = max(0.2, 1.0 - (current_hold / 100))
+                    # Faster decay for profitable positions
+                    hold_decay = max(0.1, 1.0 - (current_hold / self.TIME_PRESSURE_THRESHOLD))
                     reward += self.GOOD_HOLD_REWARD * hold_decay
-                else:
-                    # Penalty for holding losing positions
-                    reward += self.LOSING_HOLD_PENALTY
                     
-                # Add time pressure after threshold
-                if current_hold > self.TIME_PRESSURE_THRESHOLD:
-                    reward -= 0.01 * (current_hold - self.TIME_PRESSURE_THRESHOLD) / 100
+                    # Additional time pressure on profitable trades
+                    if current_hold > self.TIME_PRESSURE_THRESHOLD:
+                        reward -= 0.05 * (current_hold - self.TIME_PRESSURE_THRESHOLD) / self.TIME_PRESSURE_THRESHOLD
+                else:
+                    # Increasing penalty for holding losing positions
+                    loss_multiplier = min(3.0, 1.0 + current_hold / self.TIME_PRESSURE_THRESHOLD)
+                    reward += self.LOSING_HOLD_PENALTY * loss_multiplier
+                
+                # Force closure through extreme penalty after MAX_HOLD_TIME
+                if current_hold > self.MAX_HOLD_TIME:
+                    reward -= 0.5 * (current_hold - self.MAX_HOLD_TIME) / self.TIME_PRESSURE_THRESHOLD
                     
             elif action == Action.CLOSE:
                 # Sparse direction reward
                 reward += 1.0 if pnl > 0 else -1.0
                 
-                # Scaled PnL component
-                reward += pnl / self.trade_entry_balance
+                # Fixed-scale PnL component using PNL_SCALE
+                reward += pnl / (self.PNL_SCALE * self.env.MIN_LOTS)  # Scale relative to minimum position
                 
                 # Track direction for reversals
                 self.last_direction = position_type
@@ -110,14 +118,15 @@ class RewardCalculator:
                 self.trade_entry_balance = self.env.balance
                 self.max_unrealized_pnl = 0.0
                 
-            # Reward for staying out during consolidation
+            # Small reward for staying out during consolidation, with time limit
             if action == Action.HOLD:
-                if self._is_market_flat():
-                    reward += 0.1  # Reward for staying out of consolidating market
+                if self._is_market_flat() and current_hold <= 10:
+                    reward += 0.02  # Reduced reward to discourage permanent sitting out
                     
-        # New Balance High bonus (applies to all situations)
+        # New Balance High bonus with scaled reward
         if self.env.balance > self.previous_balance_high:
-            reward += 1.0
+            percent_gain = (self.env.balance - self.previous_balance_high) / self.previous_balance_high
+            reward += min(2.0, percent_gain * 10.0)  # Cap at 2.0 reward
             self.previous_balance_high = self.env.balance
         
         return float(reward)
