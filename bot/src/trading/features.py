@@ -141,11 +141,11 @@ class FeatureProcessor:
             # Volume change
             volume = data['volume'].values.astype(np.float64)
             volume_pct = np.zeros_like(volume, dtype=np.float64)
-            volume_pct[:-1] = np.divide(
-                volume[:-1] - volume[1:],
-                volume[1:],
+            volume_pct[1:] = np.divide(
+                volume[1:] - volume[:-1],
+                volume[:-1],
                 out=np.zeros(len(volume)-1, dtype=np.float64),
-                where=volume[1:] != 0
+                where=volume[:-1] != 0
             )
             volume_pct = np.clip(volume_pct, -1, 1)
             
