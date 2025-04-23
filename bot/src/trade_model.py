@@ -90,13 +90,16 @@ class TradeModel:
         return data
         
     def predict_single(self, data: pd.DataFrame, current_position: Optional[Dict] = None, 
-                      verbose: bool = False) -> Dict[str, Any]:
+                      verbose: bool = False, live_price: Optional[float] = None,
+                      currency_conversion: float = 1.0) -> Dict[str, Any]:
         """Make a single prediction for live trading.
         
         Args:
             data: DataFrame with market data
             current_position: Optional dictionary with current position info
             verbose: Whether to log detailed feature values
+            live_price: Current price for unrealized PnL calculation
+            currency_conversion: Currency conversion rate for PnL calculation
             
         Returns:
             Dictionary with prediction and description
@@ -134,6 +137,18 @@ class TradeModel:
         if current_position:
             position_type = current_position.get('direction', 0)
             env.current_position = current_position
+            
+            # Calculate unrealized PnL if we have a live price
+            if live_price is not None and env.current_position:
+                entry_price = env.current_position['entry_price']
+                lot_size = env.current_position['lot_size']
+                direction = env.current_position['direction']
+                
+                # Calculate P&L in points
+                price_diff = (live_price - entry_price) * direction
+                point_value = env.POINT_VALUE
+                unrealized_pnl = price_diff * lot_size * point_value * currency_conversion
+                env.metrics.update_unrealized_pnl(unrealized_pnl)
         
         # Make prediction with state maintenance
         action, new_lstm_states = self.model.predict(
