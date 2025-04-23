@@ -32,16 +32,16 @@ class RewardCalculator:
     def _is_market_flat(self) -> bool:
         """Check if market is in consolidation using raw price action."""
         current_idx = self.env.current_step
-        returns = abs(self.env.raw_data['returns'].iloc[current_idx])
-        pattern = abs(self.env.raw_data['candle_pattern'].iloc[current_idx])
+        range_ratio = self.env.raw_data['range_ratio'].iloc[current_idx]
+        body_ratio = abs(self.env.raw_data['body_ratio'].iloc[current_idx])
         volume = abs(self.env.raw_data['volume_change'].iloc[current_idx])
         
         # Market is flat when:
-        # - Returns are small (less than 0.02 or 2%)
-        # - Candle patterns are indecisive (close to 0)
+        # - Small price ranges relative to price level
+        # - Small real bodies (indecisive)
         # - Volume is not spiking
-        return (returns < 0.02 and 
-                pattern < 0.3 and 
+        return (range_ratio < 0.002 and 
+                body_ratio < 0.3 and 
                 volume < 0.5)
         
     def _is_successful_reversal(self, position_type: int, pnl: float) -> bool:

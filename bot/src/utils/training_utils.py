@@ -48,13 +48,13 @@ from callbacks.eval_callback import UnifiedEvalCallback
 # Model architecture configuration
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
-    "lstm_hidden_size": 256,          # Larger LSTM for more temporal context
-    "n_lstm_layers": 2,               # Keep 2 layers
-    "shared_lstm": False,             # Separate LSTM architectures
-    "enable_critic_lstm": True,       # Enable LSTM for value estimation
+    "lstm_hidden_size": 320,          # Increased for better temporal memory
+    "n_lstm_layers": 3,               # Added layer for deeper temporal processing
+    "shared_lstm": False,             # Keep separate architectures
+    "enable_critic_lstm": True,       # LSTM for value estimation
     "net_arch": {
-        "pi": [128, 64],              # Deeper policy network
-        "vf": [128, 64]               # Matching value network
+        "pi": [256, 128],             # Deeper policy network for pattern recognition
+        "vf": [256, 128]              # Matching value network depth
     },
     "activation_fn": th.nn.Mish,      # Better activation function
     "optimizer_kwargs": {
@@ -65,18 +65,18 @@ POLICY_KWARGS = {
 
 # Training hyperparameters
 MODEL_KWARGS = {
-    "learning_rate": 5e-4,           # Lower learning rate for sparse rewards
-    "n_steps": 512,                  # Longer sequences for better reward propagation
-    "batch_size": 256,               # Larger batch for stable sparse reward learning
-    "gamma": 0.99,                   # High gamma for sparse rewards
-    "gae_lambda": 0.98,              # Higher lambda for better advantage estimation
-    "clip_range": 0.1,               # Smaller clipping for stability
-    "clip_range_vf": 0.1,            # Match policy clipping
-    "ent_coef": 0.05,               # Lower entropy to focus on sparse signals
-    "vf_coef": 1.0,                 # Higher value importance for sparse rewards
-    "max_grad_norm": 0.5,           # Conservative gradient clipping
-    "n_epochs": 12,                 # More epochs for thorough learning
-    "use_sde": False,               # No stochastic dynamics
+    "learning_rate": 3e-4,           # Further reduced for complex patterns
+    "n_steps": 768,                  # Extended sequences for temporal patterns
+    "batch_size": 384,               # Increased for stable learning with more features
+    "gamma": 0.99,                   # Keep high gamma for sparse rewards
+    "gae_lambda": 0.98,              # Keep high lambda for advantage estimation
+    "clip_range": 0.15,              # Slightly increased for exploration
+    "clip_range_vf": 0.15,           # Match policy clipping
+    "ent_coef": 0.08,               # Increased for better pattern exploration
+    "vf_coef": 1.0,                 # Keep high value importance
+    "max_grad_norm": 0.3,           # More conservative for stability
+    "n_epochs": 15,                 # More epochs for pattern learning
+    "use_sde": False,               # Keep deterministic
 }
 
 def format_time_remaining(seconds: float) -> str:
