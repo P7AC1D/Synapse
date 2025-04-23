@@ -108,8 +108,10 @@ class ActionHandler:
             exit_price = current_price + current_spread
             profit_points = entry_price - exit_price
             
-        # Apply currency conversion to P&L
-        pnl = profit_points * lot_size * self.env.CONTRACT_SIZE / self.env.currency_conversion
+        # Calculate P&L in USD then convert to account currency
+        usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
+        # Multiply by currency conversion rate to get P&L in account currency
+        pnl = usd_pnl * self.env.currency_conversion
         profit_pips = profit_points / self.env.PIP_VALUE
         
         # Create trade info
@@ -158,8 +160,10 @@ class ActionHandler:
             current_exit_price = current_price + current_spread  # Add spread for short exits
             profit_points = entry_price - current_exit_price
             
-        # Apply currency conversion to P&L
-        unrealized_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE / self.env.currency_conversion
+        # Calculate P&L in USD then convert to account currency
+        usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
+        # Multiply by currency conversion rate to get P&L in account currency
+        unrealized_pnl = usd_pnl * self.env.currency_conversion
         profit_pips = profit_points / self.env.PIP_VALUE
 
         return unrealized_pnl, profit_pips
