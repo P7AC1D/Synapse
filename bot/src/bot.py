@@ -286,7 +286,22 @@ class TradingBot:
                     point_value = env.POINT_VALUE
                     unrealized_pnl = price_diff * lot_size * point_value * usd_zar_rate
                     env.metrics.update_unrealized_pnl(unrealized_pnl)
-
+            
+            # Debug log the observation features
+            if obs is not None and isinstance(obs, np.ndarray):
+                self.logger.debug("Observation features for prediction:")
+                # Get the last observation (most recent timestep)
+                last_obs = obs[-1] if obs.ndim > 1 else obs
+                
+                # Log each feature with its value
+                # Get feature names from raw_data columns plus position features
+                raw_data_columns = env.raw_data.columns.tolist()
+                feature_names = raw_data_columns + ['position_type', 'unrealized_pnl']
+                
+                for i, feat in enumerate(last_obs):
+                    feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
+                    self.logger.debug(f"  {feature_name}: {feat:.6f}")
+            
             # Make prediction using direct model.predict like backtest does
             action, new_lstm_states = self.model.model.predict(
                 obs,
