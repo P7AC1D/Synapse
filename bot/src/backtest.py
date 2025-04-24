@@ -294,7 +294,11 @@ def show_progress(message="Running backtest"):
         sys.stdout.flush()
         time.sleep(0.1)
 
-def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: float = 1000.0, verbose: bool = False) -> Dict[str, Any]:
+def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_balance: float = 10000.0, 
+                            balance_per_lot: float = 1000.0, verbose: bool = False,
+                            point_value: float = 0.01, pip_value: float = 0.01,
+                            min_lots: float = 0.01, max_lots: float = 200.0,
+                            contract_size: float = 100.0) -> Dict[str, Any]:
     """Run a backtest using the predict_single method to simulate the live trading process."""
     print("Running step-by-step prediction backtest (simulates live trading)...")
     
@@ -303,7 +307,12 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
         data=data,
         initial_balance=initial_balance,
         balance_per_lot=balance_per_lot,
-        random_start=False
+        random_start=False,
+        point_value=point_value,
+        pip_value=pip_value,
+        min_lots=min_lots,
+        max_lots=max_lots,
+        contract_size=contract_size
     )
     obs, _ = env.reset()
     action_handler = env.action_handler
@@ -406,6 +415,16 @@ def main():
                       help='Path to save backtest results in JSON format')
     parser.add_argument('--output_plot', type=str, default=None,
                       help='Path to save backtest plot')
+    parser.add_argument('--point_value', type=float, default=0.01,
+                      help='Value of one price point movement (default: 0.01)')
+    parser.add_argument('--pip_value', type=float, default=0.01,
+                      help='Value of one pip movement (default: 0.01)')
+    parser.add_argument('--min_lots', type=float, default=0.01,
+                      help='Minimum lot size (default: 0.01)')
+    parser.add_argument('--max_lots', type=float, default=200.0,
+                      help='Maximum lot size (default: 200.0)')
+    parser.add_argument('--contract_size', type=float, default=100.0,
+                      help='Standard contract size (default: 100.0)')
     parser.add_argument('--method', type=str, choices=['evaluate', 'backtest', 'predict_single'], default='evaluate',
                       help='Backtesting method to use: evaluate (quiet), backtest (verbose), or predict_single (simulates live trading)')
     parser.add_argument('--verbose_features', action='store_true',
@@ -445,7 +464,12 @@ def main():
         print(f"\nInitializing model from: {args.model_path}")
         model = TradeModel(
             model_path=args.model_path,
-            balance_per_lot=args.balance_per_lot  # Pass the parameter consistently
+            balance_per_lot=args.balance_per_lot,  # Pass the parameter consistently
+            point_value=args.point_value,
+            pip_value=args.pip_value,
+            min_lots=args.min_lots,
+            max_lots=args.max_lots,
+            contract_size=args.contract_size
         )
         
         # Run backtest based on selected method
@@ -457,7 +481,12 @@ def main():
                 data=df,
                 initial_balance=args.initial_balance,
                 balance_per_lot=args.balance_per_lot,
-                verbose=args.verbose_features
+                verbose=args.verbose_features,
+                point_value=args.point_value,
+                pip_value=args.pip_value,
+                min_lots=args.min_lots,
+                max_lots=args.max_lots,
+                contract_size=args.contract_size
             )
         elif args.method == 'evaluate' or args.quiet:
             print("\nRunning quiet backtest with evaluate method...")

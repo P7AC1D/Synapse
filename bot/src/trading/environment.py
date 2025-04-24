@@ -36,7 +36,10 @@ class TradingEnv(gym.Env, EzPickle):
         
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
                  balance_per_lot: float = 1000.0, random_start: bool = False,
-                 live_price: Optional[float] = None, currency_conversion: Optional[float] = None):
+                 live_price: Optional[float] = None, currency_conversion: Optional[float] = None,
+                 point_value: float = 0.01, pip_value: float = 0.01,
+                 min_lots: float = 0.01, max_lots: float = 200.0,
+                 contract_size: float = 100.0):
         """Initialize trading environment.
         
         Args:
@@ -46,16 +49,21 @@ class TradingEnv(gym.Env, EzPickle):
             random_start: Whether to start from random positions
             live_price: Optional current market price for live trading
             currency_conversion: Optional conversion rate for account currency (e.g. USD/ZAR)
+            point_value: Value of one price point movement (default: 0.01 for Gold)
+            pip_value: Value of one pip movement (default: 0.01 for Gold)
+            min_lots: Minimum lot size (default: 0.01)
+            max_lots: Maximum lot size (default: 200.0)
+            contract_size: Standard contract size (default: 100.0 for Gold)
         """
         super().__init__()
         EzPickle.__init__(self)
         
         # Trading constants
-        self.POINT_VALUE = 0.01      # Gold moves in 0.01 increments
-        self.PIP_VALUE = 0.01        # Gold pip and point values are the same
-        self.MIN_LOTS = 0.01         # Minimum 0.01 lots
-        self.MAX_LOTS = 200.0        # Maximum lots
-        self.CONTRACT_SIZE = 100.0   # Standard gold contract size
+        self.POINT_VALUE = point_value
+        self.PIP_VALUE = pip_value
+        self.MIN_LOTS = min_lots
+        self.MAX_LOTS = max_lots
+        self.CONTRACT_SIZE = contract_size
         self.BALANCE_PER_LOT = balance_per_lot
         self.MAX_DRAWDOWN = 0.4      # Maximum drawdown
         self.initial_balance = initial_balance
