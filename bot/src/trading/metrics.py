@@ -119,6 +119,7 @@ class MetricsTracker:
             
         # Update max balance for backward compatibility
         self.max_balance = peak
+        self.current_unrealized_pnl = 0
 
     def update_unrealized_pnl(self, unrealized_pnl: float) -> None:
         """Update unrealized PnL and track equity peaks/drawdowns.
@@ -128,19 +129,11 @@ class MetricsTracker:
         """
         self.current_unrealized_pnl = unrealized_pnl
         current_equity = self.balance + unrealized_pnl
-        
-        # Track equity history and peaks
-        self.equity_history.append(current_equity)
-        if not self.equity_peaks:
-            self.equity_peaks.append(current_equity)
-        else:
-            self.equity_peaks.append(max(self.equity_peaks[-1], current_equity))
-            
-        # Calculate current equity drawdown
-        peak = self.equity_peaks[-1]
-        if peak > 0:
-            dd = (peak - current_equity) / peak
-            self.max_equity_dd = max(self.max_equity_dd, dd)
+        current_dd = 1 - (current_equity / self.balance)
+        if current_dd < 0.0:
+            current_dd = 0.0
+
+        self.max_equity_dd = max(self.max_equity_dd, current_dd)
 
     def get_drawdown(self) -> float:
         """Calculate current drawdown percentage based on balance peaks.
@@ -183,18 +176,13 @@ class MetricsTracker:
         
         Returns:
             Current equity drawdown as a percentage
-        """
-        if not self.equity_history:
-            return 0.0
-            
+        """            
         current_equity = self.balance + self.current_unrealized_pnl
-        peak = self.equity_peaks[-1] if self.equity_peaks else current_equity
+        current_dd = 1 - (current_equity / self.balance)
+        if current_dd < 0.0:
+            current_dd = 0.0
         
-        if peak <= 0:
-            return 1.0
-            
-        current_dd = (peak - current_equity) / peak if peak > 0 else 0.0
-        return max(current_dd, self.max_equity_dd)
+        return current_dd
     
     def get_max_equity_drawdown(self) -> float:
         """Get maximum equity drawdown seen.
