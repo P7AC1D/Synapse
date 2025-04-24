@@ -270,36 +270,40 @@ class TradingBot:
             )
             obs, _ = env.reset()
             
-            # Set position state if needed
-            position_type = 0
+            # Set position state and update metrics if needed
             if self.current_position:
                 position_type = self.current_position.get('direction', 0)
-                env.current_position = self.current_position
+                lot_size = self.current_position.get('lot_size', 0.0)
+                entry_price = self.current_position.get('entry_price', 0.0)
                 
-                # Calculate unrealized PnL
-                if live_price is not None and env.current_position:
-                    entry_price = env.current_position['entry_price']
-                    lot_size = env.current_position['lot_size']
-                    direction = env.current_position['direction']
+                # Update environment position state
+                env.current_position = self.current_position.copy()
+                
+                # Calculate and update unrealized PnL
+                if live_price is not None:
+                    # Calculate raw P&L first
+                    if position_type == 1:  # Long position
+                        profit_points = live_price - entry_price
+                    else:  # Short position
+                        profit_points = entry_price - live_price
+                        
+                    # Calculate P&L in account currency
+                    usd_pnl = profit_points * lot_size * env.CONTRACT_SIZE
+                    unrealized_pnl = usd_pnl * usd_zar_rate
                     
-                    # Calculate P&L in points
-                    price_diff = (live_price - entry_price) * direction
-                    point_value = env.POINT_VALUE
-                    unrealized_pnl = price_diff * lot_size * point_value * usd_zar_rate
+                    # Update environment metrics
                     env.metrics.update_unrealized_pnl(unrealized_pnl)
+            
+            # Get observation with updated position metrics
+            obs = env.get_observation()
             
             # Debug log the observation features
             if obs is not None and isinstance(obs, np.ndarray):
                 self.logger.debug("Observation features for prediction:")
-                # Get the last observation (most recent timestep)
-                last_obs = obs[-1] if obs.ndim > 1 else obs
-                
-                # Log each feature with its value
                 # Get feature names from raw_data columns plus position features
-                raw_data_columns = env.raw_data.columns.tolist()
-                feature_names = raw_data_columns + ['position_type', 'unrealized_pnl']
+                feature_names = env.feature_processor.get_feature_names()
                 
-                for i, feat in enumerate(last_obs):
+                for i, feat in enumerate(obs):
                     feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
                     self.logger.debug(f"  {feature_name}: {feat:.6f}")
             
