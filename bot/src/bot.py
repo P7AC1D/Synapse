@@ -13,6 +13,7 @@ import logging
 import signal
 import sys
 import numpy as np
+import argparse
 from datetime import datetime
 from typing import Optional
 import pandas as pd
@@ -27,19 +28,29 @@ from config import (
     LOG_FILE_PATH,
     MT5_BASE_SYMBOL,
     MT5_SYMBOL,
+    MT5_PATH,
     MT5_TIMEFRAME_MINUTES,
     BARS_TO_FETCH,
     MODEL_PATH,
     BALANCE_PER_LOT,
-    MT5_COMMENT
+    MT5_COMMENT,
+    MAX_SPREAD,
+    STOP_LOSS_PIPS
 )
 
 
 class TradingBot:
     """Trading bot that uses a PPO-LSTM model to make trading decisions."""
     
-    def __init__(self):
+    def __init__(self, model_path=MODEL_PATH, symbol=MT5_SYMBOL, max_spread=MAX_SPREAD, 
+                 balance_per_lot=BALANCE_PER_LOT, stop_loss_pips=STOP_LOSS_PIPS):
         """Initialize the trading bot components."""
+        self.model_path = model_path
+        self.symbol = symbol
+        self.max_spread = max_spread
+        self.balance_per_lot = balance_per_lot
+        self.stop_loss_pips = stop_loss_pips
+        
         self.setup_logging()
         self.running = True
         self.mt5 = None
@@ -422,7 +433,21 @@ class TradingBot:
 
 def main() -> int:
     """Main entry point for the trading bot."""
-    bot = TradingBot()
+    parser = argparse.ArgumentParser(description="Deep Reinforcement Learning Trading Bot using PPO-LSTM model.")
+    parser.add_argument("--model_path", type=str, default=MODEL_PATH, help="Path to the trained model")
+    parser.add_argument("--symbol", type=str, default=MT5_SYMBOL, help="Trading symbol")
+    parser.add_argument("--max_spread", type=float, default=MAX_SPREAD, help="Maximum allowed spread")
+    parser.add_argument("--balance_per_lot", type=float, default=BALANCE_PER_LOT, help="Balance per lot")
+    parser.add_argument("--stop_loss_pips", type=int, default=STOP_LOSS_PIPS, help="Stop loss in pips")
+    args = parser.parse_args()
+
+    bot = TradingBot(
+        model_path=args.model_path,
+        symbol=args.symbol,
+        max_spread=args.max_spread,
+        balance_per_lot=args.balance_per_lot,
+        stop_loss_pips=args.stop_loss_pips
+    )
     try:
         bot.run()
         return 0
