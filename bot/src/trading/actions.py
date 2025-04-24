@@ -112,7 +112,7 @@ class ActionHandler:
         usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
         # Multiply by currency conversion rate to get P&L in account currency
         pnl = usd_pnl * self.env.currency_conversion
-        profit_pips = profit_points / self.env.PIP_VALUE
+        profit_pips = profit_points / self.env.POINT_VALUE
         
         # Create trade info
         trade_info = {
@@ -164,6 +164,6 @@ class ActionHandler:
         usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
         # Multiply by currency conversion rate to get P&L in account currency
         unrealized_pnl = usd_pnl * self.env.currency_conversion
-        profit_pips = profit_points / self.env.PIP_VALUE
+        profit_pips = profit_points / self.env.POINT_VALUE
 
         return unrealized_pnl, profit_pips
