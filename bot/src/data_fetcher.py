@@ -63,9 +63,19 @@ class DataFetcher:
             self.logger.error(f"Insufficient data after formatting: {len(data)} bars (need {self.num_bars})")
             return None
         
-        # Log data range
+        # Log data range and last 5 bars (excluding the latest incomplete bar)
         self.logger.debug(f"Data collected from {data.index[0]} to {data.index[-1]}")
-        self.logger.debug(data.tail())
+        
+        # Log the last 5 completed bars (excluding the latest bar)
+        bars_to_log = min(5, len(data) - 1)  # Don't include the last bar as it's not completed
+        if bars_to_log > 0:
+            self.logger.debug("Last completed bars:")
+            for i in range(-(bars_to_log+1), -1):
+                bar = data.iloc[i]
+                self.logger.debug(
+                    f"{data.index[i]}, {bar['open']:.3f}, {bar['high']:.3f}, "
+                    f"{bar['low']:.3f}, {bar['close']:.3f}, {bar['spread']}, {int(bar['volume'])}"
+                )
             
         return data
         
