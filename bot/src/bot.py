@@ -162,7 +162,6 @@ class TradingBot:
                 balance_per_lot=self.balance_per_lot,
                 initial_balance=account_balance,
                 point_value=point_value,
-                pip_value=point_value,  # Use point_value directly instead of a separate pip_value
                 min_lots=min_lots,
                 max_lots=max_lots,
                 contract_size=contract_size
@@ -306,7 +305,6 @@ class TradingBot:
                 balance_per_lot=self.model.balance_per_lot,
                 random_start=False,
                 point_value=self.model.point_value,
-                pip_value=self.model.pip_value,
                 min_lots=self.model.min_lots,
                 max_lots=self.model.max_lots,
                 contract_size=self.model.contract_size

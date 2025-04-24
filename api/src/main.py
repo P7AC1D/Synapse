@@ -137,7 +137,6 @@ async def predict(data: MarketData):
             balance_per_lot=trade_model.balance_per_lot,
             random_start=False,
             point_value=trade_model.point_value,
-            pip_value=trade_model.pip_value,
             min_lots=trade_model.min_lots,
             max_lots=trade_model.max_lots,
             contract_size=trade_model.contract_size

@@ -97,65 +97,65 @@ def print_metrics(results: dict):
             print(f"{name}: {value:{format_spec}}")
     print("")
 
-    # Hold Time and Pips Analysis as DataFrame
-    print("\n=== Hold Time and Pips Analysis ===\n")
+    # Hold Time and Points Analysis as DataFrame
+    print("\n=== Hold Time and Points Analysis ===\n")
     
     # Create data for the DataFrame
     data = {
-        'Metric Type': ['Winners Hold', 'Losers Hold', 'Winners Pips', 'Losers Pips'],
+        'Metric Type': ['Winners Hold', 'Losers Hold', 'Winners Points', 'Losers Points'],
         '0th Pct': [
             results.get('win_hold_time_0th', 0.0),
             results.get('loss_hold_time_0th', 0.0),
-            results.get('win_pips_0th', 0.0),
-            results.get('loss_pips_0th', 0.0)
+            results.get('win_points_0th', 0.0),
+            results.get('loss_points_0th', 0.0)
         ],
         '1st Pct': [
             results.get('win_hold_time_1st', 0.0),
             results.get('loss_hold_time_1st', 0.0),
-            results.get('win_pips_1st', 0.0),
-            results.get('loss_pips_1st', 0.0)
+            results.get('win_points_1st', 0.0),
+            results.get('loss_points_1st', 0.0)
         ],
         '10th Pct': [
             results.get('win_hold_time_10th', 0.0),
             results.get('loss_hold_time_10th', 0.0),
-            results.get('win_pips_10th', 0.0),
-            results.get('loss_pips_10th', 0.0)
+            results.get('win_points_10th', 0.0),
+            results.get('loss_points_10th', 0.0)
         ],
         '20th Pct': [
             results.get('win_hold_time_20th', 0.0),
             results.get('loss_hold_time_20th', 0.0),
-            results.get('win_pips_20th', 0.0),
-            results.get('loss_pips_20th', 0.0)
+            results.get('win_points_20th', 0.0),
+            results.get('loss_points_20th', 0.0)
         ],
         'Median': [
             results.get('win_hold_time_median', 0.0),
             results.get('loss_hold_time_median', 0.0),
-            results.get('median_win_pips', 0.0),
-            results.get('median_loss_pips', 0.0)
+            results.get('median_win_points', 0.0),
+            results.get('median_loss_points', 0.0)
         ],
         '80th Pct': [
             results.get('win_hold_time_80th', 0.0),
             results.get('loss_hold_time_80th', 0.0),
-            results.get('win_pips_80th', 0.0),
-            results.get('loss_pips_80th', 0.0)
+            results.get('win_points_80th', 0.0),
+            results.get('loss_points_80th', 0.0)
         ],
         '90th Pct': [
             results.get('win_hold_time_90th', 0.0),
             results.get('loss_hold_time_90th', 0.0),
-            results.get('win_pips_90th', 0.0),
-            results.get('loss_pips_90th', 0.0)
+            results.get('win_points_90th', 0.0),
+            results.get('loss_points_90th', 0.0)
         ],
         '99th Pct': [
             results.get('win_hold_time_99th', 0.0),
             results.get('loss_hold_time_99th', 0.0),
-            results.get('win_pips_99th', 0.0),
-            results.get('loss_pips_99th', 0.0)
+            results.get('win_points_99th', 0.0),
+            results.get('loss_points_99th', 0.0)
         ],
         '100th Pct': [
             results.get('win_hold_time_100th', 0.0),
             results.get('loss_hold_time_100th', 0.0),
-            results.get('win_pips_100th', 0.0),
-            results.get('loss_pips_100th', 0.0)
+            results.get('win_points_100th', 0.0),
+            results.get('loss_points_100th', 0.0)
         ]
     }
     
@@ -180,7 +180,7 @@ def print_metrics(results: dict):
             ('Lot Size', f"{pos['lot_size']:.2f}"),
             ('Hold Time', f"{pos['hold_time']} bars"),
             ('Unrealized PnL', f"{pos['unrealized_pnl']:+.2f}"),
-            ('Profit Pips', f"{pos['profit_pips']:+.1f}")
+            ('Profit Points', f"{pos['profit_points']:+.1f}")
         ]
         for name, value in position_metrics:
             print(f"{name}: {value}")
@@ -288,17 +288,17 @@ def plot_results(results: dict, save_path: str = None):
         plt.legend()
         plt.grid(True)
     
-    # Create side-by-side plots for profit and loss pips (third row, split into columns)
-    if not trades_df.empty and 'profit_pips' in trades_df.columns:
-        winning_trades = trades_df[trades_df['profit_pips'] > 0]
-        losing_trades = trades_df[trades_df['profit_pips'] <= 0]
+    # Create side-by-side plots for profit and loss points (third row, split into columns)
+    if not trades_df.empty and 'profit_points' in trades_df.columns:
+        winning_trades = trades_df[trades_df['profit_points'] > 0]
+        losing_trades = trades_df[trades_df['profit_points'] <= 0]
         
-        # Plot winning trades (profit pips) - left column
+        # Plot winning trades (profit points) - left column
         ax_profit = plt.subplot(gs[2, 0])
         if not winning_trades.empty:
-            plt.hist(winning_trades['profit_pips'], bins=30, alpha=0.7, color='g', label='Profit Pips')
-            mean_profit = winning_trades['profit_pips'].mean()
-            median_profit = winning_trades['profit_pips'].median()
+            plt.hist(winning_trades['profit_points'], bins=30, alpha=0.7, color='g', label='Profit Points')
+            mean_profit = winning_trades['profit_points'].mean()
+            median_profit = winning_trades['profit_points'].median()
             plt.axvline(mean_profit, color='g', linestyle='--', label=f'Mean: {mean_profit:.1f}')
             plt.axvline(median_profit, color='g', linestyle=':', label=f'Median: {median_profit:.1f}')
             plt.title('Profit Distribution')
@@ -306,13 +306,13 @@ def plot_results(results: dict, save_path: str = None):
             plt.legend()
             plt.grid(True)
         
-        # Plot losing trades (absolute loss pips) - right column
+        # Plot losing trades (absolute loss points) - right column
         ax_loss = plt.subplot(gs[2, 1])
         if not losing_trades.empty:
-            abs_loss_pips = abs(losing_trades['profit_pips'])
-            plt.hist(abs_loss_pips, bins=30, alpha=0.7, color='r', label='Loss Pips')
-            mean_loss = abs_loss_pips.mean()
-            median_loss = abs_loss_pips.median()
+            abs_loss_points = abs(losing_trades['profit_points'])
+            plt.hist(abs_loss_points, bins=30, alpha=0.7, color='r', label='Loss Points')
+            mean_loss = abs_loss_points.mean()
+            median_loss = abs_loss_points.median()
             plt.axvline(mean_loss, color='r', linestyle='--', label=f'Mean: {mean_loss:.1f}')
             plt.axvline(median_loss, color='r', linestyle=':', label=f'Median: {median_loss:.1f}')
             plt.title('Loss Distribution')
@@ -336,7 +336,7 @@ def show_progress(message="Running backtest"):
 
 def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_balance: float = 10000.0, 
                             balance_per_lot: float = 1000.0, verbose: bool = False,
-                            point_value: float = 0.01, pip_value: float = 0.01,
+                            point_value: float = 0.01,
                             min_lots: float = 0.01, max_lots: float = 200.0,
                             contract_size: float = 100.0) -> Dict[str, Any]:
     """Run a backtest using the predict_single method to simulate the live trading process."""
@@ -348,7 +348,6 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
         balance_per_lot=balance_per_lot,
         random_start=False,
         point_value=point_value,
-        pip_value=pip_value,
         min_lots=min_lots,
         max_lots=max_lots,
         contract_size=contract_size
@@ -507,7 +506,6 @@ def main():
             model_path=args.model_path,
             balance_per_lot=args.balance_per_lot,  # Pass the parameter consistently
             point_value=args.point_value,
-            pip_value=args.pip_value,
             min_lots=args.min_lots,
             max_lots=args.max_lots,
             contract_size=args.contract_size
@@ -524,7 +522,6 @@ def main():
                 balance_per_lot=args.balance_per_lot,
                 verbose=args.verbose_features,
                 point_value=args.point_value,
-                pip_value=args.pip_value,
                 min_lots=args.min_lots,
                 max_lots=args.max_lots,
                 contract_size=args.contract_size
