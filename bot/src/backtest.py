@@ -365,9 +365,9 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     # Progress tracking
     progress_steps = max(1, len(data) // 100)  # Update every 1%
     
-    # Initialize LSTM states
+    # Initialize LSTM states - match how the bot initializes them
     model.reset_states()
-    lstm_states = None
+    model.lstm_states = None  # Ensure clean start
     
     # Ensure we have enough data
     if len(data) < 100:  # Minimum data requirement
@@ -380,19 +380,21 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             print(f"\rProgress: {progress:.1f}% (step {total_steps}/{len(data)})", end="")
     
         try:
-            # Process action with improved error handling (similar to evaluate method)
-            raw_action, lstm_states = model.model.predict(
+            # Use direct model.predict like the original approach but store states in model object
+            # for consistency with bot.py
+            action, new_lstm_states = model.model.predict(
                 obs,
-                state=lstm_states,
+                state=model.lstm_states,
                 deterministic=True
             )
+            model.lstm_states = new_lstm_states  # Update states in model object
             
-            # Convert action to discrete value with position check
+            # Convert action to discrete value with position check (same as evaluate method)
             try:
-                if isinstance(raw_action, np.ndarray):
-                    action_value = int(raw_action.item())
+                if isinstance(action, np.ndarray):
+                    action_value = int(action.item())
                 else:
-                    action_value = int(raw_action)
+                    action_value = int(action)
                 discrete_action = action_value % 4
                 
                 # Add explicit position check and force hold if needed (same as evaluate)

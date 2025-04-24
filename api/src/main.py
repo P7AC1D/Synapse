@@ -17,6 +17,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../../bot/src"))
 from trading.features import FeatureProcessor
 from trading.actions import Action
 from trade_model import TradeModel
+from trading.environment import TradingEnv
 
 app = FastAPI(
     title="Trading Prediction API",
@@ -119,22 +120,66 @@ async def predict(data: MarketData):
             raise HTTPException(status_code=500, detail=f"Failed to initialize model: {str(model_error)}")
         if not trade_model.load_model():
             raise HTTPException(status_code=500, detail="Failed to load model")
-            
-        # Get prediction
-        prediction = trade_model.predict_single(df)
+        
+        # Create environment for observation (use the last window_size bars)
+        window_data = df.iloc[-trade_model.window_size:].copy() if len(df) > trade_model.window_size else df.copy()
+        
+        # Initialize LSTM states if needed
+        if trade_model.lstm_states is None and len(df) >= trade_model.initial_warmup:
+            logger.info("Initializing LSTM states with warmup data")
+            warmup_data = df.iloc[:trade_model.initial_warmup].copy()
+            trade_model.preload_states(warmup_data)
+        
+        # Create environment for observation
+        env = TradingEnv(
+            data=window_data,
+            initial_balance=trade_model.initial_balance,
+            balance_per_lot=trade_model.balance_per_lot,
+            random_start=False,
+            point_value=trade_model.point_value,
+            pip_value=trade_model.pip_value,
+            min_lots=trade_model.min_lots,
+            max_lots=trade_model.max_lots,
+            contract_size=trade_model.contract_size
+        )
+        obs, _ = env.reset()
+        
+        # Make prediction using direct model.predict like bot and backtest
+        action, new_lstm_states = trade_model.model.predict(
+            obs,
+            state=trade_model.lstm_states,
+            deterministic=True
+        )
+        trade_model.lstm_states = new_lstm_states
+        
+        # Convert action to discrete value
+        try:
+            if isinstance(action, np.ndarray):
+                action_value = int(action.item())
+            else:
+                action_value = int(action)
+            discrete_action = action_value % 4
+        except (ValueError, TypeError):
+            discrete_action = 0
+        
+        # Get position type (always 0 for API since we don't track positions)
+        position_type = 0
+        
+        # Generate description
+        description = trade_model._generate_prediction_description(discrete_action, position_type)
         
         # Get action details
-        action = Action(prediction['action'])
-        action_name = action.name.lower()
+        action_obj = Action(discrete_action)
+        action_name = action_obj.name.lower()
         
-        logger.info(f"Prediction made: {action_name} ({prediction.get('description', 'No description')})")
+        logger.info(f"Prediction made: {action_name} ({description})")
         
         # Return prediction
         return PredictionResponse(
             action=action_name,
             confidence=0.95,  # TODO: Implement confidence calculation
             timestamp=data.timestamp[-1],
-            description=prediction.get('description', f"Model predicts {action_name}")
+            description=description
         )
         
     except Exception as e:

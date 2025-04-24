@@ -46,10 +46,9 @@ class TradingBot:
         self.model = None
         self.trade_executor = None
         self.last_bar_index = None
-        self.lstm_states = None  # Store LSTM states between predictions
         self.current_position = None  # Track current position info
         self.data_window = None  # Store rolling data window
-        
+    
     def setup_logging(self) -> None:
         """Configure logging with both console and file output."""
         log_file = datetime.now().strftime("DRL_PPO_LSTM_Bot_%Y-%m-%d.log")
@@ -228,7 +227,7 @@ class TradingBot:
                 # Only reset if gap is more than 2x the timeframe
                 if time_diff > (MT5_TIMEFRAME_MINUTES * 2 * 60):
                     self.logger.info(f"Significant data gap detected ({time_diff/60:.1f} minutes), resetting LSTM states")
-                    self.lstm_states = None
+                    self.model.lstm_states = None
 
             # Get USD/ZAR rate for currency conversion
             usd_zar_rate = self.mt5.get_symbol_info_tick(MT5_BASE_SYMBOL)[0]  # Use bid price
@@ -256,15 +255,68 @@ class TradingBot:
             
             data = data.iloc[:-1]  # Exclude the last row for prediction as its not completed yet
             
-            # Make prediction with position context, live price, and currency conversion
-            prediction = self.model.predict_single(
-                data,
-                current_position=self.current_position,
-                verbose=True,
-                live_price=live_price,
-                currency_conversion=usd_zar_rate
+            # Create environment for observation just like backtest does
+            env = TradingEnv(
+                data=data.iloc[-self.model.window_size:].copy(),
+                initial_balance=self.model.initial_balance,
+                balance_per_lot=self.model.balance_per_lot,
+                random_start=False,
+                point_value=self.model.point_value,
+                pip_value=self.model.pip_value,
+                min_lots=self.model.min_lots,
+                max_lots=self.model.max_lots,
+                contract_size=self.model.contract_size
             )
-            self.lstm_states = self.model.lstm_states  # Update LSTM states
+            obs, _ = env.reset()
+            
+            # Set position state if needed
+            position_type = 0
+            if self.current_position:
+                position_type = self.current_position.get('direction', 0)
+                env.current_position = self.current_position
+                
+                # Calculate unrealized PnL
+                if live_price is not None and env.current_position:
+                    entry_price = env.current_position['entry_price']
+                    lot_size = env.current_position['lot_size']
+                    direction = env.current_position['direction']
+                    
+                    # Calculate P&L in points
+                    price_diff = (live_price - entry_price) * direction
+                    point_value = env.POINT_VALUE
+                    unrealized_pnl = price_diff * lot_size * point_value * usd_zar_rate
+                    env.metrics.update_unrealized_pnl(unrealized_pnl)
+
+            # Make prediction using direct model.predict like backtest does
+            action, new_lstm_states = self.model.model.predict(
+                obs,
+                state=self.model.lstm_states,
+                deterministic=True
+            )
+            self.model.lstm_states = new_lstm_states  # Update LSTM states
+            
+            # Convert action to discrete value
+            try:
+                if isinstance(action, np.ndarray):
+                    action_value = int(action.item())
+                else:
+                    action_value = int(action)
+                discrete_action = action_value % 4
+                
+                # Force HOLD if position exists and trying to open new one
+                if self.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
+                    discrete_action = 0  # HOLD
+            except (ValueError, TypeError):
+                discrete_action = 0
+            
+            # Generate prediction description
+            description = self.model._generate_prediction_description(discrete_action, position_type)
+            
+            # Create prediction dict
+            prediction = {
+                'action': discrete_action,
+                'description': description
+            }
             
             # Convert prediction to trade action
             action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL', 3: 'CLOSE'}
@@ -315,7 +367,6 @@ class TradingBot:
         # Reset model states
         if self.model:
             self.model.reset_states()
-            self.lstm_states = None
         
         self.logger.info("Cleanup complete")
         
