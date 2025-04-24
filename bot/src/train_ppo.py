@@ -35,13 +35,13 @@ def main():
     parser.add_argument('--random_start', action='store_true',
                       help='Start training from random positions in the dataset')
     
-    parser.add_argument('--total_timesteps', type=int, default=25000,
+    parser.add_argument('--total_timesteps', type=int, default=100000,
                       help='Total timesteps for training')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=5e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=5000,
+    parser.add_argument('--eval_freq', type=int, default=10000,
                       help='Evaluation frequency in timesteps')
     
     args = parser.parse_args()
