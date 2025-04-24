@@ -75,7 +75,7 @@ class ActionHandler:
             "entry_time": str(self.env.original_index[self.env.current_step]),
             "entry_step": self.env.current_step,
             "entry_atr": current_atr,
-            "current_profit_pips": 0.0
+            "current_profit_points": 0.0
         }
         
         self.env.trade_metrics['current_direction'] = self.env.current_position["direction"]
@@ -112,7 +112,7 @@ class ActionHandler:
         usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
         # Multiply by currency conversion rate to get P&L in account currency
         pnl = usd_pnl * self.env.currency_conversion
-        profit_pips = profit_points / self.env.PIP_VALUE
+        profit_points_normalized = profit_points / self.env.POINT_VALUE
         
         # Create trade info
         trade_info = {
@@ -121,7 +121,7 @@ class ActionHandler:
             "exit_price": exit_price,
             "entry_time": self.env.current_position["entry_time"],
             "exit_time": str(self.env.original_index[self.env.current_step]),
-            "profit_pips": profit_pips,
+            "profit_points": profit_points_normalized,
             "pnl": pnl,
             "hold_time": self.env.current_step - entry_step,
             "lot_size": lot_size,
@@ -137,7 +137,7 @@ class ActionHandler:
         """Calculate current position's unrealized P/L.
         
         Returns:
-            Tuple of (unrealized_pnl, profit_pips)
+            Tuple of (unrealized_pnl, profit_points)
         """
         if not self.env.current_position:
             return 0.0, 0.0
@@ -164,6 +164,6 @@ class ActionHandler:
         usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
         # Multiply by currency conversion rate to get P&L in account currency
         unrealized_pnl = usd_pnl * self.env.currency_conversion
-        profit_pips = profit_points / self.env.PIP_VALUE
+        profit_points_normalized = profit_points / self.env.POINT_VALUE
 
-        return unrealized_pnl, profit_pips
+        return unrealized_pnl, profit_points_normalized

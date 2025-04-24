@@ -167,7 +167,7 @@ class MetricsTracker:
             "direction": "long" if latest_trade["direction"] == 1 else "short",
             "entry_price": latest_trade["entry_price"],
             "lot_size": latest_trade["lot_size"],
-            "profit_pips": latest_trade.get("profit_pips", 0.0),
+            "profit_points": latest_trade.get("profit_points", 0.0),
             "hold_time": latest_trade.get("hold_time", 0)
         }
 
@@ -223,8 +223,8 @@ class MetricsTracker:
             "return_pct": ((self.balance - self.initial_balance) / self.initial_balance) * 100,
             "avg_win": 0.0,
             "avg_loss": 0.0,
-            "avg_win_pips": 0.0,
-            "avg_loss_pips": 0.0,
+            "avg_win_points": 0.0,
+            "avg_loss_points": 0.0,
             "profit_factor": 0.0,
             
             # Risk metrics
@@ -268,8 +268,8 @@ class MetricsTracker:
                 "win_rate": len(winning_trades) / len(trades_df) * 100,
                 "avg_win": winning_trades["pnl"].mean() if not winning_trades.empty else 0.0,
                 "avg_loss": losing_trades["pnl"].mean() if not losing_trades.empty else 0.0,
-                "avg_win_pips": winning_trades["profit_pips"].mean() if not winning_trades.empty else 0.0,
-                "avg_loss_pips": losing_trades["profit_pips"].mean() if not losing_trades.empty else 0.0,
+                "avg_win_points": winning_trades["profit_points"].mean() if not winning_trades.empty else 0.0,
+                "avg_loss_points": losing_trades["profit_points"].mean() if not losing_trades.empty else 0.0,
                 "profit_factor": abs(winning_trades["pnl"].sum() / losing_trades["pnl"].sum()) if not losing_trades.empty else float('inf'),
                 
                 # Directional metrics

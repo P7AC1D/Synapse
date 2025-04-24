@@ -37,7 +37,7 @@ class TradingEnv(gym.Env, EzPickle):
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
                  balance_per_lot: float = 1000.0, random_start: bool = False,
                  live_price: Optional[float] = None, currency_conversion: Optional[float] = None,
-                 point_value: float = 0.001, pip_value: float = 0.1,
+                 point_value: float = 0.001,
                  min_lots: float = 0.01, max_lots: float = 200.0,
                  contract_size: float = 100.0):
         """Initialize trading environment.
@@ -50,7 +50,6 @@ class TradingEnv(gym.Env, EzPickle):
             live_price: Optional current market price for live trading
             currency_conversion: Optional conversion rate for account currency (e.g. USD/ZAR)
             point_value: Value of one price point movement (default: 0.001 for Gold)
-            pip_value: Value of one pip movement (default: 0.1 for Gold)
             min_lots: Minimum lot size (default: 0.01)
             max_lots: Maximum lot size (default: 200.0)
             contract_size: Standard contract size (default: 100.0 for Gold)
@@ -60,7 +59,6 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Trading constants
         self.POINT_VALUE = point_value
-        self.PIP_VALUE = pip_value
         self.MIN_LOTS = min_lots
         self.MAX_LOTS = max_lots
         self.CONTRACT_SIZE = contract_size
@@ -168,8 +166,8 @@ class TradingEnv(gym.Env, EzPickle):
                 
         # Track unrealized PnL for any active position
         if self.current_position:
-            unrealized_pnl, profit_pips = self.action_handler.manage_position()
-            self.current_position["current_profit_pips"] = profit_pips
+            unrealized_pnl, profit_points = self.action_handler.manage_position()
+            self.current_position["current_profit_points"] = profit_points
             # Update metrics with unrealized PnL for accurate drawdown tracking
             self.metrics.update_unrealized_pnl(unrealized_pnl)
         else:
@@ -269,13 +267,13 @@ class TradingEnv(gym.Env, EzPickle):
         position_info = {}
         
         if self.current_position:
-            unrealized_pnl, _ = self.action_handler.manage_position()
+            unrealized_pnl, profit_points = self.action_handler.manage_position()
             position_info = {
                 "direction": "long" if self.current_position["direction"] == 1 else "short",
                 "entry_price": self.current_position["entry_price"],
                 "lot_size": self.current_position["lot_size"],
                 "unrealized_pnl": unrealized_pnl,
-                "profit_pips": self.current_position.get("current_profit_pips", 0.0),
+                "profit_points": profit_points,
                 "hold_time": self.current_step - self.current_position["entry_step"]
             }
             

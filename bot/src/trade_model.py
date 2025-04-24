@@ -15,7 +15,7 @@ class TradeModel:
     """Class for loading and making predictions with a trained PPO-LSTM model."""
     
     def __init__(self, model_path: str, balance_per_lot: float = 1000.0, initial_balance: float = 10000.0,
-                 point_value: float = 0.01, pip_value: float = 0.01,
+                 point_value: float = 0.01,
                  min_lots: float = 0.01, max_lots: float = 200.0,
                  contract_size: float = 100.0):
         """
@@ -26,7 +26,6 @@ class TradeModel:
             balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
             initial_balance: Starting account balance (default: 10000.0)
             point_value: Value of one price point movement (default: 0.01)
-            pip_value: Value of one pip movement (default: 0.01)
             min_lots: Minimum lot size (default: 0.01)
             max_lots: Maximum lot size (default: 200.0)
             contract_size: Standard contract size (default: 100.0)
@@ -37,7 +36,6 @@ class TradeModel:
         self.balance_per_lot = balance_per_lot
         self.initial_balance = initial_balance
         self.point_value = point_value
-        self.pip_value = pip_value
         self.min_lots = min_lots
         self.max_lots = max_lots
         self.contract_size = contract_size
@@ -91,7 +89,7 @@ class TradeModel:
         # Check if all required columns are present
         missing_columns = [col for col in self.required_columns if col not in data.columns]
         
-        if missing_columns:
+        if (missing_columns):
             error_msg = f"Data is missing required columns: {missing_columns}"
             self.logger.error(error_msg)
             raise ValueError(error_msg)
@@ -153,7 +151,6 @@ class TradeModel:
             balance_per_lot=self.balance_per_lot,
             random_start=False,
             point_value=self.point_value,
-            pip_value=self.pip_value,
             min_lots=self.min_lots,
             max_lots=self.max_lots,
             contract_size=self.contract_size
@@ -201,14 +198,14 @@ class TradeModel:
         
         # Add position details if there's an open position
         if env.current_position:
-            unrealized_pnl, profit_pips = env.action_handler.manage_position()
+            unrealized_pnl, profit_points = env.action_handler.manage_position()
             metrics['position'] = {
                 'direction': env.current_position['direction'],
                 'entry_price': env.current_position['entry_price'],
                 'lot_size': env.current_position['lot_size'],
                 'hold_time': env.current_step - env.current_position['entry_step'],
                 'unrealized_pnl': unrealized_pnl,
-                'profit_pips': profit_pips
+                'profit_points': profit_points
             }
         
         # Safely add win rate
@@ -230,10 +227,10 @@ class TradeModel:
             'avg_hold_time': 0.0,
             'win_hold_time': 0.0,
             'loss_hold_time': 0.0,
-            'avg_win_pips': 0.0,
-            'avg_loss_pips': 0.0,
-            'median_win_pips': 0.0,
-            'median_loss_pips': 0.0,
+            'avg_win_points': 0.0,
+            'avg_loss_points': 0.0,
+            'median_win_points': 0.0,
+            'median_loss_points': 0.0,
         })
         
         # Only calculate detailed metrics if trades exist
@@ -333,35 +330,35 @@ class TradeModel:
         # Include trade history
         metrics['trades'] = env.trades
 
-        # Calculate pips metrics including averages, medians, and 90th percentiles
+        # Calculate points metrics including averages, medians, and 90th percentiles
         if not winning_trades.empty:
             metrics.update({
-                'avg_win_pips': float(winning_trades["profit_pips"].mean()),
-                'win_pips_0th': float(winning_trades["profit_pips"].min()),
-                'win_pips_1st': float(winning_trades["profit_pips"].quantile(0.01)),
-                'win_pips_10th': float(winning_trades["profit_pips"].quantile(0.1)),
-                'win_pips_20th': float(winning_trades["profit_pips"].quantile(0.2)),
-                'median_win_pips': float(winning_trades["profit_pips"].median()),
-                'win_pips_80th': float(winning_trades["profit_pips"].quantile(0.8)),
-                'win_pips_90th': float(winning_trades["profit_pips"].quantile(0.9)),
-                'win_pips_99th': float(winning_trades["profit_pips"].quantile(0.99)),
-                'win_pips_100th': float(winning_trades["profit_pips"].max())
+                'avg_win_points': float(winning_trades["profit_points"].mean()),
+                'win_points_0th': float(winning_trades["profit_points"].min()),
+                'win_points_1st': float(winning_trades["profit_points"].quantile(0.01)),
+                'win_points_10th': float(winning_trades["profit_points"].quantile(0.1)),
+                'win_points_20th': float(winning_trades["profit_points"].quantile(0.2)),
+                'median_win_points': float(winning_trades["profit_points"].median()),
+                'win_points_80th': float(winning_trades["profit_points"].quantile(0.8)),
+                'win_points_90th': float(winning_trades["profit_points"].quantile(0.9)),
+                'win_points_99th': float(winning_trades["profit_points"].quantile(0.99)),
+                'win_points_100th': float(winning_trades["profit_points"].max())
             })
         
         if not losing_trades.empty:
             # Calculate stats on absolute values, then make negative
-            abs_loss_pips = losing_trades["profit_pips"].abs()
+            abs_loss_points = losing_trades["profit_points"].abs()
             metrics.update({
-                'avg_loss_pips': -float(abs_loss_pips.mean()),
-                'loss_pips_0th': -float(abs_loss_pips.min()),
-                'loss_pips_1st': -float(abs_loss_pips.quantile(0.01)),
-                'loss_pips_10th': -float(abs_loss_pips.quantile(0.1)),
-                'loss_pips_20th': -float(abs_loss_pips.quantile(0.2)),
-                'median_loss_pips': -float(abs_loss_pips.median()),
-                'loss_pips_80th': -float(abs_loss_pips.quantile(0.8)),
-                'loss_pips_90th': -float(abs_loss_pips.quantile(0.9)),
-                'loss_pips_99th': -float(abs_loss_pips.quantile(0.99)),
-                'loss_pips_100th': -float(abs_loss_pips.max())
+                'avg_loss_points': -float(abs_loss_points.mean()),
+                'loss_points_0th': -float(abs_loss_points.min()),
+                'loss_points_1st': -float(abs_loss_points.quantile(0.01)),
+                'loss_points_10th': -float(abs_loss_points.quantile(0.1)),
+                'loss_points_20th': -float(abs_loss_points.quantile(0.2)),
+                'median_loss_points': -float(abs_loss_points.median()),
+                'loss_points_80th': -float(abs_loss_points.quantile(0.8)),
+                'loss_points_90th': -float(abs_loss_points.quantile(0.9)),
+                'loss_points_99th': -float(abs_loss_points.quantile(0.99)),
+                'loss_points_100th': -float(abs_loss_points.max())
             })
         
         # Calculate consecutive trade metrics
@@ -420,7 +417,6 @@ class TradeModel:
             balance_per_lot=balance_per_lot,
             random_start=False,
             point_value=self.point_value,
-            pip_value=self.pip_value,
             min_lots=self.min_lots,
             max_lots=self.max_lots,
             contract_size=self.contract_size
