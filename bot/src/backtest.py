@@ -340,7 +340,6 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                             min_lots: float = 0.01, max_lots: float = 200.0,
                             contract_size: float = 100.0) -> Dict[str, Any]:
     """Run a backtest using the predict_single method to simulate the live trading process."""
-    print("Running step-by-step prediction backtest (simulates live trading)...")
     
     # Create a trading environment for tracking trades and metrics
     env = TradingEnv(
@@ -517,7 +516,7 @@ def main():
         # Run backtest based on selected method
         if args.method == 'predict_single':
             # Use the method that simulates live trading
-            print("\nRunning backtest with predict_single method (simulates live trading)...")
+            print("\nRunning prediction backtest (simulates live trading)...")
             results = backtest_with_predictions(
                 model=model,
                 data=df,

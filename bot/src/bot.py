@@ -388,8 +388,7 @@ class TradingBot:
             
             self.logger.debug(
                 f"Trade Signal - Action: {action_desc} | "
-                f"Description: {prediction['description']} | "
-                f"Current Position: {'None' if not self.current_position else ('LONG' if self.current_position['direction'] == 1 else 'SHORT')}"
+                f"Description: {prediction['description']}"
             )
             
             # Execute trade and update position tracking
