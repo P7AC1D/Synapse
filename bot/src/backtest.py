@@ -170,6 +170,22 @@ def print_metrics(results: dict):
     
     print("")
 
+    # Open Position Details (if any)
+    if results.get('active_positions', 0) > 0 and 'position' in results:
+        print("\n=== Open Position Details ===")
+        pos = results['position']
+        position_metrics = [
+            ('Direction', 'Long' if pos['direction'] == 1 else 'Short'),
+            ('Entry Price', f"{pos['entry_price']:.5f}"),
+            ('Lot Size', f"{pos['lot_size']:.2f}"),
+            ('Hold Time', f"{pos['hold_time']} bars"),
+            ('Unrealized PnL', f"{pos['unrealized_pnl']:+.2f}"),
+            ('Profit Pips', f"{pos['profit_pips']:+.1f}")
+        ]
+        for name, value in position_metrics:
+            print(f"{name}: {value}")
+        print("")
+        
     # Consecutive Trade Analysis
     print("=== Consecutive Trade Analysis ===")
     consecutive_metrics = [

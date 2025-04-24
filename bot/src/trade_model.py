@@ -387,6 +387,18 @@ class TradeModel:
             'active_positions': 1 if env.current_position is not None else 0,
         }
         
+        # Add position details if there's an open position
+        if env.current_position:
+            unrealized_pnl, profit_pips = env.action_handler.manage_position()
+            metrics['position'] = {
+                'direction': env.current_position['direction'],
+                'entry_price': env.current_position['entry_price'],
+                'lot_size': env.current_position['lot_size'],
+                'hold_time': env.current_step - env.current_position['entry_step'],
+                'unrealized_pnl': unrealized_pnl,
+                'profit_pips': profit_pips
+            }
+        
         # Safely add win rate
         if metrics['total_trades'] > 0:
             metrics['win_rate'] = (env.win_count / metrics['total_trades'] * 100)
