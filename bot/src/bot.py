@@ -52,7 +52,7 @@ class TradingBot:
     
     def setup_logging(self) -> None:
         """Configure logging with both console and file output."""
-        log_file = datetime.now().strftime("DRL_PPO_LSTM_Bot_%Y-%m-%d.log")
+        log_file = datetime.now().strftime(f"{MT5_COMMENT}_{MT5_SYMBOL}_%Y-%m-%d.log")
         logging.basicConfig(
             level=logging.DEBUG,
             format="%(asctime)s - %(levelname)s - %(message)s",
