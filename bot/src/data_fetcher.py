@@ -70,11 +70,12 @@ class DataFetcher:
         bars_to_log = min(5, len(data) - 1)  # Don't include the last bar as it's not completed
         if bars_to_log > 0:
             self.logger.debug("Last completed bars:")
+            self.logger.debug("Time               , Open    , High    , Low     , Close   , Spread, Volume")
             for i in range(-(bars_to_log+1), -1):
                 bar = data.iloc[i]
                 self.logger.debug(
-                    f"{data.index[i]}, {bar['open']:.3f}, {bar['high']:.3f}, "
-                    f"{bar['low']:.3f}, {bar['close']:.3f}, {bar['spread']}, {int(bar['volume'])}"
+                    f"{data.index[i]}, {bar['open']:8.3f}, {bar['high']:8.3f}, "
+                    f"{bar['low']:8.3f}, {bar['close']:8.3f}, {bar['spread']:6.1f}, {int(bar['volume']):5d}"
                 )
             
         return data
