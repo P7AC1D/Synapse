@@ -465,8 +465,8 @@ def main():
                       help='Maximum lot size (default: 200.0)')
     parser.add_argument('--contract_size', type=float, default=100.0,
                       help='Standard contract size (default: 100.0)')
-    parser.add_argument('--method', type=str, choices=['evaluate', 'backtest', 'predict_single'], default='evaluate',
-                      help='Backtesting method to use: evaluate (quiet), backtest (verbose), or predict_single (simulates live trading)')
+    parser.add_argument('--method', type=str, choices=['evaluate', 'predict_single'], default='evaluate',
+                      help='Backtesting method to use: evaluate (quiet) or predict_single (simulates live trading)')
     parser.add_argument('--verbose_features', action='store_true',
                       help='Log detailed feature values during prediction (only applicable with predict_single method)')
     
@@ -514,7 +514,7 @@ def main():
         
         # Run backtest based on selected method
         if args.method == 'predict_single':
-            # Use the new method that simulates live trading
+            # Use the method that simulates live trading
             print("\nRunning backtest with predict_single method (simulates live trading)...")
             results = backtest_with_predictions(
                 model=model,
@@ -528,7 +528,7 @@ def main():
                 max_lots=args.max_lots,
                 contract_size=args.contract_size
             )
-        elif args.method == 'evaluate' or args.quiet:
+        else:  # method == 'evaluate' or args.quiet
             print("\nRunning quiet backtest with evaluate method...")
             progress_thread = None
             
@@ -551,13 +551,6 @@ def main():
                 # Always stop the progress indicator
                 if progress_thread and progress_thread.is_alive():
                     stop_progress_indicator()
-        else:  # method == 'backtest'
-            print("\nRunning detailed backtest with verbose logging...")
-            results = model.backtest(
-                data=df,
-                initial_balance=args.initial_balance,
-                balance_per_lot=args.balance_per_lot
-            )
         
         # Print metrics
         print("\nBacktest Results:")
