@@ -221,6 +221,15 @@ class TradingBot:
                 self.logger.warning("Failed to fetch market data")
                 return
 
+            # Try to get USD/ZAR rate, fallback to 1.0 if not available
+            try:
+                usd_zar_bid, usd_zar_ask = self.mt5.get_symbol_info_tick(MT5_BASE_SYMBOL)
+                usd_zar_rate = usd_zar_bid  # Use bid price for conversion
+                self.logger.debug(f"Using USD/ZAR rate: {usd_zar_rate}")
+            except Exception as e:
+                self.logger.warning(f"Failed to get USD/ZAR rate, using 19.0: {str(e)}")
+                usd_zar_rate = 19.0
+
             # Reset LSTM states only on significant data gaps
             if self.last_bar_index is not None:
                 expected_time = self.last_bar_index + pd.Timedelta(minutes=MT5_TIMEFRAME_MINUTES)
@@ -271,6 +280,7 @@ class TradingBot:
             obs, _ = env.reset()
             
             # Set position state and update metrics if needed
+            position_type = 0  # Default to no position
             if self.current_position:
                 position_type = self.current_position.get('direction', 0)
                 lot_size = self.current_position.get('lot_size', 0.0)
