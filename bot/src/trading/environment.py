@@ -37,7 +37,7 @@ class TradingEnv(gym.Env, EzPickle):
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
                  balance_per_lot: float = 1000.0, random_start: bool = False,
                  live_price: Optional[float] = None, currency_conversion: Optional[float] = None,
-                 point_value: float = 0.01, pip_value: float = 0.01,
+                 point_value: float = 0.001, pip_value: float = 0.1,
                  min_lots: float = 0.01, max_lots: float = 200.0,
                  contract_size: float = 100.0):
         """Initialize trading environment.
@@ -49,8 +49,8 @@ class TradingEnv(gym.Env, EzPickle):
             random_start: Whether to start from random positions
             live_price: Optional current market price for live trading
             currency_conversion: Optional conversion rate for account currency (e.g. USD/ZAR)
-            point_value: Value of one price point movement (default: 0.01 for Gold)
-            pip_value: Value of one pip movement (default: 0.01 for Gold)
+            point_value: Value of one price point movement (default: 0.001 for Gold)
+            pip_value: Value of one pip movement (default: 0.1 for Gold)
             min_lots: Minimum lot size (default: 0.01)
             max_lots: Maximum lot size (default: 200.0)
             contract_size: Standard contract size (default: 100.0 for Gold)
