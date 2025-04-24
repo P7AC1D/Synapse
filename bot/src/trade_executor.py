@@ -3,22 +3,24 @@ from typing import Dict, Any, Optional, Tuple
 
 import MetaTrader5 as mt5
 from mt5_connector import MT5Connector
-from config import MT5_SYMBOL, MT5_COMMENT, STOP_LOSS_PIPS
+from config import MT5_COMMENT
 
 class TradeExecutor:
     """Class for executing trades based on model predictions."""
     
-    def __init__(self, mt5: MT5Connector, balance_per_lot: float = 1000.0, stop_loss_pips: float = 2500.0):
+    def __init__(self, mt5: MT5Connector, symbol: str, balance_per_lot: float = 1000.0, stop_loss_pips: float = 2500.0):
         """
         Initialize the trade executor.
         
         Args:
             mt5: MT5 connector instance for trade execution
+            symbol: Trading symbol to use for trade execution
             balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
             stop_loss_pips: Stop loss in pips for all trades (default: 2500.0)
         """
         self.logger = logging.getLogger(__name__)
         self.mt5 = mt5
+        self.symbol = symbol  # Store the symbol as instance variable
         self.balance_per_lot = balance_per_lot
         self.last_lot_size = None  # Track last used lot size for position info
         self.stop_loss_pips = stop_loss_pips
@@ -77,7 +79,7 @@ class TradeExecutor:
         """
         try:
             # Get symbol trading information for min/max lots
-            _, min_lot, max_lot = self.mt5.get_symbol_info(MT5_SYMBOL)
+            _, min_lot, max_lot = self.mt5.get_symbol_info(self.symbol)
             
             # Calculate lot size exactly as done in backtest environment
             lot_size = max(
@@ -117,7 +119,7 @@ class TradeExecutor:
                 return True
                 
             # Get current positions
-            positions = self.mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
+            positions = self.mt5.get_open_positions(self.symbol, MT5_COMMENT)
             if positions is None:
                 self.logger.error("Failed to get open positions")
                 return False
@@ -142,16 +144,16 @@ class TradeExecutor:
                 return True
             
             # Get symbol info for new trades
-            symbol_info = mt5.symbol_info(MT5_SYMBOL)
+            symbol_info = mt5.symbol_info(self.symbol)
             if symbol_info is None:
-                self.logger.error("Failed to get symbol info")
+                self.logger.error(f"Failed to get symbol info for {self.symbol}")
                 return False
                 
             # Get current price
             if action == 1:  # Buy
-                current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[1]  # Ask
+                current_price = self.mt5.get_symbol_info_tick(self.symbol)[1]  # Ask
             else:  # Sell
-                current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)[0]  # Bid
+                current_price = self.mt5.get_symbol_info_tick(self.symbol)[0]  # Bid
                 
             if current_price is None:
                 self.logger.error("Failed to get current price")
@@ -162,20 +164,20 @@ class TradeExecutor:
             
             # Get filling type
             filling_type = self.mt5.check_filling_type(
-                MT5_SYMBOL,
+                self.symbol,
                 'buy' if action == 1 else 'sell'
             )
             
             # Calculate stop loss
             trade_type = 'buy' if action == 1 else 'sell'
-            stop_loss = self.calculate_stop_loss(current_price, trade_type, MT5_SYMBOL)
+            stop_loss = self.calculate_stop_loss(current_price, trade_type, self.symbol)
             if stop_loss == 0.0:
                 self.logger.error("Failed to calculate stop loss")
                 return False
 
             # Execute the trade with stop loss
             success = self.mt5.open_trade(
-                symbol=MT5_SYMBOL,
+                symbol=self.symbol,
                 lot=lot_size,
                 price=current_price,
                 order_type=trade_type,
@@ -190,7 +192,7 @@ class TradeExecutor:
                 self.logger.info(
                     f"Trade executed: {trade_type.upper()} "
                     f"{lot_size:.2f} lots @ {current_price:.5f} "
-                    f"(SL: {stop_loss:.5f}, {self.stop_loss_pips} pips)"
+                    f"(SL: {stop_loss:.5f}, {self.stop_loss_pips} points)"
                 )
             else:
                 self.logger.error("Trade execution failed")

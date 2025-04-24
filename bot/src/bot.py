@@ -63,7 +63,7 @@ class TradingBot:
     
     def setup_logging(self) -> None:
         """Configure logging with both console and file output."""
-        log_file = datetime.now().strftime(f"{MT5_COMMENT}_{MT5_SYMBOL}_%Y-%m-%d.log")
+        log_file = datetime.now().strftime(f"{MT5_COMMENT}_{self.symbol}_%Y-%m-%d.log")
         logging.basicConfig(
             level=logging.DEBUG,
             format="%(asctime)s - %(levelname)s - %(message)s",
@@ -78,7 +78,7 @@ class TradingBot:
     def verify_positions(self) -> None:
         """Verify and synchronize internal position tracking with MT5 positions."""
         try:
-            positions = self.mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
+            positions = self.mt5.get_open_positions(self.symbol, MT5_COMMENT)
             
             # Case 1: We think we have a position but MT5 doesn't
             if self.current_position and not positions:
@@ -174,6 +174,7 @@ class TradingBot:
             # Initialize trade executor with balance_per_lot and stop_loss_pips
             self.trade_executor = TradeExecutor(
                 self.mt5, 
+                symbol=self.symbol,
                 balance_per_lot=self.balance_per_lot,
                 stop_loss_pips=self.stop_loss_pips
             )
@@ -288,7 +289,7 @@ class TradingBot:
             self.model.initial_balance = current_balance
 
             # Get current price for live P&L calculation
-            current_price = self.mt5.get_symbol_info_tick(MT5_SYMBOL)
+            current_price = self.mt5.get_symbol_info_tick(self.symbol)
             if current_price is None:
                 self.logger.warning("Failed to get current price")
                 return
