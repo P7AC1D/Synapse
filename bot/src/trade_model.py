@@ -481,21 +481,29 @@ class TradeModel:
                 if not winning_trades.empty and 'hold_time' in winning_trades.columns:
                     metrics.update({
                         'win_hold_time': float(winning_trades['hold_time'].mean()),
+                        'win_hold_time_0th': float(winning_trades['hold_time'].min()),
                         'win_hold_time_1st': float(winning_trades['hold_time'].quantile(0.01)),
                         'win_hold_time_10th': float(winning_trades['hold_time'].quantile(0.1)),
+                        'win_hold_time_20th': float(winning_trades['hold_time'].quantile(0.2)),
                         'win_hold_time_median': float(winning_trades['hold_time'].median()),
+                        'win_hold_time_80th': float(winning_trades['hold_time'].quantile(0.8)),
                         'win_hold_time_90th': float(winning_trades['hold_time'].quantile(0.9)),
-                        'win_hold_time_99th': float(winning_trades['hold_time'].quantile(0.99))
+                        'win_hold_time_99th': float(winning_trades['hold_time'].quantile(0.99)),
+                        'win_hold_time_100th': float(winning_trades['hold_time'].max())
                     })
                     
                 if not losing_trades.empty and 'hold_time' in losing_trades.columns:
                     metrics.update({
                         'loss_hold_time': float(losing_trades['hold_time'].mean()),
+                        'loss_hold_time_0th': float(losing_trades['hold_time'].min()),
                         'loss_hold_time_1st': float(losing_trades['hold_time'].quantile(0.01)),
                         'loss_hold_time_10th': float(losing_trades['hold_time'].quantile(0.1)),
+                        'loss_hold_time_20th': float(losing_trades['hold_time'].quantile(0.2)),
                         'loss_hold_time_median': float(losing_trades['hold_time'].median()),
+                        'loss_hold_time_80th': float(losing_trades['hold_time'].quantile(0.8)),
                         'loss_hold_time_90th': float(losing_trades['hold_time'].quantile(0.9)),
-                        'loss_hold_time_99th': float(losing_trades['hold_time'].quantile(0.99))
+                        'loss_hold_time_99th': float(losing_trades['hold_time'].quantile(0.99)),
+                        'loss_hold_time_100th': float(losing_trades['hold_time'].max())
                     })
         
         # Include trade history
@@ -505,11 +513,15 @@ class TradeModel:
         if not winning_trades.empty:
             metrics.update({
                 'avg_win_pips': float(winning_trades["profit_pips"].mean()),
+                'win_pips_0th': float(winning_trades["profit_pips"].min()),
                 'win_pips_1st': float(winning_trades["profit_pips"].quantile(0.01)),
                 'win_pips_10th': float(winning_trades["profit_pips"].quantile(0.1)),
+                'win_pips_20th': float(winning_trades["profit_pips"].quantile(0.2)),
                 'median_win_pips': float(winning_trades["profit_pips"].median()),
+                'win_pips_80th': float(winning_trades["profit_pips"].quantile(0.8)),
                 'win_pips_90th': float(winning_trades["profit_pips"].quantile(0.9)),
-                'win_pips_99th': float(winning_trades["profit_pips"].quantile(0.99))
+                'win_pips_99th': float(winning_trades["profit_pips"].quantile(0.99)),
+                'win_pips_100th': float(winning_trades["profit_pips"].max())
             })
         
         if not losing_trades.empty:
@@ -517,11 +529,15 @@ class TradeModel:
             abs_loss_pips = losing_trades["profit_pips"].abs()
             metrics.update({
                 'avg_loss_pips': -float(abs_loss_pips.mean()),
+                'loss_pips_0th': -float(abs_loss_pips.min()),
                 'loss_pips_1st': -float(abs_loss_pips.quantile(0.01)),
                 'loss_pips_10th': -float(abs_loss_pips.quantile(0.1)),
+                'loss_pips_20th': -float(abs_loss_pips.quantile(0.2)),
                 'median_loss_pips': -float(abs_loss_pips.median()),
+                'loss_pips_80th': -float(abs_loss_pips.quantile(0.8)),
                 'loss_pips_90th': -float(abs_loss_pips.quantile(0.9)),
-                'loss_pips_99th': -float(abs_loss_pips.quantile(0.99))
+                'loss_pips_99th': -float(abs_loss_pips.quantile(0.99)),
+                'loss_pips_100th': -float(abs_loss_pips.max())
             })
         
         # Calculate consecutive trade metrics

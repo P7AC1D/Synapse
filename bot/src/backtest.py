@@ -103,6 +103,12 @@ def print_metrics(results: dict):
     # Create data for the DataFrame
     data = {
         'Metric Type': ['Winners Hold', 'Losers Hold', 'Winners Pips', 'Losers Pips'],
+        '0th Pct': [
+            results.get('win_hold_time_0th', 0.0),
+            results.get('loss_hold_time_0th', 0.0),
+            results.get('win_pips_0th', 0.0),
+            results.get('loss_pips_0th', 0.0)
+        ],
         '1st Pct': [
             results.get('win_hold_time_1st', 0.0),
             results.get('loss_hold_time_1st', 0.0),
@@ -115,11 +121,23 @@ def print_metrics(results: dict):
             results.get('win_pips_10th', 0.0),
             results.get('loss_pips_10th', 0.0)
         ],
+        '20th Pct': [
+            results.get('win_hold_time_20th', 0.0),
+            results.get('loss_hold_time_20th', 0.0),
+            results.get('win_pips_20th', 0.0),
+            results.get('loss_pips_20th', 0.0)
+        ],
         'Median': [
             results.get('win_hold_time_median', 0.0),
             results.get('loss_hold_time_median', 0.0),
             results.get('median_win_pips', 0.0),
             results.get('median_loss_pips', 0.0)
+        ],
+        '80th Pct': [
+            results.get('win_hold_time_80th', 0.0),
+            results.get('loss_hold_time_80th', 0.0),
+            results.get('win_pips_80th', 0.0),
+            results.get('loss_pips_80th', 0.0)
         ],
         '90th Pct': [
             results.get('win_hold_time_90th', 0.0),
@@ -132,6 +150,12 @@ def print_metrics(results: dict):
             results.get('loss_hold_time_99th', 0.0),
             results.get('win_pips_99th', 0.0),
             results.get('loss_pips_99th', 0.0)
+        ],
+        '100th Pct': [
+            results.get('win_hold_time_100th', 0.0),
+            results.get('loss_hold_time_100th', 0.0),
+            results.get('win_pips_100th', 0.0),
+            results.get('loss_pips_100th', 0.0)
         ]
     }
     
