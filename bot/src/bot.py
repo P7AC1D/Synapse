@@ -134,26 +134,48 @@ class TradingBot:
                 self.logger.error("Failed to connect to MT5")
                 return False
                 
+            # Get symbol info to determine point value, contract size, and lot limits
+            import MetaTrader5 as mt5
+            symbol_info = mt5.symbol_info(self.symbol)
+            if symbol_info is None:
+                self.logger.error(f"Failed to get symbol info for {self.symbol}")
+                return False
+                
+            # Get symbol parameters
+            point_value = symbol_info.point
+            contract_size = symbol_info.trade_contract_size
+            min_lots = symbol_info.volume_min
+            max_lots = symbol_info.volume_max
+            
+            self.logger.info(f"Symbol info - Point: {point_value}, " 
+                           f"Contract Size: {contract_size}, Min Lot: {min_lots}, Max Lot: {max_lots}")
+                
             # Initialize components
             self.data_fetcher = DataFetcher(
-                self.mt5, MT5_SYMBOL, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH + 1
+                self.mt5, self.symbol, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH + 1
             )
             # Initialize trading model with actual balance
-            self.logger.info(f"Loading trading model from: {MODEL_PATH}")
+            self.logger.info(f"Loading trading model from: {self.model_path}")
             account_balance = self.mt5.get_account_balance()
             self.model = TradeModel(
-                MODEL_PATH,
-                balance_per_lot=BALANCE_PER_LOT,
-                initial_balance=account_balance
+                self.model_path,
+                balance_per_lot=self.balance_per_lot,
+                initial_balance=account_balance,
+                point_value=point_value,
+                pip_value=point_value,  # Use point_value directly instead of a separate pip_value
+                min_lots=min_lots,
+                max_lots=max_lots,
+                contract_size=contract_size
             )
             if not self.model.model:  # Check if model loaded successfully
                 self.logger.error("Failed to load trading model")
                 return False
 
-            # Initialize trade executor with balance_per_lot from config
+            # Initialize trade executor with balance_per_lot and stop_loss_pips
             self.trade_executor = TradeExecutor(
                 self.mt5, 
-                balance_per_lot=BALANCE_PER_LOT
+                balance_per_lot=self.balance_per_lot,
+                stop_loss_pips=self.stop_loss_pips
             )
             
             # Get initial data for warmup
@@ -180,7 +202,7 @@ class TradingBot:
                 return False
 
             # Check for existing positions
-            positions = self.mt5.get_open_positions(MT5_SYMBOL, MT5_COMMENT)
+            positions = self.mt5.get_open_positions(self.symbol, MT5_COMMENT)
             if positions:
                 position = positions[0]  # Get first position if multiple exist
                 self.current_position = {

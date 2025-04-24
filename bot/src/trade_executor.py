@@ -8,43 +8,48 @@ from config import MT5_SYMBOL, MT5_COMMENT, STOP_LOSS_PIPS
 class TradeExecutor:
     """Class for executing trades based on model predictions."""
     
-    def __init__(self, mt5: MT5Connector, balance_per_lot: float = 1000.0):
+    def __init__(self, mt5: MT5Connector, balance_per_lot: float = 1000.0, stop_loss_pips: float = 2500.0):
         """
         Initialize the trade executor.
         
         Args:
             mt5: MT5 connector instance for trade execution
             balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
+            stop_loss_pips: Stop loss in pips for all trades (default: 2500.0)
         """
         self.logger = logging.getLogger(__name__)
         self.mt5 = mt5
         self.balance_per_lot = balance_per_lot
         self.last_lot_size = None  # Track last used lot size for position info
+        self.stop_loss_pips = stop_loss_pips
         
-    def calculate_stop_loss(self, entry_price: float, trade_type: str) -> float:
+    def calculate_stop_loss(self, entry_price: float, trade_type: str, symbol: str) -> float:
         """
         Calculate stop loss price based on pips from entry price.
         
         Args:
             entry_price: Entry price for the trade
             trade_type: Either 'buy' or 'sell'
+            symbol: Trading symbol (e.g. XAUUSDm, USTECm)
             
         Returns:
             float: Stop loss price
         """
         try:
-            # Get point value for the symbol
-            point = mt5.symbol_info(MT5_SYMBOL).point
-            digits = mt5.symbol_info(MT5_SYMBOL).digits
+            # Get point value and precision for the symbol
+            symbol_info = mt5.symbol_info(symbol)
+            point = symbol_info.point
+            digits = symbol_info.digits
             
-            # For XAUUSD, 1 pip = 0.1 points (need to multiply by 10)
-            pip_value = point * 10 if 'XAU' in MT5_SYMBOL else point
+            # Calculate stop loss directly using points instead of pips
+            # This simplifies the calculation by removing the separate pip concept
+            sl_points = self.stop_loss_pips * point
             
-            # Calculate stop loss price
+            # Calculate stop loss price based on trade type
             if trade_type == 'buy':
-                sl_price = entry_price - (STOP_LOSS_PIPS * pip_value)
+                sl_price = entry_price - sl_points
             else:  # sell
-                sl_price = entry_price + (STOP_LOSS_PIPS * pip_value)
+                sl_price = entry_price + sl_points
                 
             # Round to symbol digits
             sl_price = round(sl_price, digits)
@@ -52,7 +57,7 @@ class TradeExecutor:
             self.logger.debug(
                 f"Stop Loss calculation: Entry: {entry_price:.{digits}f} | "
                 f"Type: {trade_type} | SL: {sl_price:.{digits}f} | "
-                f"Distance: {STOP_LOSS_PIPS} pips"
+                f"Distance: {self.stop_loss_pips} points"
             )
             return sl_price
             
@@ -163,7 +168,7 @@ class TradeExecutor:
             
             # Calculate stop loss
             trade_type = 'buy' if action == 1 else 'sell'
-            stop_loss = self.calculate_stop_loss(current_price, trade_type)
+            stop_loss = self.calculate_stop_loss(current_price, trade_type, MT5_SYMBOL)
             if stop_loss == 0.0:
                 self.logger.error("Failed to calculate stop loss")
                 return False
@@ -185,7 +190,7 @@ class TradeExecutor:
                 self.logger.info(
                     f"Trade executed: {trade_type.upper()} "
                     f"{lot_size:.2f} lots @ {current_price:.5f} "
-                    f"(SL: {stop_loss:.5f}, {STOP_LOSS_PIPS} pips)"
+                    f"(SL: {stop_loss:.5f}, {self.stop_loss_pips} pips)"
                 )
             else:
                 self.logger.error("Trade execution failed")
