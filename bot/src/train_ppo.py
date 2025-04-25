@@ -44,6 +44,16 @@ def main():
     parser.add_argument('--eval_freq', type=int, default=10000,
                       help='Evaluation frequency in timesteps')
     
+    # Trading environment parameters
+    parser.add_argument('--point_value', type=float, default=0.01,
+                      help='Value of one price point movement (default: 0.01)')
+    parser.add_argument('--min_lots', type=float, default=0.01,
+                      help='Minimum lot size (default: 0.01)')
+    parser.add_argument('--max_lots', type=float, default=200.0,
+                      help='Maximum lot size (default: 200.0)')
+    parser.add_argument('--contract_size', type=float, default=100.0,
+                      help='Standard contract size (default: 100.0)')
+    
     args = parser.parse_args()
     
     os.makedirs(f"../results/{args.seed}", exist_ok=True)

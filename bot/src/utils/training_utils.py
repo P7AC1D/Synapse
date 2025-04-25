@@ -167,7 +167,11 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             data=data,
             initial_balance=args.initial_balance,
             balance_per_lot=args.balance_per_lot,
-            random_start=False
+            random_start=False,
+            point_value=args.point_value,
+            min_lots=args.min_lots,
+            max_lots=args.max_lots,
+            contract_size=args.contract_size
         )
 
         # Start progress indicator
@@ -360,6 +364,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         while training_start + initial_window <= total_periods:
             iteration = training_start // step_size
             iteration_start_time = time.time()
+
+            # Load training state for current iteration
+            _, _, state = load_training_state(state_path)
             
             # Display timing estimate if we have data
             if state.get('avg_iteration_time'):
@@ -394,7 +401,11 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             env_params = {
                 'initial_balance': args.initial_balance,
                 'balance_per_lot': args.balance_per_lot,
-                'random_start': args.random_start
+                'random_start': args.random_start,
+                'point_value': args.point_value,
+                'min_lots': args.min_lots,
+                'max_lots': args.max_lots,
+                'contract_size': args.contract_size
             }
         
             train_env = Monitor(TradingEnv(train_data, **env_params))

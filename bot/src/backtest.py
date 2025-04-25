@@ -457,8 +457,6 @@ def main():
                       help='Path to save backtest plot')
     parser.add_argument('--point_value', type=float, default=0.01,
                       help='Value of one price point movement (default: 0.01)')
-    parser.add_argument('--pip_value', type=float, default=0.01,
-                      help='Value of one pip movement (default: 0.01)')
     parser.add_argument('--min_lots', type=float, default=0.01,
                       help='Minimum lot size (default: 0.01)')
     parser.add_argument('--max_lots', type=float, default=200.0,
