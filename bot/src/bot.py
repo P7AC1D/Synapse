@@ -307,7 +307,8 @@ class TradingBot:
                 point_value=self.model.point_value,
                 min_lots=self.model.min_lots,
                 max_lots=self.model.max_lots,
-                contract_size=self.model.contract_size
+                contract_size=self.model.contract_size,
+                currency_conversion=usd_zar_rate  # Add currency conversion parameter
             )
             obs, _ = env.reset()
             
