@@ -272,12 +272,6 @@ class TradingBot:
                     self.logger.info(f"Significant data gap detected ({time_diff/60:.1f} minutes), resetting LSTM states")
                     self.model.lstm_states = None
 
-            # Get USD/ZAR rate for currency conversion
-            usd_zar_rate = self.mt5.get_symbol_info_tick(MT5_BASE_SYMBOL)[0]  # Use bid price
-            if usd_zar_rate is None:
-                self.logger.warning("Failed to get USD/ZAR rate, using 1.0")
-                usd_zar_rate = 1.0
-
             # Update position info for prediction
             if self.current_position:
                 # Update entry step relative to current data window
@@ -286,16 +280,8 @@ class TradingBot:
             # Update model's balance before prediction
             current_balance = self.mt5.get_account_balance()
             self.model.initial_balance = current_balance
-
-            # Get current price for live P&L calculation
-            current_price = self.mt5.get_symbol_info_tick(self.symbol)
-            if current_price is None:
-                self.logger.warning("Failed to get current price")
-                return
-                
-            # Use bid price for P&L calculation (matches MQL5)
-            live_price = current_price[0]
             
+            current_close_price = data['close'].iloc[-1]
             data = data.iloc[:-1]  # Exclude the last row for prediction as its not completed yet
             
             # Create environment for observation just like backtest does
@@ -304,6 +290,7 @@ class TradingBot:
                 initial_balance=self.model.initial_balance,
                 balance_per_lot=self.model.balance_per_lot,
                 random_start=False,
+                live_price=current_close_price,
                 point_value=self.model.point_value,
                 min_lots=self.model.min_lots,
                 max_lots=self.model.max_lots,
@@ -323,12 +310,12 @@ class TradingBot:
                 env.current_position = self.current_position.copy()
                 
                 # Calculate and update unrealized PnL
-                if live_price is not None:
+                if current_close_price is not None:
                     # Calculate raw P&L first
                     if position_type == 1:  # Long position
-                        profit_points = live_price - entry_price
+                        profit_points = current_close_price - entry_price
                     else:  # Short position
-                        profit_points = entry_price - live_price
+                        profit_points = entry_price - current_close_price
                         
                     # Calculate P&L in account currency
                     usd_pnl = profit_points * lot_size * env.CONTRACT_SIZE
