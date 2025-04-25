@@ -363,8 +363,8 @@ class UnifiedEvalCallback(BaseCallback):
                 # Performance Metrics
                 print("\n  Performance Metrics:")
                 print(f"    Total Trades: {performance['total_trades']} ({performance['win_rate']:.2f}% win)")
-                print(f"    Average Win: {performance['avg_win_pips']:.1f} pips ({performance['win_hold_time']:.1f} bars)")
-                print(f"    Average Loss: {performance['avg_loss_pips']:.1f} pips ({performance['loss_hold_time']:.1f} bars)")
+                print(f"    Average Win: {performance['avg_win_points']:.1f} points ({performance['win_hold_time']:.1f} bars)")
+                print(f"    Average Loss: {performance['avg_loss_points']:.1f} points ({performance['loss_hold_time']:.1f} bars)")
                 print(f"    Long Trades: {performance['long_trades']} ({performance['long_win_rate']:.1f}% win)")
                 print(f"    Short Trades: {performance['short_trades']} ({performance['short_win_rate']:.1f}% win)")
                 print(f"    Profit Factor: {performance['profit_factor']:.2f}")
@@ -391,8 +391,8 @@ class UnifiedEvalCallback(BaseCallback):
                     "total_trades": performance['total_trades'],
                     "average_win": performance['avg_win'],
                     "average_loss": performance['avg_loss'],
-                    "avg_win_pips": performance['avg_win_pips'],
-                    "avg_loss_pips": performance['avg_loss_pips'],
+                    "avg_win_points": performance['avg_win_points'],
+                    "avg_loss_points": performance['avg_loss_points'],
                     "profit_factor": performance['profit_factor'],
                     "long_trades": performance['long_trades'],
                     "long_win_rate": performance['long_win_rate'],
