@@ -101,12 +101,20 @@ class MT5Connector:
         if not self._ensure_connected():
             return None
 
-        return mt5.copy_rates_from(
+        rates = mt5.copy_rates_from_pos(
             symbol, 
             to_mt5_timeframe(timeframe_minutes), 
-            datetime.now(pytz.utc), 
+            0,  # start position
             bar_count
         )
+        
+        if rates is not None:
+            # Convert to pandas DataFrame
+            import pandas as pd
+            df = pd.DataFrame(rates)
+            return df
+        
+        return None
     
     def check_filling_type(self, symbol: str, order_type: str) -> int:
         """Check appropriate filling type for the symbol."""
