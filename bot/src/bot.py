@@ -146,9 +146,11 @@ class TradingBot:
             contract_size = symbol_info.trade_contract_size
             min_lots = symbol_info.volume_min
             max_lots = symbol_info.volume_max
+            volume_step = symbol_info.volume_step
             
             self.logger.info(f"Symbol info - Point: {point_value}, " 
-                           f"Contract Size: {contract_size}, Min Lot: {min_lots}, Max Lot: {max_lots}")
+                           f"Contract Size: {contract_size}, Min Lot: {min_lots}, Max Lot: {max_lots}, "
+                           f"Volume Step: {volume_step}")
                 
             # Initialize components
             self.data_fetcher = DataFetcher(
@@ -170,12 +172,13 @@ class TradingBot:
                 self.logger.error("Failed to load trading model")
                 return False
 
-            # Initialize trade executor with balance_per_lot and stop_loss_pips
+            # Initialize trade executor with balance_per_lot, stop_loss_pips and volume_step
             self.trade_executor = TradeExecutor(
                 self.mt5, 
                 symbol=self.symbol,
                 balance_per_lot=self.balance_per_lot,
-                stop_loss_pips=self.stop_loss_pips
+                stop_loss_pips=self.stop_loss_pips,
+                volume_step=volume_step
             )
             
             # Get initial data for warmup
@@ -305,6 +308,7 @@ class TradingBot:
                 position_type = self.current_position.get('direction', 0)
                 lot_size = self.current_position.get('lot_size', 0.0)
                 entry_price = self.current_position.get('entry_price', 0.0)
+                spread = self.current_position.get('entry_spread', 0.0)
                 
                 # Update environment position state
                 env.current_position = self.current_position.copy()
@@ -313,9 +317,9 @@ class TradingBot:
                 if current_close_price is not None:
                     # Calculate raw P&L first
                     if position_type == 1:  # Long position
-                        profit_points = current_close_price - entry_price
+                        profit_points = current_close_price - entry_price - spread
                     else:  # Short position
-                        profit_points = entry_price - current_close_price
+                        profit_points = entry_price - current_close_price + spread
                         
                     # Calculate P&L in account currency
                     usd_pnl = profit_points * lot_size * env.CONTRACT_SIZE
