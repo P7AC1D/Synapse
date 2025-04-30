@@ -1,6 +1,8 @@
 using System;
-using DRLTrader.Models;
 using cAlgo.API;
+using cAlgo.API.Indicators;
+using cAlgo.API.Internals;
+using DRLTrader.Models;
 
 namespace DRLTrader.Services
 {
@@ -58,8 +60,7 @@ namespace DRLTrader.Services
             try
             {
                 // Convert pips to price points based on symbol digits
-                double pointSize = _symbol.PointSize;
-                double stopLossPoints = _stopLossPips * pointSize;
+                double stopLossPoints = _stopLossPips * _symbol.TickSize;
                 
                 // Calculate stop loss price based on trade direction
                 double stopLossPrice = tradeType == TradeType.Buy 
