@@ -9,7 +9,7 @@ using DRLTrader.Services;
 
 namespace cAlgo.Robots
 {
-    [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.None)]
+    [Robot(TimeZone = TimeZones.UTC, AccessRights = AccessRights.FullAccess)]
     public class DRLTrader : Robot
     {
         [Parameter("API URL", DefaultValue = "http://localhost:8000", Group = "API")]
@@ -39,15 +39,24 @@ namespace cAlgo.Robots
         {
             try
             {
+                Print("Starting DRLTrader initialization...");
+                
                 // Initialize services
+                Print($"Initializing API client with URL: {ApiUrl}");
                 _apiClient = new ApiClient(ApiUrl);
+                
+                Print($"Initializing Risk Manager with BalancePerLot: {BalancePerLot}, StopLossPips: {StopLossPips}");
                 _riskManager = new RiskManager(BalancePerLot, StopLossPips, Symbol);
+                
+                Print("Initializing Trade Manager");
                 _tradeManager = new TradeManager(this, Symbol, _riskManager);
 
                 // Check API health
+                Print("Checking API health...");
                 CheckApiHealth().Wait();
 
                 // Load historical data
+                Print($"Loading initial {MinimumBars} historical bars...");
                 LoadHistoricalData();
 
                 _isInitialized = true;
@@ -56,15 +65,22 @@ namespace cAlgo.Robots
             catch (Exception ex)
             {
                 Print($"Initialization failed: {ex.Message}");
+                Print($"Stack trace: {ex.StackTrace}");
             }
         }
 
         protected override void OnBar()
         {
-            if (!_isInitialized) return;
+            if (!_isInitialized)
+            {
+                Print("OnBar skipped - Robot not initialized");
+                return;
+            }
 
             try
             {
+                Print($"Processing new bar at {Time}");
+                
                 // Add new bar to queue
                 _bars.Enqueue(Bars.Last());
                 if (_bars.Count > MinimumBars)
@@ -77,14 +93,17 @@ namespace cAlgo.Robots
                     return;
                 }
 
+                Print("Getting current position info...");
                 // Get current position info
                 var position = Positions.Find(Symbol.Name);
                 int positionDirection = position != null 
                     ? (position.TradeType == TradeType.Buy ? 1 : -1) 
                     : 0;
                 double positionPnl = position?.NetProfit ?? 0.0;
+                Print($"Current position: Direction={positionDirection}, PnL={positionPnl}");
 
                 // Create market data
+                Print("Preparing market data...");
                 var marketData = new MarketData
                 {
                     Symbol = Symbol.Name,
@@ -95,20 +114,23 @@ namespace cAlgo.Robots
                 // Add historical data
                 foreach (var bar in _bars)
                 {
-                    marketData.Timestamp.Add(bar.OpenTime.ToUnixTimeSeconds());
+                    marketData.Timestamp.Add(new DateTimeOffset(bar.OpenTime).ToUnixTimeSeconds());
                     marketData.Open.Add(bar.Open);
                     marketData.High.Add(bar.High);
                     marketData.Low.Add(bar.Low);
                     marketData.Close.Add(bar.Close);
-                    marketData.Volume.Add(bar.Volume);
+                    marketData.Volume.Add(bar.TickVolume);
                 }
+                Print($"Market data prepared with {_bars.Count} bars");
 
                 // Get prediction
+                Print("Getting prediction and executing trade...");
                 GetPredictionAndExecute(marketData).Wait();
             }
             catch (Exception ex)
             {
                 Print($"Error in OnBar: {ex.Message}");
+                Print($"Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -128,7 +150,7 @@ namespace cAlgo.Robots
         private void LoadHistoricalData()
         {
             // Load initial historical bars
-            var historicalBars = MarketData.GetBars(Symbol.Name, TimeFrame, MinimumBars);
+            var historicalBars = Bars.Take(MinimumBars).ToList();
             foreach (var bar in historicalBars)
             {
                 _bars.Enqueue(bar);
@@ -140,18 +162,23 @@ namespace cAlgo.Robots
         {
             try
             {
+                Print("Requesting prediction from API...");
                 // Get prediction from API
                 var prediction = await _apiClient.GetPredictionAsync(data);
                 Print($"Received prediction: {prediction.Action} ({prediction.Description})");
 
                 // Execute trade based on prediction
+                Print("Executing trade based on prediction...");
                 bool success = await _tradeManager.ExecuteTradeAsync(prediction);
                 if (!success)
                     Print("Trade execution failed");
+                else
+                    Print("Trade execution successful");
             }
             catch (Exception ex)
             {
                 Print($"Error getting prediction or executing trade: {ex.Message}");
+                Print($"Stack trace: {ex.StackTrace}");
             }
         }
     }

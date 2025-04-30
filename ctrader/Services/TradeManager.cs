@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
 using cAlgo.API;
+using cAlgo.API.Indicators;
+using cAlgo.API.Internals;
 using DRLTrader.Models;
 
 namespace DRLTrader.Services
@@ -37,7 +39,7 @@ namespace DRLTrader.Services
                 }
 
                 // Update current position tracking
-                _currentPosition = _robot.Positions.Find(p => p.SymbolName == _symbol.Name);
+                _currentPosition = _robot.Positions.Find(_symbol.Name);
 
                 switch (action)
                 {
@@ -73,7 +75,7 @@ namespace DRLTrader.Services
         /// <summary>
         /// Open a new position based on the trading action
         /// </summary>
-        private async Task<bool> OpenPositionAsync(TradingAction action)
+        private Task<bool> OpenPositionAsync(TradingAction action)
         {
             try
             {
@@ -88,63 +90,63 @@ namespace DRLTrader.Services
                 double stopLoss = _riskManager.CalculateStopLoss(entryPrice, tradeType);
                 
                 // Open position
-                var result = await _robot.ExecuteMarketOrderAsync(
+                var result = _robot.ExecuteMarketOrder(
                     tradeType,
-                    _symbol,
+                    _symbol.Name,
                     volume,
                     "DRLTrader",
                     stopLoss,
                     null  // No take profit
                 );
                 
-                if (result.Error == ErrorCode.NoError)
+                if (result.IsSuccessful)
                 {
                     _robot.Print($"Position opened: {action} {volume:F2} lots @ {entryPrice:F5} (SL: {stopLoss:F5})");
-                    return true;
+                    return Task.FromResult(true);
                 }
                 else
                 {
                     _robot.Print($"Failed to open position: {result.Error}");
-                    return false;
+                    return Task.FromResult(false);
                 }
             }
             catch (Exception ex)
             {
                 _robot.Print($"Error opening position: {ex.Message}");
-                return false;
+                return Task.FromResult(false);
             }
         }
 
         /// <summary>
         /// Close current position if it exists
         /// </summary>
-        private async Task<bool> ClosePositionAsync()
+        private Task<bool> ClosePositionAsync()
         {
             try
             {
                 if (_currentPosition == null)
                 {
                     _robot.Print("No position to close");
-                    return true;
+                    return Task.FromResult(true);
                 }
 
-                var result = await _robot.ClosePositionAsync(_currentPosition);
-                if (result.Error == ErrorCode.NoError)
+                var result = _robot.ClosePosition(_currentPosition);
+                if (result.IsSuccessful)
                 {
-                    _robot.Print($"Position closed at {result.Position.ClosePrice:F5}");
+                    _robot.Print($"Position closed");
                     _currentPosition = null;
-                    return true;
+                    return Task.FromResult(true);
                 }
                 else
                 {
                     _robot.Print($"Failed to close position: {result.Error}");
-                    return false;
+                    return Task.FromResult(false);
                 }
             }
             catch (Exception ex)
             {
                 _robot.Print($"Error closing position: {ex.Message}");
-                return false;
+                return Task.FromResult(false);
             }
         }
     }
