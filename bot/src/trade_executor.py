@@ -8,7 +8,7 @@ from config import MT5_COMMENT
 class TradeExecutor:
     """Class for executing trades based on model predictions."""
     
-    def __init__(self, mt5: MT5Connector, symbol: str, balance_per_lot: float = 1000.0, stop_loss_pips: float = 2500.0):
+    def __init__(self, mt5: MT5Connector, symbol: str, balance_per_lot: float = 1000.0, stop_loss_pips: float = 2500.0, volume_step: float = 0.01):
         """
         Initialize the trade executor.
         
@@ -17,6 +17,7 @@ class TradeExecutor:
             symbol: Trading symbol to use for trade execution
             balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
             stop_loss_pips: Stop loss in pips for all trades (default: 2500.0)
+            volume_step: Volume step size for the symbol (default: 0.01)
         """
         self.logger = logging.getLogger(__name__)
         self.mt5 = mt5
@@ -24,6 +25,7 @@ class TradeExecutor:
         self.balance_per_lot = balance_per_lot
         self.last_lot_size = None  # Track last used lot size for position info
         self.stop_loss_pips = stop_loss_pips
+        self.volume_step = volume_step
         
     def calculate_stop_loss(self, entry_price: float, trade_type: str, symbol: str) -> float:
         """
@@ -81,25 +83,28 @@ class TradeExecutor:
             # Get symbol trading information for min/max lots
             _, min_lot, max_lot = self.mt5.get_symbol_info(self.symbol)
             
-            # Calculate lot size exactly as done in backtest environment
-            lot_size = max(
-                min_lot,
-                min(
-                    max_lot,
-                    round((account_balance / self.balance_per_lot) * min_lot, 2)
-                )
-            )
+            # Calculate raw lot size
+            raw_lot_size = (account_balance / self.balance_per_lot) * self.volume_step
+            
+            # Round to nearest volume step
+            steps = round(raw_lot_size / self.volume_step)
+            lot_size = steps * self.volume_step
+            
+            # Ensure within min/max bounds
+            lot_size = max(min_lot, min(max_lot, lot_size))
             
             self.logger.debug(
                 f"Lot size calculation: Balance: {account_balance:.2f} | "
                 f"Balance per lot: {self.balance_per_lot:.2f} | "
-                f"Lot size: {lot_size:.2f} lots"
+                f"Raw size: {raw_lot_size:.3f} | "
+                f"Steps: {steps} | "
+                f"Final lot size: {lot_size:.2f} lots"
             )
             return lot_size
             
         except Exception as e:
             self.logger.error(f"Error calculating position size: {e}")
-            return 0.01  # Return minimum lot size on error
+            return min_lot  # Return minimum lot size on error
         
     def execute_trade(self, prediction: Dict[str, Any]) -> bool:
         """

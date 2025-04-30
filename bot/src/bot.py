@@ -141,9 +141,11 @@ class TradingBot:
             contract_size = symbol_info.trade_contract_size
             min_lots = symbol_info.volume_min
             max_lots = symbol_info.volume_max
+            volume_step = symbol_info.volume_step
             
             self.logger.info(f"Symbol info - Point: {point_value}, " 
-                           f"Contract Size: {contract_size}, Min Lot: {min_lots}, Max Lot: {max_lots}")
+                           f"Contract Size: {contract_size}, Min Lot: {min_lots}, Max Lot: {max_lots}, "
+                           f"Volume Step: {volume_step}")
                 
             # Initialize components
             self.data_fetcher = DataFetcher(
@@ -165,12 +167,13 @@ class TradingBot:
                 self.logger.error("Failed to load trading model")
                 return False
 
-            # Initialize trade executor with balance_per_lot and stop_loss_pips
+            # Initialize trade executor with balance_per_lot, stop_loss_pips and volume_step
             self.trade_executor = TradeExecutor(
                 self.mt5, 
                 symbol=self.symbol,
                 balance_per_lot=self.balance_per_lot,
-                stop_loss_pips=self.stop_loss_pips
+                stop_loss_pips=self.stop_loss_pips,
+                volume_step=volume_step
             )
             
             # Get initial data for warmup
@@ -295,16 +298,15 @@ class TradingBot:
             )
             obs, _ = env.reset()
             
-            # Set position state and update metrics if needed
+            # Set position state and update metrics if needed            
+            position_type = 0
             if self.current_position:
                 unrealized_pnl = self.current_position.get('profit', 0.0)
+                position_type = self.current_position.get('direction', 0)
                 
                 # Update environment position state
                 env.current_position = self.current_position.copy()
-                
-                # Update unrealized PnL
-                if current_close_price is not None:
-                    env.metrics.update_unrealized_pnl(unrealized_pnl)
+                env.metrics.update_unrealized_pnl(unrealized_pnl)                    
             
             # Get observation with updated position metrics
             obs = env.get_observation()
