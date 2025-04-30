@@ -36,6 +36,8 @@ class MarketData(BaseModel):
     close: list[float] = Field(..., description="List of closing prices")
     volume: list[float] = Field(..., description="List of volume values")
     symbol: str = Field(..., description="Trading symbol (e.g., 'XAUUSDm')")
+    position_direction: int = Field(0, description="Current position direction (0=none, 1=long, -1=short)")
+    position_pnl: float = Field(0.0, description="Current unrealized profit/loss")
 
     class Config:
         json_schema_extra = {
@@ -46,7 +48,9 @@ class MarketData(BaseModel):
                 "low": [1799.8, 1800.9],
                 "close": [1801.3, 1802.7],
                 "volume": [1234.0, 5678.0],
-                "symbol": "XAUUSDm"
+                "symbol": "XAUUSDm",
+                "position_direction": 0,
+                "position_pnl": 0.0
             }
         }
 
@@ -143,6 +147,20 @@ async def predict(data: MarketData):
         )
         obs, _ = env.reset()
         
+        # Set position state if there's an active position
+        if data.position_direction != 0:
+            env.current_position = {
+                "direction": data.position_direction,
+                "entry_step": len(window_data) - 1,  # Assume latest bar for simplicity
+                "lot_size": 0.01,  # Default minimum lot size
+                "entry_price": window_data['close'].iloc[-1]  # Use last close as entry
+            }
+            # Update metrics with position PnL
+            env.metrics.update_unrealized_pnl(data.position_pnl)
+
+        # Get observation with updated position metrics
+        obs = env.get_observation()
+        
         # Make prediction using direct model.predict like bot and backtest
         action, new_lstm_states = trade_model.model.predict(
             obs,
@@ -161,11 +179,8 @@ async def predict(data: MarketData):
         except (ValueError, TypeError):
             discrete_action = 0
         
-        # Get position type (always 0 for API since we don't track positions)
-        position_type = 0
-        
-        # Generate description
-        description = trade_model._generate_prediction_description(discrete_action, position_type)
+        # Use actual position direction for prediction description
+        description = trade_model._generate_prediction_description(discrete_action, data.position_direction)
         
         # Get action details
         action_obj = Action(discrete_action)
