@@ -121,13 +121,18 @@ class MT5Connector:
         if not self._ensure_connected():
             return mt5.ORDER_FILLING_IOC  # Default filling type
 
-        price = mt5.symbol_info_tick(symbol).ask if order_type == 'buy' else mt5.symbol_info_tick(symbol).bid
+        # Get minimum volume from symbol info
+        _, min_volume, _, _, _, _ = self.get_symbol_info(symbol)
+        
+        # Get current price
+        bid, ask = self.get_symbol_info_tick(symbol)
+        price = ask if order_type == 'buy' else bid
 
         for filling_type in range(2):
             request = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": symbol,
-                "volume": mt5.symbol_info(symbol).volume_min,
+                "volume": min_volume,
                 "type": mt5.ORDER_TYPE_BUY if order_type == 'buy' else mt5.ORDER_TYPE_SELL,
                 "price": price,
                 "type_filling": filling_type,
@@ -196,15 +201,34 @@ class MT5Connector:
             raise Exception("Failed to get account info")
         return account_info.balance
     
-    def get_symbol_info(self, symbol: str) -> Tuple[float, float, float]:
-        """Get symbol trading information."""
+    def get_symbol_info(self, symbol: str) -> Tuple[float, float, float, float, float, int]:
+        """
+        Get symbol trading information.
+        
+        Returns:
+            Tuple containing:
+            - trade_contract_size: Contract size
+            - volume_min: Minimum volume
+            - volume_max: Maximum volume
+            - volume_step: Volume step size
+            - point: Point value
+            - digits: Price precision digits
+        """
         if not self._ensure_connected():
             raise Exception(f"Not connected to MT5")
         
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
             raise Exception(f"Failed to get symbol info for {symbol}")
-        return symbol_info.trade_contract_size, symbol_info.volume_min, symbol_info.volume_max
+            
+        return (
+            symbol_info.trade_contract_size,
+            symbol_info.volume_min,
+            symbol_info.volume_max,
+            symbol_info.volume_step,
+            symbol_info.point,
+            symbol_info.digits
+        )
     
     def get_symbol_info_tick(self, symbol: str) -> Tuple[float, float]:
         """Get current bid/ask prices."""
@@ -248,7 +272,7 @@ class MT5Connector:
             "symbol": position.symbol,
             "volume": position.volume,
             "type": mt5.ORDER_TYPE_SELL if position.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
-            "price": mt5.symbol_info_tick(position.symbol).bid if position.type == mt5.ORDER_TYPE_BUY else mt5.symbol_info_tick(position.symbol).ask,
+            "price": self.get_symbol_info_tick(position.symbol)[0] if position.type == mt5.ORDER_TYPE_BUY else self.get_symbol_info_tick(position.symbol)[1],
             "deviation": 20,
             "magic": 0,
             "comment": MT5_COMMENT,

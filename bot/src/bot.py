@@ -109,6 +109,14 @@ class TradingBot:
                 position = positions[0]
                 mt5_direction = 1 if position.type == 0 else -1
                 
+                # Log current values before update
+                self.logger.debug(
+                    f"Syncing position details: "
+                    f"Direction: {self.current_position['direction']} -> {mt5_direction} | "
+                    f"Lot Size: {self.current_position['lot_size']:.2f} -> {position.volume:.2f} | "
+                    f"Profit: {self.current_position.get('profit', 0.0):.2f} -> {position.profit:.2f}"
+                )
+                
                 self.current_position.update({
                     "direction": mt5_direction,
                     "lot_size": position.volume,
@@ -129,19 +137,12 @@ class TradingBot:
                 self.logger.error("Failed to connect to MT5")
                 return False
                 
-            # Get symbol info to determine point value, contract size, and lot limits
-            import MetaTrader5 as mt5
-            symbol_info = mt5.symbol_info(self.symbol)
-            if symbol_info is None:
-                self.logger.error(f"Failed to get symbol info for {self.symbol}")
+            # Get symbol parameters from connector
+            try:
+                contract_size, min_lots, max_lots, volume_step, point_value, digits = self.mt5.get_symbol_info(self.symbol)
+            except Exception as e:
+                self.logger.error(f"Failed to get symbol info for {self.symbol}: {e}")
                 return False
-                
-            # Get symbol parameters
-            point_value = symbol_info.point
-            contract_size = symbol_info.trade_contract_size
-            min_lots = symbol_info.volume_min
-            max_lots = symbol_info.volume_max
-            volume_step = symbol_info.volume_step
             
             self.logger.info(f"Symbol info - Point: {point_value}, " 
                            f"Contract Size: {contract_size}, Min Lot: {min_lots}, Max Lot: {max_lots}, "
@@ -167,13 +168,12 @@ class TradingBot:
                 self.logger.error("Failed to load trading model")
                 return False
 
-            # Initialize trade executor with balance_per_lot, stop_loss_pips and volume_step
+            # Initialize trade executor with balance_per_lot and stop_loss_pips
             self.trade_executor = TradeExecutor(
                 self.mt5, 
                 symbol=self.symbol,
                 balance_per_lot=self.balance_per_lot,
-                stop_loss_pips=self.stop_loss_pips,
-                volume_step=volume_step
+                stop_loss_pips=self.stop_loss_pips
             )
             
             # Get initial data for warmup

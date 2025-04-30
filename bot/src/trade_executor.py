@@ -8,7 +8,7 @@ from config import MT5_COMMENT
 class TradeExecutor:
     """Class for executing trades based on model predictions."""
     
-    def __init__(self, mt5: MT5Connector, symbol: str, balance_per_lot: float = 1000.0, stop_loss_pips: float = 2500.0, volume_step: float = 0.01):
+    def __init__(self, mt5: MT5Connector, symbol: str, balance_per_lot: float = 1000.0, stop_loss_pips: float = 2500.0):
         """
         Initialize the trade executor.
         
@@ -17,7 +17,6 @@ class TradeExecutor:
             symbol: Trading symbol to use for trade execution
             balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
             stop_loss_pips: Stop loss in pips for all trades (default: 2500.0)
-            volume_step: Volume step size for the symbol (default: 0.01)
         """
         self.logger = logging.getLogger(__name__)
         self.mt5 = mt5
@@ -25,7 +24,6 @@ class TradeExecutor:
         self.balance_per_lot = balance_per_lot
         self.last_lot_size = None  # Track last used lot size for position info
         self.stop_loss_pips = stop_loss_pips
-        self.volume_step = volume_step
         
     def calculate_stop_loss(self, entry_price: float, trade_type: str, symbol: str) -> float:
         """
@@ -40,10 +38,8 @@ class TradeExecutor:
             float: Stop loss price
         """
         try:
-            # Get point value and precision for the symbol
-            symbol_info = mt5.symbol_info(symbol)
-            point = symbol_info.point
-            digits = symbol_info.digits
+            # Get symbol info from connector
+            _, _, _, _, point, digits = self.mt5.get_symbol_info(symbol)
             
             # Calculate stop loss directly using points instead of pips
             # This simplifies the calculation by removing the separate pip concept
@@ -80,15 +76,15 @@ class TradeExecutor:
             float: Position size in lots
         """
         try:
-            # Get symbol trading information for min/max lots
-            _, min_lot, max_lot = self.mt5.get_symbol_info(self.symbol)
+            # Get symbol trading information
+            _, min_lot, max_lot, volume_step = self.mt5.get_symbol_info(self.symbol)[:4]
             
             # Calculate raw lot size
-            raw_lot_size = (account_balance / self.balance_per_lot) * self.volume_step
+            raw_lot_size = (account_balance / self.balance_per_lot) * volume_step
             
             # Round to nearest volume step
-            steps = round(raw_lot_size / self.volume_step)
-            lot_size = steps * self.volume_step
+            steps = round(raw_lot_size / volume_step)
+            lot_size = steps * volume_step
             
             # Ensure within min/max bounds
             lot_size = max(min_lot, min(max_lot, lot_size))
@@ -148,12 +144,6 @@ class TradeExecutor:
                         return False
                 return True
             
-            # Get symbol info for new trades
-            symbol_info = mt5.symbol_info(self.symbol)
-            if symbol_info is None:
-                self.logger.error(f"Failed to get symbol info for {self.symbol}")
-                return False
-                
             # Get current price
             if action == 1:  # Buy
                 current_price = self.mt5.get_symbol_info_tick(self.symbol)[1]  # Ask
