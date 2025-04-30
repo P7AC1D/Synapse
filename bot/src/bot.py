@@ -100,7 +100,8 @@ class TradingBot:
                     "entry_price": position.price_open,
                     "lot_size": position.volume,
                     "entry_step": 0,  # Will be updated in trading cycle
-                    "entry_time": str(position.time)
+                    "entry_time": str(position.time),
+                    "profit": position.profit  # Get profit directly from MT5
                 }
                 
             # Case 3: Both have positions - verify details match
@@ -108,17 +109,11 @@ class TradingBot:
                 position = positions[0]
                 mt5_direction = 1 if position.type == 0 else -1
                 
-                if (mt5_direction != self.current_position['direction'] or
-                    abs(position.volume - self.current_position['lot_size']) > 1e-8):
-                    self.logger.warning(
-                        f"Position details mismatch - MT5: {position.type} {position.volume:.2f} lots, "
-                        f"Internal: {self.current_position['direction']} {self.current_position['lot_size']:.2f} lots. "
-                        f"Updating internal tracking."
-                    )
-                    self.current_position.update({
-                        "direction": mt5_direction,
-                        "lot_size": position.volume
-                    })
+                self.current_position.update({
+                    "direction": mt5_direction,
+                    "lot_size": position.volume,
+                    "profit": position.profit  # Also update profit from MT5
+                })
             
         except Exception as e:
             self.logger.error(f"Error verifying positions: {e}")
@@ -210,7 +205,8 @@ class TradingBot:
                     "entry_price": position.price_open,
                     "lot_size": position.volume,
                     "entry_step": 0,  # Will be updated in first trading cycle
-                    "entry_time": str(position.time)
+                    "entry_time": str(position.time),
+                    "profit": position.profit  # Get profit directly from MT5
                 }
                 self.logger.info(
                     f"Recovered existing position: "
@@ -300,28 +296,14 @@ class TradingBot:
             obs, _ = env.reset()
             
             # Set position state and update metrics if needed
-            position_type = 0  # Default to no position
             if self.current_position:
-                position_type = self.current_position.get('direction', 0)
-                lot_size = self.current_position.get('lot_size', 0.0)
-                entry_price = self.current_position.get('entry_price', 0.0)
+                unrealized_pnl = self.current_position.get('profit', 0.0)
                 
                 # Update environment position state
                 env.current_position = self.current_position.copy()
                 
-                # Calculate and update unrealized PnL
+                # Update unrealized PnL
                 if current_close_price is not None:
-                    # Calculate raw P&L first
-                    if position_type == 1:  # Long position
-                        profit_points = current_close_price - entry_price
-                    else:  # Short position
-                        profit_points = entry_price - current_close_price
-                        
-                    # Calculate P&L in account currency
-                    usd_pnl = profit_points * lot_size * env.CONTRACT_SIZE
-                    unrealized_pnl = usd_pnl * usd_zar_rate
-                    
-                    # Update environment metrics
                     env.metrics.update_unrealized_pnl(unrealized_pnl)
             
             # Get observation with updated position metrics
