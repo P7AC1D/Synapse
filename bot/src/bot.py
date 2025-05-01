@@ -27,6 +27,7 @@ from trading.environment import TradingEnv
 from trading.trade_tracker import TradeTracker
 from config import (
     LOG_FILE_PATH,
+    TRADE_TRACKING_PATH,
     MT5_BASE_SYMBOL,
     MT5_SYMBOL,
     MT5_PATH,
@@ -55,8 +56,8 @@ class TradingBot:
         self.setup_logging()
         self.running = True
         
-        # Create trades directory in logs
-        trades_log_path = os.path.join(LOG_FILE_PATH, "trades")
+        # Create symbol-specific trades directory
+        trades_log_path = os.path.join(TRADE_TRACKING_PATH, self.symbol)
         os.makedirs(trades_log_path, exist_ok=True)
         self.trade_tracker = TradeTracker(trades_log_path)
         self.mt5 = None

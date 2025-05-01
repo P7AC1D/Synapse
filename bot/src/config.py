@@ -5,6 +5,7 @@ MT5_TIMEFRAME_MINUTES = 15  # Match training timeframe
 MT5_COMMENT = "PPO_LSTM"  # Model identifier in MT5
 BARS_TO_FETCH = 500  # Match minimum bars needed for feature calculation
 LOG_FILE_PATH = f"C:/Users/Admin/Desktop/Logs"
+TRADE_TRACKING_PATH = f"C:/Users/Admin/Desktop/Trades"
 MODEL_PATH = f"C:/Code/drl/bot/model/{MT5_SYMBOL}.zip"
 MAX_SPREAD = 35.0  # Maximum allowed spread for trade execution
 BALANCE_PER_LOT = 2500.0  # Amount of balance required per 0.01 lot (matches TradingEnv)
