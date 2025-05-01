@@ -389,7 +389,8 @@ class TradeModel:
         
         return metrics
 
-    def evaluate(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: Optional[float] = None) -> Dict[str, Any]:
+    def evaluate(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: Optional[float] = None,
+                spread_variation: float = 0.0, slippage_range: float = 0.0) -> Dict[str, Any]:
         """
         Evaluate model performance without verbose logging.
         
@@ -397,6 +398,8 @@ class TradeModel:
             data: DataFrame with market data
             initial_balance: Starting account balance
             balance_per_lot: Account balance required per 0.01 lot (if None, uses instance default)
+            spread_variation: Random spread variation range (default: 0.0)
+            slippage_range: Maximum price slippage range in points (default: 0.0)
                 
         Returns:
             Dictionary with backtest metrics and trade summary
@@ -419,7 +422,9 @@ class TradeModel:
             point_value=self.point_value,
             min_lots=self.min_lots,
             max_lots=self.max_lots,
-            contract_size=self.contract_size
+            contract_size=self.contract_size,
+            spread_variation=spread_variation,
+            slippage_range=slippage_range
         )
         
         # Initialize LSTM states

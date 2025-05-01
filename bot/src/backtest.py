@@ -338,7 +338,12 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                             balance_per_lot: float = 1000.0, verbose: bool = False,
                             point_value: float = 0.01,
                             min_lots: float = 0.01, max_lots: float = 200.0,
-                            contract_size: float = 100.0) -> Dict[str, Any]:
+                            contract_size: float = 100.0,
+                            currency_conversion: float = None,
+                            reset_states_on_gap: bool = True,
+                            spread_variation: float = 0.0,
+                            slippage_range: float = 0.0,
+                            balance_recheck_bars: int = 0) -> Dict[str, Any]:
     """Run a backtest using the predict_single method to simulate the live trading process."""
     
     # Create a trading environment for tracking trades and metrics
@@ -350,7 +355,8 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
         point_value=point_value,
         min_lots=min_lots,
         max_lots=max_lots,
-        contract_size=contract_size
+        contract_size=contract_size,
+        currency_conversion=currency_conversion
     )
     obs, _ = env.reset()
     action_handler = env.action_handler
@@ -378,6 +384,29 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             print(f"\rProgress: {progress:.1f}% (step {total_steps}/{len(data)})", end="")
     
         try:
+            # Check for market gaps and reset states if needed
+            if reset_states_on_gap and total_steps > 0:
+                current_time = data.index[total_steps]
+                prev_time = data.index[total_steps - 1]
+                expected_diff = pd.Timedelta(minutes=15)  # Assuming 15-minute timeframe
+                actual_diff = current_time - prev_time
+                
+                if actual_diff > expected_diff * 2:
+                    if verbose:
+                        print(f"\nMarket gap detected ({actual_diff.total_seconds()/60:.1f} minutes), resetting LSTM states")
+                    model.reset_states()
+                    model.lstm_states = None
+            
+            # Recheck balance if configured
+            if balance_recheck_bars > 0 and total_steps % balance_recheck_bars == 0:
+                env.metrics.balance = env.metrics.get_current_balance()
+            
+            # Add random spread variation if configured
+            if spread_variation > 0:
+                current_spread = data['spread'].iloc[total_steps]
+                variation = np.random.uniform(-spread_variation, spread_variation)
+                data.at[data.index[total_steps], 'spread'] = max(0, current_spread + variation)
+            
             # Use direct model.predict like the original approach but store states in model object
             # for consistency with bot.py
             action, new_lstm_states = model.model.predict(
@@ -435,14 +464,32 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
 def main():
     parser = argparse.ArgumentParser(description='Backtest trained trading model')
     
+    # Default values converted to ZAR using rate of 19
+    default_initial_balance = 10000.0 * 19  # 10,000 USD in ZAR
+    default_balance_per_lot = 1000.0 * 19   # 1,000 USD per lot in ZAR
+    
+    # Trading environment settings
+    
     parser.add_argument('--model_path', type=str, required=True,
                      help='Path to the model file to backtest')
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the test data CSV file')
-    parser.add_argument('--initial_balance', type=float, default=10000.0,
-                      help='Initial account balance')
-    parser.add_argument('--balance_per_lot', type=float, default=1000.0,
-                      help='Account balance required per 0.01 lot (default: 1000)')
+    parser.add_argument('--initial_balance', type=float, default=default_initial_balance,
+                      help='Initial account balance in account currency (default: 190,000 ZAR)')
+    parser.add_argument('--balance_per_lot', type=float, default=default_balance_per_lot,
+                      help='Account balance required per 0.01 lot in account currency (default: 19,000 ZAR)')
+    parser.add_argument('--currency_conversion', type=float, default=19.0,
+                      help='Conversion rate from USD to account currency (default: 19.0 ZAR/USD)')
+                      
+    # Market simulation settings
+    parser.add_argument('--reset_states_on_gap', action='store_true',
+                      help='Reset LSTM states when market gaps are detected')
+    parser.add_argument('--spread_variation', type=float, default=0.0,
+                      help='Random spread variation range (e.g., 0.2 for ±0.2 spread variation)')
+    parser.add_argument('--slippage_range', type=float, default=0.0,
+                      help='Maximum price slippage range in points')
+    parser.add_argument('--balance_recheck_bars', type=int, default=0,
+                      help='Recheck balance every N bars (0 to disable)')
     parser.add_argument('--start_date', type=str, default=None,
                       help='Start date for backtest (YYYY-MM-DD)')
     parser.add_argument('--end_date', type=str, default=None,
@@ -522,7 +569,12 @@ def main():
                 point_value=args.point_value,
                 min_lots=args.min_lots,
                 max_lots=args.max_lots,
-                contract_size=args.contract_size
+                contract_size=args.contract_size,
+                currency_conversion=args.currency_conversion,
+                reset_states_on_gap=args.reset_states_on_gap,
+                spread_variation=args.spread_variation,
+                slippage_range=args.slippage_range,
+                balance_recheck_bars=args.balance_recheck_bars
             )
         else:  # method == 'evaluate' or args.quiet
             print("\nRunning quiet backtest with evaluate method...")
@@ -541,7 +593,9 @@ def main():
                 results = model.evaluate(
                     data=df,
                     initial_balance=args.initial_balance,
-                    balance_per_lot=args.balance_per_lot
+                    balance_per_lot=args.balance_per_lot,
+                    spread_variation=args.spread_variation,
+                    slippage_range=args.slippage_range
                 )
             finally:
                 # Always stop the progress indicator

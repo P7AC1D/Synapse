@@ -39,7 +39,9 @@ class TradingEnv(gym.Env, EzPickle):
                  live_price: Optional[float] = None, currency_conversion: Optional[float] = None,
                  point_value: float = 0.001,
                  min_lots: float = 0.01, max_lots: float = 200.0,
-                 contract_size: float = 100.0):
+                 contract_size: float = 100.0,
+                 spread_variation: float = 0.0,
+                 slippage_range: float = 0.0):
         """Initialize trading environment.
         
         Args:
@@ -67,6 +69,10 @@ class TradingEnv(gym.Env, EzPickle):
         self.initial_balance = initial_balance
         self.live_price = live_price  # Store live price for P&L calculations
         self.currency_conversion = currency_conversion or 1.0  # Default to 1.0 if not provided
+        
+        # Market simulation settings
+        self.spread_variation = spread_variation
+        self.slippage_range = slippage_range
         
         # Initialize components
         self.feature_processor = FeatureProcessor()

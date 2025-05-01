@@ -50,12 +50,23 @@ class ActionHandler:
         current_price = self.env.prices['close'][self.env.current_step]
         current_atr = self.env.prices['atr'][self.env.current_step]
         
-        # Calculate lot size based on account balance (0.01 lots per BALANCE_PER_LOT amount)
+        # Apply slippage if configured
+        slippage = 0.0
+        if hasattr(self.env, 'slippage_range') and self.env.slippage_range > 0:
+            slippage = np.random.uniform(0, self.env.slippage_range) * self.env.POINT_VALUE
+            if direction == 1:  # Buy - slippage increases entry price
+                current_price += slippage
+            else:  # Sell - slippage decreases entry price
+                current_price -= slippage
+        # Calculate lot size based on account balance in USD equivalent
+        usd_balance = self.env.balance / self.env.currency_conversion
+        usd_balance_per_lot = self.env.BALANCE_PER_LOT / self.env.currency_conversion
+        
         lot_size = max(
             self.env.MIN_LOTS,
             min(
                 self.env.MAX_LOTS,
-                round((self.env.balance / self.env.BALANCE_PER_LOT) * self.env.MIN_LOTS, 2)
+                round((usd_balance / usd_balance_per_lot) * self.env.MIN_LOTS, 2)
             )
         )
         
@@ -97,6 +108,15 @@ class ActionHandler:
         
         # Get current spread for exit price adjustment
         current_spread = self.env.prices['spread'][self.env.current_step] * self.env.POINT_VALUE
+        
+        # Apply slippage if configured
+        slippage = 0.0
+        if hasattr(self.env, 'slippage_range') and self.env.slippage_range > 0:
+            slippage = np.random.uniform(0, self.env.slippage_range) * self.env.POINT_VALUE
+            if direction == 1:  # Long position closing - slippage decreases exit price
+                current_price -= slippage
+            else:  # Short position closing - slippage increases exit price
+                current_price += slippage
         
         # Calculate profit or loss with spread at exit
         if direction == 1:  # Long position
