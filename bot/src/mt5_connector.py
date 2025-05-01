@@ -254,7 +254,7 @@ class MT5Connector:
         self.logger.debug(f"Fetched {len(filtered_positions)} open positions for {symbol}.")
         return filtered_positions
     
-    def close_position(self, ticket: int) -> bool:
+    def close_position(self, ticket: int, exit_type: str = 'model_close') -> bool:
         """Close a specific position."""
         if not self._ensure_connected():
             return False
@@ -265,6 +265,18 @@ class MT5Connector:
             return False
 
         position = positions[0]
+        
+        # Notify the bot about position closure
+        self.logger.info(f"Position {ticket} closing. Type: {exit_type}")
+        if hasattr(self, 'trade_tracker'):
+            # Get current price and features
+            current_price = self.get_symbol_info_tick(position.symbol)[0]
+            self.trade_tracker.log_trade_exit(
+                exit_type,
+                current_price,
+                position.profit,
+                {}  # Features will be empty for now since we don't have access to them here
+            )
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -285,7 +297,7 @@ class MT5Connector:
             self.logger.warning(f"Failed to close position {position.ticket}, error: {result.comment}")
             return False
             
-        self.logger.info(f"Closed position {position.ticket} for {position.symbol}.")
+        self.logger.info(f"Closed position {position.ticket} for {position.symbol}. Exit type: {exit_type}")
         return True
             
     def close_open_positions(self, symbol: str, comment: str) -> int:

@@ -24,6 +24,7 @@ from data_fetcher import DataFetcher
 from trade_model import TradeModel
 from trade_executor import TradeExecutor
 from trading.environment import TradingEnv
+from trading.trade_tracker import TradeTracker
 from config import (
     LOG_FILE_PATH,
     MT5_BASE_SYMBOL,
@@ -53,6 +54,11 @@ class TradingBot:
         
         self.setup_logging()
         self.running = True
+        
+        # Create trades directory in logs
+        trades_log_path = os.path.join(LOG_FILE_PATH, "trades")
+        os.makedirs(trades_log_path, exist_ok=True)
+        self.trade_tracker = TradeTracker(trades_log_path)
         self.mt5 = None
         self.data_fetcher = None
         self.model = None
@@ -133,6 +139,8 @@ class TradingBot:
             
             # Connect to MT5
             self.mt5 = MT5Connector()
+            # Give MT5Connector access to trade tracker
+            self.mt5.trade_tracker = self.trade_tracker
             if not self.mt5.connect():
                 self.logger.error("Failed to connect to MT5")
                 return False
@@ -311,14 +319,16 @@ class TradingBot:
             # Get observation with updated position metrics
             obs = env.get_observation()
             
-            # Debug log the observation features
+            # Create feature dictionary for tracking
+            feature_dict = {}
             if obs is not None and isinstance(obs, np.ndarray):
-                self.logger.debug("Observation features for prediction:")
                 # Get feature names from raw_data columns plus position features
                 feature_names = env.feature_processor.get_feature_names()
                 
+                self.logger.debug("Observation features for prediction:")
                 for i, feat in enumerate(obs):
                     feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
+                    feature_dict[feature_name] = float(feat)  # Convert numpy values to Python float
                     self.logger.debug(f"  {feature_name}: {feat:.6f}")
             
             # Make prediction using direct model.predict like backtest does
@@ -364,18 +374,42 @@ class TradingBot:
             # Execute trade and update position tracking
             success = self.trade_executor.execute_trade(prediction)
             
-            # Update position tracking based on action
+            # Update position tracking and log trade events
             if success:
                 if prediction['action'] == 3:  # Close
+                    current_price = data['close'].iloc[-1]
+                    if self.current_position:
+                        self.trade_tracker.log_trade_exit(
+                            'model_close',
+                            current_price,
+                            self.current_position.get('profit', 0.0),
+                            feature_dict
+                        )
                     self.current_position = None
                 elif prediction['action'] in [1, 2] and not self.current_position:  # New position
+                    current_price = data['close'].iloc[-1]
                     self.current_position = {
                         "direction": 1 if prediction['action'] == 1 else -1,
-                        "entry_price": data['close'].iloc[-1],
+                        "entry_price": current_price,
                         "lot_size": self.trade_executor.last_lot_size,
                         "entry_step": len(data) - 1,
                         "entry_time": str(data.index[-1])
                     }
+                    # Log trade entry with features
+                    self.trade_tracker.log_trade_entry(
+                        'buy' if prediction['action'] == 1 else 'sell',
+                        feature_dict,
+                        current_price,
+                        self.trade_executor.last_lot_size
+                    )
+                
+                # Log trade update if position exists
+                if self.current_position:
+                    self.trade_tracker.log_trade_update(
+                        feature_dict,
+                        data['close'].iloc[-1],
+                        self.current_position.get('profit', 0.0)
+                    )
             
         except Exception as e:
             self.logger.exception(f"Error in trading cycle: {e}")

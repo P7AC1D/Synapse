@@ -9,8 +9,10 @@ from matplotlib import gridspec
 from typing import Dict, Any
 from trade_model import TradeModel
 from trading.environment import TradingEnv
+from trading.trade_tracker import TradeTracker
 import time
 import sys
+import os
 import threading
 from utils.progress import show_progress_continuous, stop_progress_indicator
 
@@ -336,6 +338,7 @@ def show_progress(message="Running backtest"):
 
 def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_balance: float = 10000.0, 
                             balance_per_lot: float = 1000.0, verbose: bool = False,
+                            trades_log_path: str = None,
                             point_value: float = 0.01,
                             min_lots: float = 0.01, max_lots: float = 200.0,
                             contract_size: float = 100.0,
@@ -365,6 +368,12 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     current_position = None
     total_steps = 0
     total_reward = 0.0
+    
+    # Initialize trade tracker if path provided
+    trade_tracker = None
+    if trades_log_path:
+        os.makedirs(trades_log_path, exist_ok=True)
+        trade_tracker = TradeTracker(trades_log_path)
     
     # Progress tracking
     progress_steps = max(1, len(data) // 100)  # Update every 1%
@@ -407,6 +416,15 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                 variation = np.random.uniform(-spread_variation, spread_variation)
                 data.at[data.index[total_steps], 'spread'] = max(0, current_spread + variation)
             
+            # Create feature dictionary for tracking
+            feature_dict = {}
+            if obs is not None and isinstance(obs, np.ndarray):
+                # Get feature names
+                feature_names = env.feature_processor.get_feature_names()
+                for i, feat in enumerate(obs):
+                    feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
+                    feature_dict[feature_name] = float(feat)
+            
             # Use direct model.predict like the original approach but store states in model object
             # for consistency with bot.py
             action, new_lstm_states = model.model.predict(
@@ -434,6 +452,33 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             obs, reward, done, truncated, info = env.step(discrete_action)
             total_reward += reward
             total_steps += 1
+            
+            # Track trade events if tracker is initialized
+            if trade_tracker:
+                # Handle position changes
+                if env.current_position and not current_position:  # New position
+                    # Log trade entry
+                    trade_tracker.log_trade_entry(
+                        'buy' if discrete_action == 1 else 'sell',
+                        feature_dict,
+                        env.current_position['entry_price'],
+                        env.current_position['lot_size']
+                    )
+                elif not env.current_position and current_position:  # Position closed
+                    # Log trade exit
+                    trade_tracker.log_trade_exit(
+                        'model_close',
+                        info.get('close_price', data['close'].iloc[total_steps]),
+                        info.get('pnl', 0.0),
+                        feature_dict
+                    )
+                elif env.current_position:  # Position update
+                    # Log trade update
+                    trade_tracker.log_trade_update(
+                        feature_dict,
+                        data['close'].iloc[total_steps],
+                        env.metrics.unrealized_pnl
+                    )
             
             # Update current position tracking
             current_position = env.current_position.copy() if env.current_position else None
@@ -514,6 +559,8 @@ def main():
                       help='Backtesting method to use: evaluate (quiet) or predict_single (simulates live trading)')
     parser.add_argument('--verbose_features', action='store_true',
                       help='Log detailed feature values during prediction (only applicable with predict_single method)')
+    parser.add_argument('--trades_log_path', type=str, default=None,
+                      help='Directory path to store trade tracking logs (use with predict_single method)')
     
     args = parser.parse_args()
     
@@ -574,7 +621,8 @@ def main():
                 reset_states_on_gap=args.reset_states_on_gap,
                 spread_variation=args.spread_variation,
                 slippage_range=args.slippage_range,
-                balance_recheck_bars=args.balance_recheck_bars
+                balance_recheck_bars=args.balance_recheck_bars,
+                trades_log_path=args.trades_log_path
             )
         else:  # method == 'evaluate' or args.quiet
             print("\nRunning quiet backtest with evaluate method...")
