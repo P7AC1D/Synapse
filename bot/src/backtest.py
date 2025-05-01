@@ -477,7 +477,7 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                     trade_tracker.log_trade_update(
                         feature_dict,
                         data['close'].iloc[total_steps],
-                        env.metrics.unrealized_pnl
+                        env.metrics.current_unrealized_pnl  
                     )
             
             # Update current position tracking
