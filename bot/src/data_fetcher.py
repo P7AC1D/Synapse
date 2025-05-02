@@ -98,8 +98,6 @@ class DataFetcher:
             extra_bars = 20 if include_history else 0  # Match feature calculation requirements
             total_bars = min_bars + extra_bars
             
-            self.logger.debug(f"Fetching current bar data: {total_bars} bars ({min_bars} required + {extra_bars} buffer)")
-            
             rates = self.mt5_connector.fetch_data(
                 self.symbol,
                 self.timeframe,
