@@ -323,13 +323,30 @@ class TradingBot:
             # Get observation with updated position metrics
             obs = env.get_observation()
             
-            # Create feature dictionary for tracking
+            # Calculate and log raw features before normalization
+            raw_features = {}
+            rates_data = data.copy()
+            feature_processor = env.feature_processor
+            atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
+                rates_data['high'].values,
+                rates_data['low'].values,
+                rates_data['close'].values
+            )
+            
+            # Log raw feature values
+            self.logger.debug("\nRaw feature values (last bar):")
+            self.logger.debug(f"ATR: {atr[-1]:.6f}")
+            self.logger.debug(f"RSI: {rsi[-1]:.6f}")
+            self.logger.debug(f"BB Upper: {upper_band[-1]:.6f}")
+            self.logger.debug(f"BB Lower: {lower_band[-1]:.6f}")
+            self.logger.debug(f"Trend Strength: {trend_strength[-1]:.6f}")
+            
+            # Create normalized feature dictionary for tracking
             feature_dict = {}
             if obs is not None and isinstance(obs, np.ndarray):
-                # Get feature names from raw_data columns plus position features
                 feature_names = env.feature_processor.get_feature_names()
                 
-                self.logger.debug("Observation features for prediction:")
+                self.logger.debug("\nNormalized features for prediction:")
                 for i, feat in enumerate(obs):
                     feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
                     feature_dict[feature_name] = float(feat)  # Convert numpy values to Python float

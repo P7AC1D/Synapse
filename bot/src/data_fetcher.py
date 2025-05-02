@@ -35,9 +35,11 @@ class DataFetcher:
         Returns:
             Processed DataFrame or None if failed
         """
-        # Add buffer for historical data requirements
-        buffer_bars = 70  # Match environment's lookback requirements
+        # Add buffer for feature calculation requirements
+        buffer_bars = 20  # Match max lookback needed for features (Bollinger period)
         total_bars = self.num_bars + buffer_bars
+        
+        self.logger.debug(f"Fetching {total_bars} bars ({self.num_bars} required + {buffer_bars} buffer)")
         
         rates = self.mt5_connector.fetch_data(
             self.symbol, 
@@ -92,8 +94,11 @@ class DataFetcher:
         """
         try:
             min_bars = 100 if include_history else 1
-            extra_bars = 70 if include_history else 0  # Only add buffer for history mode
+            # Use same buffer size as fetch_data for feature calculation consistency
+            extra_bars = 20 if include_history else 0  # Match feature calculation requirements
             total_bars = min_bars + extra_bars
+            
+            self.logger.debug(f"Fetching current bar data: {total_bars} bars ({min_bars} required + {extra_bars} buffer)")
             
             rates = self.mt5_connector.fetch_data(
                 self.symbol,

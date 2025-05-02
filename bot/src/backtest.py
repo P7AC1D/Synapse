@@ -388,11 +388,26 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     
     # Main prediction loop
     while True:
-        if total_steps % progress_steps == 0:
-            progress = (total_steps / len(data)) * 100
-            print(f"\rProgress: {progress:.1f}% (step {total_steps}/{len(data)})", end="")
-    
         try:
+            if total_steps % progress_steps == 0:
+                progress = (total_steps / len(data)) * 100
+                print(f"\rProgress: {progress:.1f}% (step {total_steps}/{len(data)})", end="")
+                
+                # Log raw features periodically if verbose
+                if verbose:
+                    current_data = data.iloc[:total_steps+1]
+                    feature_processor = env.feature_processor
+                    atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
+                        current_data['high'].values,
+                        current_data['low'].values,
+                        current_data['close'].values
+                    )
+                    print(f"\nRaw features at step {total_steps}:")
+                    print(f"ATR: {atr[-1]:.6f}")
+                    print(f"RSI: {rsi[-1]:.6f}")
+                    print(f"BB Upper: {upper_band[-1]:.6f}")
+                    print(f"BB Lower: {lower_band[-1]:.6f}")
+                    print(f"Trend Strength: {trend_strength[-1]:.6f}")
             # Check for market gaps and reset states if needed
             if reset_states_on_gap and total_steps > 0:
                 current_time = data.index[total_steps]
@@ -416,17 +431,17 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                 variation = np.random.uniform(-spread_variation, spread_variation)
                 data.at[data.index[total_steps], 'spread'] = max(0, current_spread + variation)
             
-            # Create feature dictionary for tracking
+            # Create normalized feature dictionary for tracking
             feature_dict = {}
             if obs is not None and isinstance(obs, np.ndarray):
-                # Get feature names
                 feature_names = env.feature_processor.get_feature_names()
                 for i, feat in enumerate(obs):
                     feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
                     feature_dict[feature_name] = float(feat)
-            
-            # Use direct model.predict like the original approach but store states in model object
-            # for consistency with bot.py
+                    if verbose:
+                        print(f"  {feature_name}: {feat:.6f}")
+
+            # Get prediction from model
             action, new_lstm_states = model.model.predict(
                 obs,
                 state=model.lstm_states,
@@ -434,57 +449,63 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             )
             model.lstm_states = new_lstm_states  # Update states in model object
             
-            # Convert action to discrete value with position check (same as evaluate method)
             try:
+                # Convert action to discrete value and handle position checks
                 if isinstance(action, np.ndarray):
                     action_value = int(action.item())
                 else:
                     action_value = int(action)
                 discrete_action = action_value % 4
                 
-                # Add explicit position check and force hold if needed (same as evaluate)
+                # Force HOLD if trying to open new position while one exists
                 if env.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
                     discrete_action = 0  # Force HOLD
-            except (ValueError, TypeError):
-                discrete_action = 0
-            
-            # Execute step
-            obs, reward, done, truncated, info = env.step(discrete_action)
-            total_reward += reward
-            total_steps += 1
-            
-            # Track trade events if tracker is initialized
-            if trade_tracker:
-                # Handle position changes
-                if env.current_position and not current_position:  # New position
-                    # Log trade entry
-                    trade_tracker.log_trade_entry(
-                        'buy' if discrete_action == 1 else 'sell',
-                        feature_dict,
-                        env.current_position['entry_price'],
-                        env.current_position['lot_size']
-                    )
-                elif not env.current_position and current_position:  # Position closed
-                    # Log trade exit
-                    trade_tracker.log_trade_exit(
-                        'model_close',
-                        info.get('close_price', data['close'].iloc[total_steps]),
-                        info.get('pnl', 0.0),
-                        feature_dict
-                    )
-                elif env.current_position:  # Position update
-                    # Log trade update
-                    trade_tracker.log_trade_update(
-                        feature_dict,
-                        data['close'].iloc[total_steps],
-                        env.metrics.current_unrealized_pnl  
-                    )
-            
-            # Update current position tracking
-            current_position = env.current_position.copy() if env.current_position else None
-            
-            if done or truncated:
-                break
+                
+                # Execute step
+                obs, reward, done, truncated, info = env.step(discrete_action)
+                total_reward += reward
+                total_steps += 1
+                
+                # Track trade events if enabled
+                if trade_tracker:
+                    if env.current_position and not current_position:  # New position opened
+                        trade_tracker.log_trade_entry(
+                            'buy' if discrete_action == 1 else 'sell',
+                            feature_dict,
+                            env.current_position['entry_price'],
+                            env.current_position['lot_size']
+                        )
+                    elif not env.current_position and current_position:  # Position closed
+                        trade_tracker.log_trade_exit(
+                            'model_close',
+                            info.get('close_price', data['close'].iloc[total_steps]),
+                            info.get('pnl', 0.0),
+                            feature_dict
+                        )
+                    elif env.current_position:  # Position update
+                        trade_tracker.log_trade_update(
+                            feature_dict,
+                            data['close'].iloc[total_steps],
+                            env.metrics.current_unrealized_pnl
+                        )
+                
+                # Update position tracking
+                current_position = env.current_position.copy() if env.current_position else None
+                
+                if done or truncated:
+                    break
+                    
+            except (ValueError, TypeError) as e:
+                print(f"\nError processing action at step {total_steps}: {str(e)}")
+                discrete_action = 0  # Default to HOLD on error
+                obs, reward, done, truncated, info = env.step(discrete_action)
+                total_steps += 1
+                
+            except Exception as e:
+                print(f"\nUnexpected error at step {total_steps}: {str(e)}")
+                print("Continuing with next step...")
+                total_steps += 1
+                continue
                 
         except Exception as e:
             print(f"\nError at step {total_steps}: {str(e)}")
