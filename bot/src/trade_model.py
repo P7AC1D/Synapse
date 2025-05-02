@@ -49,7 +49,7 @@ class TradeModel:
         
         self.lstm_states = None  # Store LSTM states between predictions
         self.initial_warmup = 120  # Match backtest warmup period
-        self.window_size = 200  # Match backtest rolling window
+        self.window_size = 500  # Match BARS_TO_FETCH for consistency with backtest
         
         # Load the model
         self.load_model()

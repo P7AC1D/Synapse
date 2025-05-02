@@ -292,9 +292,12 @@ class TradingBot:
             current_close_price = data['close'].iloc[-1]
             data = data.iloc[:-1]  # Exclude the last row for prediction as its not completed yet
             
-            # Create environment for observation just like backtest does
+            # Add logging for data window sizes
+            self.logger.info(f"Data window size for prediction: {len(data)} bars")
+            
+            # Create environment using full data window to match backtest
             env = TradingEnv(
-                data=data.iloc[-self.model.window_size:].copy(),
+                data=data.copy(),  # Use full data instead of last window
                 initial_balance=self.model.initial_balance,
                 balance_per_lot=self.model.balance_per_lot,
                 random_start=False,
