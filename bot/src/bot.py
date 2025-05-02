@@ -197,31 +197,8 @@ class TradingBot:
             
             # Preload LSTM states using sequential processing through full historical data
             try:
-                # Create environment for initial state warmup using full data
-                # This mimics how the backtest processes data from the beginning
-                env = TradingEnv(
-                    data=self.full_historical_data.copy(),
-                    initial_balance=self.model.initial_balance,
-                    balance_per_lot=self.model.balance_per_lot,
-                    random_start=False
-                )
-                obs, _ = env.reset()
-                
-                # Process all historical bars to warm up LSTM state
-                self.logger.info(f"Warming up LSTM states with {len(self.full_historical_data)} historical bars")
-                self.model.reset_states()  # Start with fresh states
-                
-                # Step through environment to build up LSTM states (similar to backtest)
-                for i in range(env.data_length - 1):  # -1 to avoid the last incomplete bar
-                    # Run observation through model to update LSTM states
-                    action, lstm_states = self.model.model.predict(obs, state=self.model.lstm_states, deterministic=True)
-                    self.model.lstm_states = lstm_states
-                    # Get next observation
-                    obs, _, done, _, _ = env.step(int(action))
-                    if done:
-                        break
-                    
-                self.logger.info("Successfully warmed up LSTM states using full historical data")
+                # Use the improved preload_states method directly
+                self.model.preload_states(self.full_historical_data.copy())
             except Exception as e:
                 self.logger.error(f"Failed to preload LSTM states: {e}")
                 return False
