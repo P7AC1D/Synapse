@@ -221,12 +221,35 @@ class TradingBot:
                     "entry_time": str(position.time),
                     "profit": position.profit  # Get profit directly from MT5
                 }
+                
+                # Log the position info
                 self.logger.info(
                     f"Recovered existing position: "
                     f"{'LONG' if self.current_position['direction'] == 1 else 'SHORT'} "
                     f"{self.current_position['lot_size']:.2f} lots @ {self.current_position['entry_price']:.5f}"
                 )
                 
+                # Try to convert entry_time to ensure it's in proper format
+                try:
+                    entry_time_str = self.current_position["entry_time"]
+                    self.logger.debug(f"Position entry time (original): {entry_time_str}")
+                    
+                    # Handle numeric timestamp (seconds since epoch)
+                    if isinstance(entry_time_str, (int, float)) or (isinstance(entry_time_str, str) and entry_time_str.isdigit()):
+                        try:
+                            # Convert to integer if it's a string containing digits
+                            timestamp = int(float(entry_time_str))
+                            # Check if this is a large timestamp in seconds or milliseconds
+                            if timestamp > 1000000000000:  # If in milliseconds
+                                timestamp = timestamp / 1000
+                            entry_time = pd.to_datetime(timestamp, unit='s')
+                            self.logger.debug(f"Converted entry timestamp to: {entry_time}")
+                            self.current_position["entry_time"] = str(entry_time)
+                        except (ValueError, OverflowError) as e:
+                            self.logger.warning(f"Failed to convert entry timestamp: {e}, keeping original value")
+                except Exception as e:
+                    self.logger.warning(f"Error processing position entry time: {e}")
+
             self.last_bar_index = current_bar.index[-1]
             self.logger.info("Trading bot initialized successfully")
             return True
@@ -318,14 +341,44 @@ class TradingBot:
 
             # Update position info for prediction
             if self.current_position:
-                # Update entry step relative to current full historical data
-                entry_time = pd.to_datetime(self.current_position["entry_time"])
-                # Find the index position of entry time in our full dataset
-                entry_indices = np.where(self.full_historical_data.index >= entry_time)[0]
-                if len(entry_indices) > 0:
-                    self.current_position["entry_step"] = entry_indices[0]
-                else:
-                    # If we can't find it, set to beginning of current data
+                try:
+                    # Try to parse entry_time - handle different possible formats
+                    entry_time_str = self.current_position["entry_time"]
+                    self.logger.debug(f"Original entry_time value: {entry_time_str}")
+                    
+                    # Handle numeric timestamp (seconds since epoch)
+                    if isinstance(entry_time_str, (int, float)) or (isinstance(entry_time_str, str) and entry_time_str.isdigit()):
+                        try:
+                            # Convert to integer if it's a string containing digits
+                            timestamp = int(float(entry_time_str))
+                            # Check if this is a large timestamp in seconds or milliseconds
+                            if timestamp > 1000000000000:  # If in milliseconds
+                                timestamp = timestamp / 1000
+                            entry_time = pd.to_datetime(timestamp, unit='s')
+                            self.logger.debug(f"Converted timestamp {timestamp} to datetime: {entry_time}")
+                        except (ValueError, OverflowError) as e:
+                            self.logger.warning(f"Failed to convert timestamp {entry_time_str} to datetime: {e}")
+                            # Set a default entry time at the start of our data
+                            entry_time = self.full_historical_data.index[0]
+                    else:
+                        # Try to parse as ISO format string
+                        try:
+                            entry_time = pd.to_datetime(entry_time_str)
+                        except (ValueError, TypeError) as e:
+                            self.logger.warning(f"Failed to parse entry_time string: {e}")
+                            # Set a default entry time at the start of our data
+                            entry_time = self.full_historical_data.index[0]
+                    
+                    # Find the index position of entry time in our full dataset
+                    entry_indices = np.where(self.full_historical_data.index >= entry_time)[0]
+                    if len(entry_indices) > 0:
+                        self.current_position["entry_step"] = entry_indices[0]
+                    else:
+                        # If we can't find it, set to beginning of current data
+                        self.current_position["entry_step"] = 0
+                        
+                except Exception as e:
+                    self.logger.warning(f"Error processing entry_time, using default: {e}")
                     self.current_position["entry_step"] = 0
 
             # Update model's balance before prediction
