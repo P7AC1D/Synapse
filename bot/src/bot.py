@@ -66,7 +66,7 @@ class TradingBot:
         self.trade_executor = None
         self.last_bar_index = None
         self.current_position = None  # Track current position info
-        self.data_window = None  # Store rolling data window
+        self.full_historical_data = None  # Store complete historical data to match backtest approach
     
     def setup_logging(self) -> None:
         """Configure logging with both console and file output."""
@@ -191,13 +191,37 @@ class TradingBot:
                 self.logger.error(f"Failed to fetch enough initial data (need {self.model.initial_warmup} bars)")
                 return False
                 
-            # Initialize data window with warmup data
-            self.data_window = initial_data.copy()
+            # Initialize full historical data with all available data (matching backtest approach)
+            self.full_historical_data = initial_data.copy()
+            self.logger.info(f"Initialized full historical data with {len(self.full_historical_data)} bars")
             
-            # Preload LSTM states
+            # Preload LSTM states using sequential processing through full historical data
             try:
-                self.model.preload_states(initial_data)
-                self.logger.info("Successfully preloaded LSTM states")
+                # Create environment for initial state warmup using full data
+                # This mimics how the backtest processes data from the beginning
+                env = TradingEnv(
+                    data=self.full_historical_data.copy(),
+                    initial_balance=self.model.initial_balance,
+                    balance_per_lot=self.model.balance_per_lot,
+                    random_start=False
+                )
+                obs, _ = env.reset()
+                
+                # Process all historical bars to warm up LSTM state
+                self.logger.info(f"Warming up LSTM states with {len(self.full_historical_data)} historical bars")
+                self.model.reset_states()  # Start with fresh states
+                
+                # Step through environment to build up LSTM states (similar to backtest)
+                for i in range(env.data_length - 1):  # -1 to avoid the last incomplete bar
+                    # Run observation through model to update LSTM states
+                    action, lstm_states = self.model.model.predict(obs, state=self.model.lstm_states, deterministic=True)
+                    self.model.lstm_states = lstm_states
+                    # Get next observation
+                    obs, _, done, _, _ = env.step(int(action))
+                    if done:
+                        break
+                    
+                self.logger.info("Successfully warmed up LSTM states using full historical data")
             except Exception as e:
                 self.logger.error(f"Failed to preload LSTM states: {e}")
                 return False
@@ -216,7 +240,7 @@ class TradingBot:
                     "direction": 1 if position.type == 0 else -1,  # 0=buy, 1=sell in MT5
                     "entry_price": position.price_open,
                     "lot_size": position.volume,
-                    "entry_step": 0,  # Will be updated in first trading cycle
+                    "entry_step": len(self.full_historical_data) - 1,  # Entry at the most recent bar
                     "entry_time": str(position.time),
                     "profit": position.profit  # Get profit directly from MT5
                 }
@@ -256,11 +280,27 @@ class TradingBot:
             # Verify position tracking is synchronized with MT5
             self.verify_positions()
             
-            # Get and preprocess the data for prediction
-            data = self.data_fetcher.fetch_data()
-            if data is None:
+            # Get fresh market data
+            new_data = self.data_fetcher.fetch_data()
+            if new_data is None:
                 self.logger.warning("Failed to fetch market data")
                 return
+
+            # Update the full historical data to include the new bar
+            if self.full_historical_data is not None:
+                # Get only new data that's not already in our historical dataset
+                last_historical_time = self.full_historical_data.index[-1]
+                new_bars = new_data[new_data.index > last_historical_time]
+                
+                if len(new_bars) > 0:
+                    self.logger.info(f"Adding {len(new_bars)} new bars to historical dataset")
+                    # Append new data to our historical dataset
+                    self.full_historical_data = pd.concat([self.full_historical_data, new_bars])
+                    self.logger.info(f"Historical dataset now contains {len(self.full_historical_data)} bars")
+            else:
+                # If somehow historical data is missing, initialize it
+                self.full_historical_data = new_data.copy()
+                self.logger.info(f"Reinitialized historical dataset with {len(self.full_historical_data)} bars")
 
             # Try to get USD/ZAR rate, fallback to 1.0 if not available
             try:
@@ -271,33 +311,60 @@ class TradingBot:
                 self.logger.warning(f"Failed to get USD/ZAR rate, using 19.0: {str(e)}")
                 usd_zar_rate = 19.0
 
-            # Reset LSTM states only on significant data gaps
-            if self.last_bar_index is not None:
+            # Check for significant data gaps - only reset LSTM states if absolutely necessary
+            # This is less aggressive than before to maintain LSTM state continuity
+            if self.last_bar_index is not None and self.model.lstm_states is not None:
                 expected_time = self.last_bar_index + pd.Timedelta(minutes=MT5_TIMEFRAME_MINUTES)
-                time_diff = abs((current_bar.index[-1] - expected_time).total_seconds())
-                # Only reset if gap is more than 2x the timeframe
-                if time_diff > (MT5_TIMEFRAME_MINUTES * 2 * 60):
-                    self.logger.info(f"Significant data gap detected ({time_diff/60:.1f} minutes), resetting LSTM states")
-                    self.model.lstm_states = None
+                time_diff = abs((current_time - expected_time).total_seconds())
+                # Only reset if gap is more than 24 hours
+                if time_diff > (24 * 60 * 60):
+                    self.logger.warning(f"Severe data gap detected ({time_diff/3600:.1f} hours), resetting LSTM states")
+                    # If we reset, we need to rebuild the LSTM state from scratch
+                    self.model.reset_states()
+                    # We should warm up the model again using all available data
+                    env_warmup = TradingEnv(
+                        data=self.full_historical_data.iloc[:-1].copy(),  # Exclude last bar which might be incomplete
+                        initial_balance=self.model.initial_balance,
+                        balance_per_lot=self.model.balance_per_lot,
+                        random_start=False
+                    )
+                    obs, _ = env_warmup.reset()
+                    
+                    # Process all historical bars to rebuild LSTM state
+                    self.logger.info(f"Rebuilding LSTM states with {env_warmup.data_length} historical bars")
+                    for i in range(env_warmup.data_length - 1):
+                        action, lstm_states = self.model.model.predict(obs, state=self.model.lstm_states, deterministic=True)
+                        self.model.lstm_states = lstm_states
+                        obs, _, done, _, _ = env_warmup.step(int(action))
+                        if done:
+                            break
 
             # Update position info for prediction
             if self.current_position:
-                # Update entry step relative to current data window
-                self.current_position["entry_step"] = len(data) - 1
+                # Update entry step relative to current full historical data
+                entry_time = pd.to_datetime(self.current_position["entry_time"])
+                # Find the index position of entry time in our full dataset
+                entry_indices = np.where(self.full_historical_data.index >= entry_time)[0]
+                if len(entry_indices) > 0:
+                    self.current_position["entry_step"] = entry_indices[0]
+                else:
+                    # If we can't find it, set to beginning of current data
+                    self.current_position["entry_step"] = 0
 
             # Update model's balance before prediction
             current_balance = self.mt5.get_account_balance()
             self.model.initial_balance = current_balance
             
-            current_close_price = data['close'].iloc[-1]
-            data = data.iloc[:-1]  # Exclude the last row for prediction as its not completed yet
+            # Work with the complete dataset except the last incomplete bar
+            data_for_prediction = self.full_historical_data.iloc[:-1].copy()
+            current_close_price = self.full_historical_data['close'].iloc[-1]
             
-            # Add logging for data window sizes
-            self.logger.info(f"Data window size for prediction: {len(data)} bars")
+            # Log historical data size being used for prediction
+            self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction (backtest-style)")
             
-            # Create environment using full data window to match backtest
+            # Create environment using full historical data to match backtest approach
             env = TradingEnv(
-                data=data.copy(),  # Use full data instead of last window
+                data=data_for_prediction,
                 initial_balance=self.model.initial_balance,
                 balance_per_lot=self.model.balance_per_lot,
                 random_start=False,
@@ -306,8 +373,10 @@ class TradingBot:
                 min_lots=self.model.min_lots,
                 max_lots=self.model.max_lots,
                 contract_size=self.model.contract_size,
-                currency_conversion=usd_zar_rate  # Add currency conversion parameter
+                currency_conversion=usd_zar_rate
             )
+            
+            # Reset environment to initialize
             obs, _ = env.reset()
             
             # Set position state and update metrics if needed            
@@ -318,14 +387,16 @@ class TradingBot:
                 
                 # Update environment position state
                 env.current_position = self.current_position.copy()
-                env.metrics.update_unrealized_pnl(unrealized_pnl)                    
+                env.metrics.update_unrealized_pnl(unrealized_pnl)
+            
+            # Position environment at the last step 
+            env.current_step = env.data_length - 1
             
             # Get observation with updated position metrics
             obs = env.get_observation()
             
-            # Calculate and log raw features before normalization
-            raw_features = {}
-            rates_data = data.copy()
+            # Log raw feature values for debugging
+            rates_data = data_for_prediction.copy()
             feature_processor = env.feature_processor
             atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
                 rates_data['high'].values,
@@ -333,13 +404,18 @@ class TradingBot:
                 rates_data['close'].values
             )
             
-            # Log raw feature values
+            # Log raw feature values for the last bar
             self.logger.debug("\nRaw feature values (last bar):")
-            self.logger.debug(f"ATR: {atr[-1]:.6f}")
-            self.logger.debug(f"RSI: {rsi[-1]:.6f}")
-            self.logger.debug(f"BB Upper: {upper_band[-1]:.6f}")
-            self.logger.debug(f"BB Lower: {lower_band[-1]:.6f}")
-            self.logger.debug(f"Trend Strength: {trend_strength[-1]:.6f}")
+            if len(atr) > 0:
+                self.logger.debug(f"ATR: {atr[-1]:.6f}")
+            if len(rsi) > 0:
+                self.logger.debug(f"RSI: {rsi[-1]:.6f}")
+            if len(upper_band) > 0:
+                self.logger.debug(f"BB Upper: {upper_band[-1]:.6f}")
+            if len(lower_band) > 0:
+                self.logger.debug(f"BB Lower: {lower_band[-1]:.6f}")
+            if len(trend_strength) > 0:
+                self.logger.debug(f"Trend Strength: {trend_strength[-1]:.6f}")
             
             # Create normalized feature dictionary for tracking
             feature_dict = {}
@@ -352,7 +428,7 @@ class TradingBot:
                     feature_dict[feature_name] = float(feat)  # Convert numpy values to Python float
                     self.logger.debug(f"  {feature_name}: {feat:.6f}")
             
-            # Make prediction using direct model.predict like backtest does
+            # Make prediction using the same approach as backtest
             action, new_lstm_states = self.model.model.predict(
                 obs,
                 state=self.model.lstm_states,
@@ -387,7 +463,7 @@ class TradingBot:
             action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL', 3: 'CLOSE'}
             action_desc = action_map[prediction['action']]
             
-            self.logger.debug(
+            self.logger.info(
                 f"Trade Signal - Action: {action_desc} | "
                 f"Description: {prediction['description']}"
             )
@@ -398,7 +474,7 @@ class TradingBot:
             # Update position tracking and log trade events
             if success:
                 if prediction['action'] == 3:  # Close
-                    current_price = data['close'].iloc[-1]
+                    current_price = data_for_prediction['close'].iloc[-1]
                     if self.current_position:
                         self.trade_tracker.log_trade_exit(
                             'model_close',
@@ -408,13 +484,13 @@ class TradingBot:
                         )
                     self.current_position = None
                 elif prediction['action'] in [1, 2] and not self.current_position:  # New position
-                    current_price = data['close'].iloc[-1]
+                    current_price = data_for_prediction['close'].iloc[-1]
                     self.current_position = {
                         "direction": 1 if prediction['action'] == 1 else -1,
                         "entry_price": current_price,
                         "lot_size": self.trade_executor.last_lot_size,
-                        "entry_step": len(data) - 1,
-                        "entry_time": str(data.index[-1])
+                        "entry_step": len(data_for_prediction) - 1,
+                        "entry_time": str(data_for_prediction.index[-1])
                     }
                     # Log trade entry with features
                     self.trade_tracker.log_trade_entry(
@@ -428,7 +504,7 @@ class TradingBot:
                 if self.current_position:
                     self.trade_tracker.log_trade_update(
                         feature_dict,
-                        data['close'].iloc[-1],
+                        data_for_prediction['close'].iloc[-1],
                         self.current_position.get('profit', 0.0)
                     )
             
