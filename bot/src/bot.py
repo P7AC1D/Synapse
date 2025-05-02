@@ -292,9 +292,9 @@ class TradingBot:
             current_close_price = data['close'].iloc[-1]
             data = data.iloc[:-1]  # Exclude the last row for prediction as its not completed yet
             
-            # Create environment with full data for feature calculation
+            # Create environment for observation just like backtest does
             env = TradingEnv(
-                data=data.copy(),  # Pass all data for proper feature calculation
+                data=data.iloc[-self.model.window_size:].copy(),
                 initial_balance=self.model.initial_balance,
                 balance_per_lot=self.model.balance_per_lot,
                 random_start=False,

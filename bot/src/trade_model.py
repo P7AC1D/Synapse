@@ -157,14 +157,18 @@ class TradeModel:
         )
         obs, _ = env.reset()
         
-        # Initialize observation with one step
-        # Action doesn't matter for preloading, we only care about state updates
-        _, new_lstm_states = self.model.predict(
-            obs,
-            state=self.lstm_states,
-            deterministic=True
-        )
-        self.lstm_states = new_lstm_states  # Store initial states
+        # Run prediction steps to initialize states
+        while True:
+            # Action doesn't matter for preloading, we only care about state updates
+            _, new_lstm_states = self.model.predict(
+                obs,
+                state=self.lstm_states,
+                deterministic=True
+            )
+            self.lstm_states = new_lstm_states  # Update states
+            obs, _, done, truncated, _ = env.step(0)  # Use 0 (hold) to minimize impact
+            if done or truncated:
+                break
         self.logger.info(f"LSTM states preloaded with {len(data)} historical bars")
         
     def _calculate_backtest_metrics(self, env: TradingEnv, total_steps: int, total_reward: float) -> Dict[str, Any]:

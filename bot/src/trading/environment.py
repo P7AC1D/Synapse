@@ -92,16 +92,10 @@ class TradingEnv(gym.Env, EzPickle):
             print("Warning: 'volume' column not found, using synthetic volume data")
             data['volume'] = np.ones(len(data))
             
-        # Process data and setup spaces - handle small data gracefully
-        if len(data) < 100:
-            raise ValueError("Insufficient data: need at least 100 bars")
-            
-        try:
-            self.raw_data, self.atr_values = self.feature_processor.preprocess_data(data)
-            self.action_space = spaces.Discrete(4)
-            self.observation_space = self.feature_processor.setup_observation_space()
-        except Exception as e:
-            raise ValueError(f"Failed to process data: {str(e)}")
+        # Process data and setup spaces
+        self.raw_data, self.atr_values = self.feature_processor.preprocess_data(data)
+        self.action_space = spaces.Discrete(4)
+        self.observation_space = self.feature_processor.setup_observation_space()
         
         # Save datetime index and data length
         self.original_index = data.index
@@ -256,9 +250,12 @@ class TradingEnv(gym.Env, EzPickle):
         self.renderer.render_episode_stats(self)
         
     def get_observation(self) -> np.ndarray:
-        """Get current observation using all available data context."""
-        # Always use the most recent row since we now pass full data context
-        features = self.raw_data.values[-1]
+        """Get current observation."""
+        # In predict_single context, we want the most recent data point
+        if hasattr(self, 'predict_context') and self.predict_context:
+            features = self.raw_data.values[-1]  # Get the last (most recent) element
+        else:
+            features = self.raw_data.values[self.current_step]
         
         position_type = self.current_position["direction"] if self.current_position else 0
         
