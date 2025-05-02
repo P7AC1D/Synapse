@@ -164,8 +164,9 @@ class FeatureComparisonTester:
         for i, feature_name in enumerate(self.feature_names):
             if i < len(mean_diffs):
                 logger.info(f"{feature_name}:")
-                logger.info(f"  Mean abs diff: {mean_diffs[i]:.6f}")
-                logger.info(f"  Max abs diff: {max_diffs[i]:.6f}")
+                # Use iloc instead of [] to access by position (fixes FutureWarning)
+                logger.info(f"  Mean abs diff: {mean_diffs.iloc[i] if isinstance(mean_diffs, pd.Series) else mean_diffs[i]:.6f}")
+                logger.info(f"  Max abs diff: {max_diffs.iloc[i] if isinstance(max_diffs, pd.Series) else max_diffs[i]:.6f}")
     
     def visualize_differences(self):
         """Create visualizations of feature differences."""
@@ -174,9 +175,18 @@ class FeatureComparisonTester:
         # Ensure output directory exists
         os.makedirs(os.path.join(self.output_dir, 'plots'), exist_ok=True)
         
+        # Check if features are DataFrames or numpy arrays and handle accordingly
+        is_df_backtest = isinstance(self.backtest_features, pd.DataFrame)
+        is_df_bot = isinstance(self.bot_features, pd.DataFrame)
+        
+        # Convert DataFrames to numpy arrays if needed
+        backtest_array = self.backtest_features.values if is_df_backtest else self.backtest_features
+        bot_array = self.bot_features.values if is_df_bot else self.bot_features
+        
         # Create heatmap of all feature differences
         plt.figure(figsize=(12, 8))
-        plt.imshow(self.feature_differences.T, aspect='auto', cmap='coolwarm')
+        plt.imshow(self.feature_differences.T if not isinstance(self.feature_differences, pd.DataFrame) 
+                  else self.feature_differences.values.T, aspect='auto', cmap='coolwarm')
         plt.colorbar(label='Difference')
         plt.xlabel('Bar Index')
         plt.ylabel('Feature Index')
@@ -192,9 +202,19 @@ class FeatureComparisonTester:
                 feature_name = self.feature_names[idx]
                 plt.figure(figsize=(12, 6))
                 
-                # Plot both bot and backtest versions
-                plt.plot(self.backtest_features[:, idx], label='Backtest', alpha=0.7)
-                plt.plot(self.bot_features[:, idx], label='Bot', alpha=0.7)
+                # Plot both bot and backtest versions - properly handle array indexing
+                if is_df_backtest:
+                    backtest_values = self.backtest_features.iloc[:, idx]
+                else:
+                    backtest_values = backtest_array[:, idx]
+                    
+                if is_df_bot:
+                    bot_values = self.bot_features.iloc[:, idx]
+                else:
+                    bot_values = bot_array[:, idx]
+                
+                plt.plot(backtest_values, label='Backtest', alpha=0.7)
+                plt.plot(bot_values, label='Bot', alpha=0.7)
                 
                 plt.title(f'Feature: {feature_name}')
                 plt.xlabel('Bar Index')
@@ -205,7 +225,12 @@ class FeatureComparisonTester:
                 
                 # Plot the difference
                 plt.figure(figsize=(12, 6))
-                plt.plot(self.feature_differences[:, idx])
+                if isinstance(self.feature_differences, pd.DataFrame):
+                    diff_values = self.feature_differences.iloc[:, idx]
+                else:
+                    diff_values = self.feature_differences[:, idx]
+                    
+                plt.plot(diff_values)
                 plt.title(f'Difference in Feature: {feature_name}')
                 plt.xlabel('Bar Index')
                 plt.ylabel('Difference')
@@ -219,8 +244,24 @@ class FeatureComparisonTester:
         """Export feature comparison results to CSV."""
         logger.info("Exporting feature comparison results...")
         
+        # Get the actual number of features from data shape
+        num_features = self.feature_differences.shape[1]
+        
+        # Ensure we have the right number of feature names
+        if len(self.feature_names) != num_features:
+            logger.warning(f"Feature name count mismatch: {len(self.feature_names)} names but {num_features} features")
+            # Use only the available feature names or generate generic names if needed
+            feature_names = []
+            for i in range(num_features):
+                if i < len(self.feature_names):
+                    feature_names.append(self.feature_names[i])
+                else:
+                    feature_names.append(f"feature_{i}")
+        else:
+            feature_names = self.feature_names
+        
         # Create a DataFrame with feature differences
-        diff_data = pd.DataFrame(self.feature_differences, columns=self.feature_names)
+        diff_data = pd.DataFrame(self.feature_differences, columns=feature_names)
         diff_data.index = self.data.index[:len(diff_data)]
         
         # Add statistics
@@ -235,8 +276,9 @@ class FeatureComparisonTester:
         backtest_file = os.path.join(self.output_dir, 'backtest_features.csv')
         bot_file = os.path.join(self.output_dir, 'bot_features.csv')
         
-        pd.DataFrame(self.backtest_features, columns=self.feature_names).to_csv(backtest_file)
-        pd.DataFrame(self.bot_features, columns=self.feature_names).to_csv(bot_file)
+        # Use the same feature names for consistency
+        pd.DataFrame(self.backtest_features[:len(diff_data)], columns=feature_names).to_csv(backtest_file)
+        pd.DataFrame(self.bot_features, columns=feature_names).to_csv(bot_file)
         
         logger.info(f"Results exported to {self.output_dir}")
     
