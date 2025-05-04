@@ -6,14 +6,14 @@ import argparse
 import json
 import numpy as np
 import pandas as pd
-from sb3_contrib.ppo_recurrent import RecurrentPPO
+from stable_baselines3 import PPO
 import torch as th
 from datetime import datetime
 
 from utils.training_utils import save_training_state, load_training_state, train_walk_forward
 
 def main():
-    parser = argparse.ArgumentParser(description='Train a PPO-LSTM model for trading')    
+    parser = argparse.ArgumentParser(description='Train a PPO model for trading')    
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the input dataset CSV file')
     

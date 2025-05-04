@@ -6,13 +6,13 @@ from typing import Dict, List, Optional, Union, Any, Tuple
 
 import numpy as np
 import pandas as pd
-from sb3_contrib.ppo_recurrent import RecurrentPPO
+from stable_baselines3 import PPO
 
 from trading.environment import TradingEnv
 from trading.actions import Action
 
 class TradeModel:
-    """Class for loading and making predictions with a trained PPO-LSTM model."""
+    """Class for loading and making predictions with a trained PPO model."""
     
     def __init__(self, model_path: str, balance_per_lot: float = 1000.0, initial_balance: float = 10000.0,
                  point_value: float = 0.01,
@@ -47,20 +47,18 @@ class TradeModel:
             'spread'  # Price data
         ]
         
-        self.lstm_states = None  # Store LSTM states between predictions
-        
         # Load the model
         self.load_model()
         
     def load_model(self) -> bool:
-        """Load the pre-trained PPO-LSTM model.
+        """Load the pre-trained PPO model.
         
         Returns:
             bool: True if model loaded successfully, False otherwise
         """
         try:
             # Load the PPO model with saved hyperparameters
-            self.model = RecurrentPPO.load(
+            self.model = PPO.load(
                 self.model_path,
                 print_system_info=False
             )
@@ -485,3 +483,84 @@ class TradeModel:
         
         # Calculate metrics with additional error handling
         return self._calculate_backtest_metrics(env, step, total_reward)
+
+    def predict_single(self, data: pd.DataFrame, warmup_bars: int = 0) -> Dict[str, Any]:
+        """
+        Make a single prediction at the last data point.
+        
+        Args:
+            data: DataFrame with market data
+            warmup_bars: Number of bars to warm up prediction (default: 0)
+            
+        Returns:
+            Dictionary with prediction details
+        """
+        if self.model is None:
+            raise ValueError("Model not loaded. Call load_model() first.")
+            
+        # Prepare data
+        data = self.prepare_data(data)
+        
+        # Create environment for prediction
+        env = TradingEnv(
+            data=data,
+            initial_balance=self.initial_balance,
+            balance_per_lot=self.balance_per_lot,
+            random_start=False,
+            point_value=self.point_value,
+            min_lots=self.min_lots,
+            max_lots=self.max_lots,
+            contract_size=self.contract_size
+        )
+        
+        # Get observation of the latest bar
+        obs, _ = env.reset()
+        
+        # Make prediction
+        action, _ = self.model.predict(
+            obs, 
+            deterministic=True
+        )
+        
+        # Convert to discrete action
+        if isinstance(action, np.ndarray):
+            action_value = int(action.item())
+        else:
+            action_value = int(action)
+        discrete_action = action_value % 4
+            
+        # Get current position type for context
+        current_position_type = 0
+        if env.current_position:
+            current_position_type = env.current_position['direction']
+            
+        # Generate human readable description
+        description = self._generate_prediction_description(discrete_action, current_position_type)
+        
+        # Action mask (whether action is valid)
+        valid_action = True
+        
+        # Check if action is valid (can't open a position if one exists, can't close without a position)
+        if (current_position_type != 0 and discrete_action in [1, 2]) or (current_position_type == 0 and discrete_action == 3):
+            valid_action = False
+            
+        # Return prediction details
+        prediction = {
+            'action': discrete_action,
+            'action_raw': action_value,
+            'description': description,
+            'valid_action': valid_action,
+            'position_type': current_position_type,
+            'timestamp': data.index[-1] if isinstance(data.index, pd.DatetimeIndex) else None
+        }
+            
+        # Calculate potential lot size if opening a position
+        if discrete_action in [1, 2] and current_position_type == 0:
+            lot_size = env.action_handler.calculate_lot_size(
+                balance=env.balance,
+                close_price=data['close'].iloc[-1],
+                atr_value=None  # Let the action handler use its default ATR value
+            )
+            prediction['suggested_lot_size'] = float(lot_size)
+            
+        return prediction

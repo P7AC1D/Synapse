@@ -378,10 +378,6 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     # Progress tracking
     progress_steps = max(1, len(data) // 100)  # Update every 1%
     
-    # Initialize LSTM states - match how the bot initializes them
-    model.reset_states()
-    model.lstm_states = None  # Ensure clean start
-    
     # Ensure we have enough data
     if len(data) < 100:  # Minimum data requirement
         raise ValueError(f"Insufficient data: need at least 100 bars, got {len(data)}")
@@ -429,13 +425,11 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                     if verbose:
                         print(f"  {feature_name}: {feat:.6f}")
 
-            # Get prediction from model
-            action, new_lstm_states = model.model.predict(
+            # Get prediction from model using standard PPO (no LSTM states)
+            action, _ = model.model.predict(
                 obs,
-                state=model.lstm_states,
                 deterministic=True
             )
-            model.lstm_states = new_lstm_states  # Update states in model object
             
             try:
                 # Convert action to discrete value and handle position checks
