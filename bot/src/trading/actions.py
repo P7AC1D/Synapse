@@ -162,9 +162,7 @@ class ActionHandler:
         if not self.env.current_position:
             return 0.0, 0.0
             
-        # Use live price if available, otherwise use historical price
-        current_price = self.env.live_price if self.env.live_price is not None else self.env.prices['close'][self.env.current_step]
-            
+        current_price = self.env.prices['close'][self.env.current_step]    
         direction = self.env.current_position["direction"]
         entry_price = self.env.current_position["entry_price"]
         lot_size = self.env.current_position["lot_size"]

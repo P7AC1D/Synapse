@@ -36,7 +36,7 @@ class TradingEnv(gym.Env, EzPickle):
         
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
                  balance_per_lot: float = 1000.0, random_start: bool = False,
-                 live_price: Optional[float] = None, currency_conversion: Optional[float] = None,
+                 predict_mode: bool = False, currency_conversion: Optional[float] = None,
                  point_value: float = 0.001,
                  min_lots: float = 0.01, max_lots: float = 200.0,
                  contract_size: float = 100.0,
@@ -49,7 +49,7 @@ class TradingEnv(gym.Env, EzPickle):
             initial_balance: Starting account balance
             balance_per_lot: Account balance required per 0.01 lot
             random_start: Whether to start from random positions
-            live_price: Optional current market price for live trading
+            predict_mode: Whether environment is being used for live prediction (True) or backtesting (False)
             currency_conversion: Optional conversion rate for account currency (e.g. USD/ZAR)
             point_value: Value of one price point movement (default: 0.001 for Gold)
             min_lots: Minimum lot size (default: 0.01)
@@ -67,8 +67,10 @@ class TradingEnv(gym.Env, EzPickle):
         self.BALANCE_PER_LOT = balance_per_lot
         self.MAX_DRAWDOWN = 0.4      # Maximum drawdown
         self.initial_balance = initial_balance
-        self.live_price = live_price  # Store live price for P&L calculations
         self.currency_conversion = currency_conversion or 1.0  # Default to 1.0 if not provided
+        
+        # Set predict_context flag for live trading vs backtesting
+        self.predict_context = predict_mode
         
         # Market simulation settings
         self.spread_variation = spread_variation
@@ -172,7 +174,7 @@ class TradingEnv(gym.Env, EzPickle):
                 
         # Track unrealized PnL for any active position
         if self.current_position:
-            if hasattr(self, 'predict_context') and self.predict_context and "profit" in self.current_position:
+            if self.predict_context and "profit" in self.current_position:
                 # Use position's profit for live trading
                 unrealized_pnl = self.current_position["profit"]
                 profit_points = self.current_position.get("profit_points", 0.0)
@@ -258,17 +260,14 @@ class TradingEnv(gym.Env, EzPickle):
         
     def get_observation(self) -> np.ndarray:
         """Get current observation."""
-        # In predict_single context, we want the most recent data point
-        if hasattr(self, 'predict_context') and self.predict_context:
-            features = self.raw_data.values[-1]  # Get the last (most recent) element
-        else:
-            features = self.raw_data.values[self.current_step]
+        # In predict context, we want the most recent data point
+        features = self.raw_data.values[-1] if self.predict_context else self.raw_data.values[self.current_step]
         
         position_type = self.current_position["direction"] if self.current_position else 0
         
         if self.current_position:
             # For live trading, use position's profit if available
-            if hasattr(self, 'predict_context') and self.predict_context and "profit" in self.current_position:
+            if self.predict_context and "profit" in self.current_position:
                 unrealized_pnl = self.current_position["profit"]
             else:
                 # Fallback to calculating PnL for backtesting
@@ -285,7 +284,7 @@ class TradingEnv(gym.Env, EzPickle):
         position_info = {}
         
         if self.current_position:
-            if hasattr(self, 'predict_context') and self.predict_context and "profit" in self.current_position:
+            if self.predict_context and "profit" in self.current_position:
                 # Use position's profit for live trading
                 unrealized_pnl = self.current_position["profit"]
                 profit_points = self.current_position.get("profit_points", 0.0)

@@ -326,7 +326,8 @@ class TradingBot:
                         data=self.full_historical_data.iloc[:-1].copy(),  # Exclude last bar which might be incomplete
                         initial_balance=self.model.initial_balance,
                         balance_per_lot=self.model.balance_per_lot,
-                        random_start=False
+                        random_start=False,
+                        predict_mode=False  # This is for backtesting/warmup
                     )
                     obs, _ = env_warmup.reset()
                     
@@ -388,7 +389,6 @@ class TradingBot:
             
             # Work with the complete dataset except the last incomplete bar
             data_for_prediction = self.full_historical_data.iloc[:-1].copy()
-            current_close_price = self.full_historical_data['close'].iloc[-1]
             
             # Log historical data size being used for prediction
             self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction (backtest-style)")
@@ -399,7 +399,7 @@ class TradingBot:
                 initial_balance=self.model.initial_balance,
                 balance_per_lot=self.model.balance_per_lot,
                 random_start=False,
-                live_price=current_close_price,
+                predict_mode=True,  # We're in live trading mode
                 point_value=self.model.point_value,
                 min_lots=self.model.min_lots,
                 max_lots=self.model.max_lots,
