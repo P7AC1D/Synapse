@@ -80,7 +80,7 @@ class DataFetcher:
                     f"{bar['low']:8.3f}, {bar['close']:8.3f}, {bar['spread']:6.1f}, {int(bar['volume']):5d}"
                 )
             
-        return data
+        return data.iloc[:-1] # Exclude the last bar for prediction
         
     def fetch_current_bar(self, include_history: bool = True) -> Optional[pd.DataFrame]:
         """
