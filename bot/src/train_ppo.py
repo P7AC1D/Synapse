@@ -17,8 +17,8 @@ def main():
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the input dataset CSV file')
     
-    parser.add_argument('--device', type=str, choices=['cuda', 'cpu'], default='cuda',
-                      help='Device to use for training')
+    parser.add_argument('--device', type=str, choices=['cuda', 'cpu'], default='cpu',
+                      help='Device to use for training (default: cpu)')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
     
@@ -63,6 +63,7 @@ def main():
     th.manual_seed(args.seed)
     if args.device == 'cuda':
         th.cuda.manual_seed(args.seed)
+        print("Note: Training PPO with MLP policy on GPU may be slower than CPU. Consider using CPU for this model type.")
     
     data = pd.read_csv(args.data_path)
     data.set_index('time', inplace=True)

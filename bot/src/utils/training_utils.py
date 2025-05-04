@@ -324,7 +324,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
     if os.path.exists(best_model_path):
         print(f"Resuming training from step {training_start} with best model")
-        model = PPO.load(best_model_path)
+        model = PPO.load(best_model_path, device=args.device)
     else:
         print("Starting new training")
         training_start = 0
