@@ -56,6 +56,19 @@ class TradeModel:
         Returns:
             bool: True if model loaded successfully, False otherwise
         """
+        try:
+            # Load the PPO model with saved hyperparameters
+            self.model = PPO.load(
+                self.model_path,
+                print_system_info=False,
+                device='cpu'
+            )
+            self.logger.info(f"Model successfully loaded from {self.model_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error loading model: {e}")
+            return False
     
     def prepare_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
