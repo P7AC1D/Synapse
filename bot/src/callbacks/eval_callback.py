@@ -82,14 +82,13 @@ class UnifiedEvalCallback(BaseCallback):
             env.env.current_step = start_pos
         obs, _ = env.reset(seed=eval_seed)
         done = False
-        lstm_states = None
         running_balance = env.env.initial_balance
         max_balance = running_balance
         episode_reward = 0
         
         while not done:
-            action, lstm_states = self.model.predict(
-                obs, state=lstm_states, deterministic=self.deterministic
+            action, _ = self.model.predict(
+                obs, deterministic=self.deterministic
             )
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
@@ -216,8 +215,8 @@ class UnifiedEvalCallback(BaseCallback):
         
         try:
             # Load and evaluate previous best model
-            from sb3_contrib.ppo_recurrent import RecurrentPPO
-            prev_model = RecurrentPPO.load(best_model_path)
+            from stable_baselines3 import PPO
+            prev_model = PPO.load(best_model_path)
             
             # Store current model temporarily
             temp_model = self.model
@@ -239,7 +238,11 @@ class UnifiedEvalCallback(BaseCallback):
             return current_score > prev_score
             
         except Exception as e:
-            self.logger.warning(f"Error comparing with best model: {e}")
+            # Use error method if warning is not available
+            if hasattr(self.logger, 'warning'):
+                self.logger.warning(f"Error comparing with best model: {e}")
+            else:
+                self.logger.error(f"Error comparing with best model: {e}")
             return True  # Default to accepting current model on error
         
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
