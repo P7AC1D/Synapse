@@ -468,25 +468,31 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                 
                 # Track trade events if enabled
                 if trade_tracker:
+                    # Get current timestamp from the data index
+                    current_timestamp = data.index[total_steps]
+                    
                     if env.current_position and not current_position:  # New position opened
                         trade_tracker.log_trade_entry(
                             'buy' if discrete_action == 1 else 'sell',
                             feature_dict,
                             env.current_position['entry_price'],
-                            env.current_position['lot_size']
+                            env.current_position['lot_size'],
+                            timestamp=current_timestamp
                         )
                     elif not env.current_position and current_position:  # Position closed
                         trade_tracker.log_trade_exit(
                             'model_close',
                             info.get('close_price', data['close'].iloc[total_steps]),
                             info.get('pnl', 0.0),
-                            feature_dict
+                            feature_dict,
+                            timestamp=current_timestamp
                         )
                     elif env.current_position:  # Position update
                         trade_tracker.log_trade_update(
                             feature_dict,
                             data['close'].iloc[total_steps],
-                            env.metrics.current_unrealized_pnl
+                            env.metrics.current_unrealized_pnl,
+                            timestamp=current_timestamp
                         )
                 
                 # Update position tracking
