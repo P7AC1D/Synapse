@@ -323,7 +323,7 @@ class TradingBot:
                     self.model.reset_states()
                     # We should warm up the model again using all available data
                     env_warmup = TradingEnv(
-                        data=self.full_historical_data.iloc[:-1].copy(),  # Exclude last bar which might be incomplete
+                        data=self.full_historical_data.copy(),
                         initial_balance=self.model.initial_balance,
                         balance_per_lot=self.model.balance_per_lot,
                         random_start=False,
@@ -387,8 +387,8 @@ class TradingBot:
             self.logger.debug(f"Updaing model balance: {self.model.initial_balance} -> {current_balance}")
             self.model.initial_balance = current_balance
             
-            # Work with the complete dataset except the last incomplete bar
-            data_for_prediction = self.full_historical_data.iloc[:-1].copy()
+            # Work with the complete dataset
+            data_for_prediction = self.full_historical_data.copy()
             
             # Log historical data size being used for prediction
             self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction (backtest-style)")
