@@ -216,7 +216,7 @@ class UnifiedEvalCallback(BaseCallback):
         try:
             # Load and evaluate previous best model
             from stable_baselines3 import PPO
-            prev_model = PPO.load(best_model_path)
+            prev_model = PPO.load(best_model_path, device='cpu')
             
             # Store current model temporarily
             temp_model = self.model

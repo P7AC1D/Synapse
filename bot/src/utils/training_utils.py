@@ -140,7 +140,7 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         
     try:
         from stable_baselines3 import PPO
-        model = PPO.load(model_path)
+        model = PPO.load(model_path, device=args.device)
         
         # Create evaluation environment
         env = TradingEnv(
@@ -445,14 +445,14 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 if os.path.exists(curr_best_path):
                     if os.path.exists(best_model_path):
                         if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
-                            model = PPO.load(curr_best_path)
+                            model = PPO.load(curr_best_path, device=args.device)
                             model.save(best_model_path)
                             print("\nCurrent best model outperformed previous - saved as best model")
                         else:
-                            model = PPO.load(best_model_path)
+                            model = PPO.load(best_model_path, device=args.device)
                             print("\nKeeping previous best model")
                     else:
-                        model = PPO.load(curr_best_path)
+                        model = PPO.load(curr_best_path, device=args.device)
                         model.save(best_model_path)
                         print("\nNo previous best model - using current best as first best model")
                         
@@ -510,14 +510,14 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             if os.path.exists(curr_best_path):
                 if os.path.exists(best_model_path):
                     if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
-                        model = PPO.load(curr_best_path)
+                        model = PPO.load(curr_best_path, device=args.device)
                         model.save(best_model_path)
                         print("\nCurrent best model outperformed previous - saved as best model")
                     else:
-                        model = PPO.load(best_model_path)
+                        model = PPO.load(best_model_path, device=args.device)
                         print("\nKeeping previous best model")
                 else:
-                    model = PPO.load(curr_best_path)
+                    model = PPO.load(curr_best_path, device=args.device)
                     model.save(best_model_path)
                     print("\nNo previous best model - using current best as first best model")
                     
@@ -529,7 +529,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             else:
                 print("\nNo curr_best model found - reloading best model for next iteration")
                 if os.path.exists(best_model_path):
-                    model = PPO.load(best_model_path)
+                    model = PPO.load(best_model_path, device=args.device)
                     print("Loaded best model from previous iterations")
                 else:
                     print("No best model found - continuing with current model")
@@ -550,6 +550,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     # Load best model for return
     best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
     if os.path.exists(best_model_path):
-        model = PPO.load(best_model_path)
+        model = PPO.load(best_model_path, device=args.device)
 
     return model
