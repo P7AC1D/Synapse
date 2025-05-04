@@ -172,8 +172,15 @@ class TradingEnv(gym.Env, EzPickle):
                 
         # Track unrealized PnL for any active position
         if self.current_position:
-            unrealized_pnl, profit_points = self.action_handler.manage_position()
-            self.current_position["current_profit_points"] = profit_points
+            if hasattr(self, 'predict_context') and self.predict_context and "profit" in self.current_position:
+                # Use position's profit for live trading
+                unrealized_pnl = self.current_position["profit"]
+                profit_points = self.current_position.get("profit_points", 0.0)
+                self.current_position["current_profit_points"] = profit_points
+            else:
+                # Calculate PnL for backtesting
+                unrealized_pnl, profit_points = self.action_handler.manage_position()
+                self.current_position["current_profit_points"] = profit_points
             # Update metrics with unrealized PnL for accurate drawdown tracking
             self.metrics.update_unrealized_pnl(unrealized_pnl)
         else:
@@ -260,7 +267,12 @@ class TradingEnv(gym.Env, EzPickle):
         position_type = self.current_position["direction"] if self.current_position else 0
         
         if self.current_position:
-            unrealized_pnl, _ = self.action_handler.manage_position()
+            # For live trading, use position's profit if available
+            if hasattr(self, 'predict_context') and self.predict_context and "profit" in self.current_position:
+                unrealized_pnl = self.current_position["profit"]
+            else:
+                # Fallback to calculating PnL for backtesting
+                unrealized_pnl, _ = self.action_handler.manage_position()
             # Normalize unrealized PnL to be between -1 and 1 based on balance
             normalized_pnl = np.clip(unrealized_pnl / self.metrics.balance, -1, 1)
         else:
@@ -273,7 +285,14 @@ class TradingEnv(gym.Env, EzPickle):
         position_info = {}
         
         if self.current_position:
-            unrealized_pnl, profit_points = self.action_handler.manage_position()
+            if hasattr(self, 'predict_context') and self.predict_context and "profit" in self.current_position:
+                # Use position's profit for live trading
+                unrealized_pnl = self.current_position["profit"]
+                profit_points = self.current_position.get("profit_points", 0.0)
+            else:
+                # Calculate PnL for backtesting
+                unrealized_pnl, profit_points = self.action_handler.manage_position()
+                
             position_info = {
                 "direction": "long" if self.current_position["direction"] == 1 else "short",
                 "entry_price": self.current_position["entry_price"],

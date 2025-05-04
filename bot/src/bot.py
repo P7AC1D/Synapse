@@ -383,6 +383,7 @@ class TradingBot:
 
             # Update model's balance before prediction
             current_balance = self.mt5.get_account_balance()
+            self.logger.debug(f"Updaing model balance: {self.model.initial_balance} -> {current_balance}")
             self.model.initial_balance = current_balance
             
             # Work with the complete dataset except the last incomplete bar
