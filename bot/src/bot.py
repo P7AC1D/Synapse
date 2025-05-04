@@ -311,35 +311,6 @@ class TradingBot:
                 self.logger.warning(f"Failed to get USD/ZAR rate, using 19.0: {str(e)}")
                 usd_zar_rate = 19.0
 
-            # Check for significant data gaps - only reset LSTM states if absolutely necessary
-            # This is less aggressive than before to maintain LSTM state continuity
-            if self.last_bar_index is not None and self.model.lstm_states is not None:
-                expected_time = self.last_bar_index + pd.Timedelta(minutes=MT5_TIMEFRAME_MINUTES)
-                time_diff = abs((current_time - expected_time).total_seconds())
-                # Only reset if gap is more than 24 hours
-                if time_diff > (24 * 60 * 60):
-                    self.logger.warning(f"Severe data gap detected ({time_diff/3600:.1f} hours), resetting LSTM states")
-                    # If we reset, we need to rebuild the LSTM state from scratch
-                    self.model.reset_states()
-                    # We should warm up the model again using all available data
-                    env_warmup = TradingEnv(
-                        data=self.full_historical_data.copy(),
-                        initial_balance=self.model.initial_balance,
-                        balance_per_lot=self.model.balance_per_lot,
-                        random_start=False,
-                        predict_mode=False  # This is for backtesting/warmup
-                    )
-                    obs, _ = env_warmup.reset()
-                    
-                    # Process all historical bars to rebuild LSTM state
-                    self.logger.info(f"Rebuilding LSTM states with {env_warmup.data_length} historical bars")
-                    for i in range(env_warmup.data_length - 1):
-                        action, lstm_states = self.model.model.predict(obs, state=self.model.lstm_states, deterministic=True)
-                        self.model.lstm_states = lstm_states
-                        obs, _, done, _, _ = env_warmup.step(int(action))
-                        if done:
-                            break
-
             # Update position info for prediction
             if self.current_position:
                 try:

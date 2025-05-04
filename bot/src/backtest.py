@@ -408,18 +408,6 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                     print(f"BB Upper: {upper_band[-1]:.6f}")
                     print(f"BB Lower: {lower_band[-1]:.6f}")
                     print(f"Trend Strength: {trend_strength[-1]:.6f}")
-            # Check for market gaps and reset states if needed
-            if reset_states_on_gap and total_steps > 0:
-                current_time = data.index[total_steps]
-                prev_time = data.index[total_steps - 1]
-                expected_diff = pd.Timedelta(minutes=15)  # Assuming 15-minute timeframe
-                actual_diff = current_time - prev_time
-                
-                if actual_diff > expected_diff * 2:
-                    if verbose:
-                        print(f"\nMarket gap detected ({actual_diff.total_seconds()/60:.1f} minutes), resetting LSTM states")
-                    model.reset_states()
-                    model.lstm_states = None
             
             # Recheck balance if configured
             if balance_recheck_bars > 0 and total_steps % balance_recheck_bars == 0:
