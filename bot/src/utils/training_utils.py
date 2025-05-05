@@ -181,30 +181,40 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             # Always stop the progress indicator
             stop_progress_indicator()
         
-        # Calculate score using same weights as evaluation callback
+        # Calculate score using enhanced scoring system
         score = 0.0
         
-        # Return component (60% weight)
+        # Get key performance metrics
         returns = performance['return_pct'] / 100
-        score += returns * 0.6
-        
-        # Drawdown penalty (30% weight)
         max_dd = max(performance['max_drawdown_pct'], performance['max_equity_drawdown_pct']) / 100
-        drawdown_penalty = max(0, 1 - max_dd * 2)
-        score += drawdown_penalty * 0.3
+        profit_factor = performance['profit_factor']
+        win_rate = performance['win_rate'] / 100
         
-        # Profit factor bonus (up to 10% extra)
+        # 1. Risk-adjusted return component (40% weight)
+        # Add small constant to avoid division by zero
+        risk_adj_return = returns / (max_dd + 0.05)  
+        score += risk_adj_return * 0.4
+        
+        # 2. Raw returns component (30% weight)
+        score += returns * 0.3
+        
+        # 3. Profit factor bonus (up to 20% extra)
         pf_bonus = 0.0
-        if performance['profit_factor'] > 1.0:
-            pf_bonus = min(performance['profit_factor'] - 1.0, 2.0) * 0.05
+        if profit_factor > 1.0:
+            pf_bonus = min(profit_factor - 1.0, 2.0) * 0.1
         score += pf_bonus
+        
+        # 4. Win rate component (10% weight)
+        win_rate_score = win_rate * 0.1
+        score += win_rate_score
         
         return {
             'score': score,
             'returns': returns,
+            'risk_adj_return': risk_adj_return,
             'drawdown': max_dd,
-            'profit_factor': performance['profit_factor'],
-            'win_rate': performance['win_rate'],
+            'profit_factor': profit_factor,
+            'win_rate': win_rate,
             'total_trades': performance['total_trades'],
             'metrics': performance
         }

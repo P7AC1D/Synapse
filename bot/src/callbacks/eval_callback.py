@@ -176,24 +176,49 @@ class UnifiedEvalCallback(BaseCallback):
         return result
     
     def _calculate_final_score(self, metrics: Dict[str, Dict[str, float]]) -> float:
-        """Calculate final score for model comparison."""
+        """Calculate final score for model comparison with enhanced criteria."""
         validation = metrics['validation']
         combined = metrics['combined']
         
+        # Reject models with negative returns
         if validation['return'] <= 0 or combined['return'] <= 0:
             return float('-inf')
             
-        # Calculate average return between validation and combined datasets
-        average_return = (validation['return'] + combined['return']) / 2
+        # Get key performance metrics
+        val_return = validation['return']
+        combined_return = combined['return']
         
-        # Add profit factor bonus if available
-        bonus = 0.0
-        if 'profit_factor' in validation.get('performance', {}):
-            pf = validation['performance']['profit_factor']
-            if pf > 1.0:  # Only reward profit factors above 1.0
-                bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
+        # 1. Validation performance weight adjustment (40% weight)
+        score = val_return * 0.4
         
-        return average_return + bonus
+        # 2. Combined dataset performance (30% weight)
+        score += combined_return * 0.3
+        
+        # 3. Add consistency score component (10% weight)
+        # Higher when validation and combined returns are close
+        consistency = metrics['scores']['consistency']
+        if consistency > 0.05:  # Ensure some minimum consistency
+            consistency_bonus = min(consistency, 0.5) * 0.2  # Cap at 10% total
+            score += consistency_bonus
+        
+        # 4. Profit factor bonus (up to 10% extra)
+        pf_bonus = 0.0
+        if validation.get('profit_factor', 0) > 1.0:
+            pf_bonus = min(validation['profit_factor'] - 1.0, 2.0) * 0.05
+        score += pf_bonus
+        
+        # 5. Risk-adjusted return component (10% weight)
+        # Calculate risk-adjusted return for validation set
+        max_dd = max(
+            validation.get('max_balance_drawdown', 0.05),
+            validation.get('max_equity_drawdown', 0.05)
+        )
+        
+        # Avoid division by zero by adding small constant
+        risk_adj_return = val_return / (max_dd + 0.05)
+        score += risk_adj_return * 0.1
+        
+        return score
 
     def _evaluate_against_previous(self) -> bool:
         """
