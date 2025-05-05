@@ -145,7 +145,26 @@ class TradingBot:
             if not self.mt5.connect():
                 self.logger.error("Failed to connect to MT5")
                 return False
-                
+            
+            # Verify MT5 connection before proceeding
+            if not self.mt5.is_connected():
+                self.logger.error("MT5 connection verification failed")
+                return False
+
+            # Initialize data fetcher with connection verification
+            try:
+                self.data_fetcher = DataFetcher(
+                    self.mt5, self.symbol, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH + 1
+                )
+                # Verify data fetcher by attempting to fetch one bar
+                test_data = self.data_fetcher.fetch_current_bar(include_history=False)
+                if test_data is None:
+                    self.logger.error("Failed to verify DataFetcher functionality")
+                    return False
+            except Exception as e:
+                self.logger.error(f"Failed to initialize DataFetcher: {e}")
+                return False
+            
             # Get symbol parameters from connector
             try:
                 contract_size, min_lots, max_lots, volume_step, point_value, digits = self.mt5.get_symbol_info(self.symbol)
@@ -452,6 +471,11 @@ class TradingBot:
     def run(self) -> None:
         """Start the bot's main loop."""
         self.logger.info("Trading Bot starting")
+        
+        # Initialize components first
+        if not self.initialize():
+            self.logger.error("Failed to initialize bot components. Shutting down.")
+            return
         
         # Main loop - run until stopped
         try:

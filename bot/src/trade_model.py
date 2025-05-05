@@ -489,13 +489,4 @@ class TradeModel:
             'timestamp': data.index[-1] if isinstance(data.index, pd.DatetimeIndex) else None
         }
             
-        # Calculate potential lot size if opening a position
-        if discrete_action in [1, 2] and current_position_type == 0:
-            lot_size = env.action_handler.calculate_lot_size(
-                balance=env.balance,
-                close_price=data['close'].iloc[-1],
-                atr_value=None  # Let the action handler use its default ATR value
-            )
-            prediction['suggested_lot_size'] = float(lot_size)
-            
         return prediction
