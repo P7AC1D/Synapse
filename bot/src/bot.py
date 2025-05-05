@@ -349,6 +349,10 @@ class TradingBot:
             
             # Reset environment to initialize
             obs, _ = env.reset()
+
+            # Copy current position to environment
+            if self.current_position:
+                env.current_position = self.current_position.copy()
             
             # Get observation with updated position metrics - predict_mode=True automatically uses the last data point
             obs = env.get_observation()
