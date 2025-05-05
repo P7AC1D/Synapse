@@ -187,21 +187,13 @@ class TradingBot:
             
             # Get initial data for warmup
             initial_data = self.data_fetcher.fetch_data()
-            if initial_data is None or len(initial_data) < self.model.initial_warmup:
-                self.logger.error(f"Failed to fetch enough initial data (need {self.model.initial_warmup} bars)")
+            if initial_data is None or len(initial_data) < 100:  # Just need enough data to start
+                self.logger.error(f"Failed to fetch enough initial data (need at least 100 bars)")
                 return False
                 
             # Initialize full historical data with all available data (matching backtest approach)
             self.full_historical_data = initial_data.copy()
             self.logger.info(f"Initialized full historical data with {len(self.full_historical_data)} bars")
-            
-            # Preload LSTM states using sequential processing through full historical data
-            try:
-                # Use the improved preload_states method directly
-                self.model.preload_states(self.full_historical_data.copy())
-            except Exception as e:
-                self.logger.error(f"Failed to preload LSTM states: {e}")
-                return False
 
             # Get initial bar data
             current_bar = self.data_fetcher.fetch_current_bar()
@@ -311,155 +303,82 @@ class TradingBot:
                 self.logger.warning(f"Failed to get USD/ZAR rate, using 19.0: {str(e)}")
                 usd_zar_rate = 19.0
 
-            # Update position info for prediction
-            if self.current_position:
-                try:
-                    # Try to parse entry_time - handle different possible formats
-                    entry_time_str = self.current_position["entry_time"]
-                    self.logger.debug(f"Original entry_time value: {entry_time_str}")
-                    
-                    # Handle numeric timestamp (seconds since epoch)
-                    if isinstance(entry_time_str, (int, float)) or (isinstance(entry_time_str, str) and entry_time_str.isdigit()):
-                        try:
-                            # Convert to integer if it's a string containing digits
-                            timestamp = int(float(entry_time_str))
-                            # Check if this is a large timestamp in seconds or milliseconds
-                            if timestamp > 1000000000000:  # If in milliseconds
-                                timestamp = timestamp / 1000
-                            entry_time = pd.to_datetime(timestamp, unit='s')
-                            self.logger.debug(f"Converted timestamp {timestamp} to datetime: {entry_time}")
-                        except (ValueError, OverflowError) as e:
-                            self.logger.warning(f"Failed to convert timestamp {entry_time_str} to datetime: {e}")
-                            # Set a default entry time at the start of our data
-                            entry_time = self.full_historical_data.index[0]
-                    else:
-                        # Try to parse as ISO format string
-                        try:
-                            entry_time = pd.to_datetime(entry_time_str)
-                        except (ValueError, TypeError) as e:
-                            self.logger.warning(f"Failed to parse entry_time string: {e}")
-                            # Set a default entry time at the start of our data
-                            entry_time = self.full_historical_data.index[0]
-                    
-                    # Find the index position of entry time in our full dataset
-                    entry_indices = np.where(self.full_historical_data.index >= entry_time)[0]
-                    if len(entry_indices) > 0:
-                        self.current_position["entry_step"] = entry_indices[0]
-                    else:
-                        # If we can't find it, set to beginning of current data
-                        self.current_position["entry_step"] = 0
-                        
-                except Exception as e:
-                    self.logger.warning(f"Error processing entry_time, using default: {e}")
-                    self.current_position["entry_step"] = 0
-
             # Update model's balance before prediction
             current_balance = self.mt5.get_account_balance()
-            self.logger.debug(f"Updaing model balance: {self.model.initial_balance} -> {current_balance}")
+            self.logger.debug(f"Updating model balance: {self.model.initial_balance} -> {current_balance}")
             self.model.initial_balance = current_balance
             
-            # Work with the complete dataset
+            # Work with the complete dataset for prediction
             data_for_prediction = self.full_historical_data.copy()
             
             # Log historical data size being used for prediction
-            self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction (backtest-style)")
+            self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction")
             
-            # Create environment using full historical data to match backtest approach
-            env = TradingEnv(
-                data=data_for_prediction,
-                initial_balance=self.model.initial_balance,
-                balance_per_lot=self.model.balance_per_lot,
-                random_start=False,
-                predict_mode=True,  # We're in live trading mode
-                point_value=self.model.point_value,
-                min_lots=self.model.min_lots,
-                max_lots=self.model.max_lots,
-                contract_size=self.model.contract_size,
-                currency_conversion=usd_zar_rate
-            )
+            # Make a single prediction using the updated TradeModel.predict_single method
+            prediction = self.model.predict_single(data_for_prediction)
             
-            # Reset environment to initialize
-            obs, _ = env.reset()
+            # Extract current price for trade logging
+            current_price = data_for_prediction['close'].iloc[-1]
             
-            # Set position state and update metrics if needed            
-            position_type = 0
-            if self.current_position:
-                unrealized_pnl = self.current_position.get('profit', 0.0)
-                position_type = self.current_position.get('direction', 0)
-                
-                # Update environment position state
-                env.current_position = self.current_position.copy()
-                env.metrics.update_unrealized_pnl(unrealized_pnl)
-            
-            # Position environment at the last step 
-            env.current_step = env.data_length - 1
-            
-            # Get observation with updated position metrics
-            obs = env.get_observation()
-            
-            # Log raw feature values for debugging
-            rates_data = data_for_prediction.copy()
-            feature_processor = env.feature_processor
-            atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
-                rates_data['high'].values,
-                rates_data['low'].values,
-                rates_data['close'].values
-            )
-            
-            # Log raw feature values for the last bar
-            self.logger.debug("\nRaw feature values (last bar):")
-            if len(atr) > 0:
-                self.logger.debug(f"ATR: {atr[-1]:.6f}")
-            if len(rsi) > 0:
-                self.logger.debug(f"RSI: {rsi[-1]:.6f}")
-            if len(upper_band) > 0:
-                self.logger.debug(f"BB Upper: {upper_band[-1]:.6f}")
-            if len(lower_band) > 0:
-                self.logger.debug(f"BB Lower: {lower_band[-1]:.6f}")
-            if len(trend_strength) > 0:
-                self.logger.debug(f"Trend Strength: {trend_strength[-1]:.6f}")
-            
-            # Create normalized feature dictionary for tracking
-            feature_dict = {}
-            if obs is not None and isinstance(obs, np.ndarray):
-                feature_names = env.feature_processor.get_feature_names()
-                
-                self.logger.debug("\nNormalized features for prediction:")
-                for i, feat in enumerate(obs):
-                    feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
-                    feature_dict[feature_name] = float(feat)  # Convert numpy values to Python float
-                    self.logger.debug(f"  {feature_name}: {feat:.6f}")
-            
-            # Make prediction using the same approach as backtest
-            action, new_lstm_states = self.model.model.predict(
-                obs,
-                state=self.model.lstm_states,
-                deterministic=True
-            )
-            self.model.lstm_states = new_lstm_states  # Update LSTM states
-            
-            # Convert action to discrete value
+            # Create normalized feature dictionary for trade tracking
+            features_for_tracking = {}
             try:
-                if isinstance(action, np.ndarray):
-                    action_value = int(action.item())
-                else:
-                    action_value = int(action)
-                discrete_action = action_value % 4
+                # Get observation with environment setup to ensure consistent feature extraction
+                env = TradingEnv(
+                    data=data_for_prediction,
+                    initial_balance=self.model.initial_balance,
+                    balance_per_lot=self.model.balance_per_lot,
+                    random_start=False,
+                    predict_mode=True,
+                    point_value=self.model.point_value,
+                    min_lots=self.model.min_lots,
+                    max_lots=self.model.max_lots,
+                    contract_size=self.model.contract_size,
+                    currency_conversion=usd_zar_rate
+                )
                 
-                # Force HOLD if position exists and trying to open new one
-                if self.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
-                    discrete_action = 0  # HOLD
-            except (ValueError, TypeError):
-                discrete_action = 0
-            
-            # Generate prediction description
-            description = self.model._generate_prediction_description(discrete_action, position_type)
-            
-            # Create prediction dict
-            prediction = {
-                'action': discrete_action,
-                'description': description
-            }
+                # Reset environment to initialize
+                obs, _ = env.reset()
+                
+                # Position environment at the last step
+                env.current_step = env.data_length - 1
+                
+                # Get observation with updated position metrics
+                obs = env.get_observation()
+                
+                # Create feature dictionary if observation is available
+                if obs is not None and isinstance(obs, np.ndarray):
+                    feature_names = env.feature_processor.get_feature_names()
+                    
+                    self.logger.debug("\nNormalized features for prediction:")
+                    for i, feat in enumerate(obs):
+                        feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
+                        features_for_tracking[feature_name] = float(feat)  # Convert numpy values to Python float
+                        self.logger.debug(f"  {feature_name}: {feat:.6f}")
+                        
+                # Also log raw feature values for debugging
+                feature_processor = env.feature_processor
+                atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
+                    data_for_prediction['high'].values,
+                    data_for_prediction['low'].values,
+                    data_for_prediction['close'].values
+                )
+                
+                # Log raw feature values for the last bar
+                self.logger.debug("\nRaw feature values (last bar):")
+                if len(atr) > 0:
+                    self.logger.debug(f"ATR: {atr[-1]:.6f}")
+                if len(rsi) > 0:
+                    self.logger.debug(f"RSI: {rsi[-1]:.6f}")
+                if len(upper_band) > 0:
+                    self.logger.debug(f"BB Upper: {upper_band[-1]:.6f}")
+                if len(lower_band) > 0:
+                    self.logger.debug(f"BB Lower: {lower_band[-1]:.6f}")
+                if len(trend_strength) > 0:
+                    self.logger.debug(f"Trend Strength: {trend_strength[-1]:.6f}")
+                    
+            except Exception as e:
+                self.logger.warning(f"Error extracting features for tracking: {e}")
             
             # Convert prediction to trade action
             action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL', 3: 'CLOSE'}
@@ -476,17 +395,15 @@ class TradingBot:
             # Update position tracking and log trade events
             if success:
                 if prediction['action'] == 3:  # Close
-                    current_price = data_for_prediction['close'].iloc[-1]
                     if self.current_position:
                         self.trade_tracker.log_trade_exit(
                             'model_close',
                             current_price,
                             self.current_position.get('profit', 0.0),
-                            feature_dict
+                            features_for_tracking
                         )
                     self.current_position = None
                 elif prediction['action'] in [1, 2] and not self.current_position:  # New position
-                    current_price = data_for_prediction['close'].iloc[-1]
                     self.current_position = {
                         "direction": 1 if prediction['action'] == 1 else -1,
                         "entry_price": current_price,
@@ -497,7 +414,7 @@ class TradingBot:
                     # Log trade entry with features
                     self.trade_tracker.log_trade_entry(
                         'buy' if prediction['action'] == 1 else 'sell',
-                        feature_dict,
+                        features_for_tracking,
                         current_price,
                         self.trade_executor.last_lot_size
                     )
@@ -505,8 +422,8 @@ class TradingBot:
                 # Log trade update if position exists
                 if self.current_position:
                     self.trade_tracker.log_trade_update(
-                        feature_dict,
-                        data_for_prediction['close'].iloc[-1],
+                        features_for_tracking,
+                        current_price,
                         self.current_position.get('profit', 0.0)
                     )
             
