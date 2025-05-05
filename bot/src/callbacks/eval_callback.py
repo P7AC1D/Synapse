@@ -520,14 +520,30 @@ class UnifiedEvalCallback(BaseCallback):
                 # Separator
                 print(f"\n  {'-'*50}")
                 
-                # Selection metrics
-                average_return = (metrics['validation']['return'] + metrics['combined']['return']) / 2
-                profit_factor_bonus = min(max(0, metrics['validation']['profit_factor'] - 1.0), 2.0) * 0.1
-                print(f"  Selection (Score: {self.best_score:.3f}):")
-                print(f"    Averaged Return: {average_return*100:.2f}%")
-                print(f"      - Validation: {metrics['validation']['return']*100:.2f}%")
-                print(f"      - Combined: {metrics['combined']['return']*100:.2f}%")
-                print(f"    Profit Factor Bonus: +{profit_factor_bonus:.3f}")
+                # New scoring system metrics
+                print(f"  Enhanced Selection Metrics (Score: {self.best_score:.3f}):")
+                
+                # Validation vs Combined weights
+                print(f"    Validation Performance (40%): {metrics['validation']['return']*100:.2f}%")
+                print(f"    Combined Performance (30%): {metrics['combined']['return']*100:.2f}%")
+                
+                # Consistency score
+                consistency = metrics['scores']['consistency']
+                print(f"    Consistency Score: {consistency:.3f} (bonus: +{min(consistency, 0.5) * 0.2:.3f})")
+                
+                # Risk-adjusted returns
+                max_dd = max(
+                    metrics['validation'].get('max_balance_drawdown', 0.05),
+                    metrics['validation'].get('max_equity_drawdown', 0.05)
+                )
+                risk_adj_return = metrics['validation']['return'] / (max_dd + 0.05)
+                print(f"    Risk-Adjusted Return: {risk_adj_return:.2f}")
+                
+                # Profit factor bonus
+                profit_factor_bonus = min(max(0, metrics['validation']['profit_factor'] - 1.0), 2.0) * 0.05
+                print(f"    Profit Factor: {metrics['validation']['profit_factor']:.2f} (bonus: +{profit_factor_bonus:.3f})")
+                
+                # Progress
                 print(f"    Progress: {self.num_timesteps/self.training_timesteps*100:.1f}%")
                 
                 # Separator
