@@ -333,15 +333,36 @@ class TradingBot:
             # Log historical data size being used for prediction
             self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction")
             
-            # Make a single prediction using the updated TradeModel.predict_single method
-            prediction = self.model.predict_single(data_for_prediction)
+            # Create environment for prediction with current position info
+            env = TradingEnv(
+                data=data_for_prediction,
+                initial_balance=current_balance,
+                balance_per_lot=self.model.balance_per_lot,
+                random_start=False,
+                predict_mode=True,
+                point_value=self.model.point_value,
+                min_lots=self.model.min_lots,
+                max_lots=self.model.max_lots,
+                contract_size=self.model.contract_size,
+                currency_conversion=usd_zar_rate
+            )
             
-            # Extract current price for trade logging
-            current_price = data_for_prediction['close'].iloc[-1]
+            # Initialize environment and set current position if exists
+            obs, _ = env.reset()
+            if self.current_position:
+                env.current_position = self.current_position.copy()
             
-            # Create normalized feature dictionary for trade tracking
-            features_for_tracking = {}
+            # Get fresh observation that includes position info
+            obs = env.get_observation()
+            
+            # Make prediction using environment with position info
+            prediction = self.model.predict_single(data_for_prediction, env=env)
+            
+            # Log features for debugging
             try:
+                # Initialize features dictionary
+                features_for_tracking = {}
+                
                 # Get observation with environment setup to ensure consistent feature extraction
                 env = TradingEnv(
                     data=data_for_prediction,
@@ -408,6 +429,12 @@ class TradingBot:
                 f"Description: {prediction['description']}"
             )
             
+            # Get current price before trade execution
+            current_price = self.mt5.get_current_price(self.symbol)
+            if current_price is None:
+                self.logger.error("Failed to get current price")
+                return
+                
             # Execute trade and update position tracking
             success = self.trade_executor.execute_trade(prediction)
             

@@ -419,13 +419,13 @@ class TradeModel:
         # Calculate metrics with additional error handling
         return self._calculate_backtest_metrics(env, step, total_reward)
 
-    def predict_single(self, data: pd.DataFrame, warmup_bars: int = 0) -> Dict[str, Any]:
+    def predict_single(self, data: pd.DataFrame, env: Optional[TradingEnv] = None) -> Dict[str, Any]:
         """
         Make a single prediction at the last data point.
         
         Args:
             data: DataFrame with market data
-            warmup_bars: Number of bars to warm up prediction (default: 0)
+            env: Optional existing TradingEnv instance with position info
             
         Returns:
             Dictionary with prediction details
@@ -436,20 +436,24 @@ class TradeModel:
         # Prepare data
         data = self.prepare_data(data)
         
-        # Create environment for prediction
-        env = TradingEnv(
-            data=data,
-            initial_balance=self.initial_balance,
-            balance_per_lot=self.balance_per_lot,
-            random_start=False,
-            point_value=self.point_value,
-            min_lots=self.min_lots,
-            max_lots=self.max_lots,
-            contract_size=self.contract_size
-        )
-        
-        # Get observation of the latest bar
-        obs, _ = env.reset()
+        # Use existing environment if provided, otherwise create a new one
+        if env is None:
+            env = TradingEnv(
+                data=data,
+                initial_balance=self.initial_balance,
+                balance_per_lot=self.balance_per_lot,
+                random_start=False,
+                predict_mode=True,
+                point_value=self.point_value,
+                min_lots=self.min_lots,
+                max_lots=self.max_lots,
+                contract_size=self.contract_size
+            )
+            # Initialize environment
+            obs, _ = env.reset()
+            
+        # Get observation (will include position info if env has it)
+        obs = env.get_observation()
         
         # Make prediction
         action, _ = self.model.predict(
