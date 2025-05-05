@@ -332,14 +332,14 @@ class TradingBot:
             
             # Log historical data size being used for prediction
             self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction")
-            
-            # Create environment for prediction with current position info
+
+            # Create a single trading environment that will be used for both prediction and feature extraction
             env = TradingEnv(
                 data=data_for_prediction,
-                initial_balance=current_balance,
+                initial_balance=self.model.initial_balance,
                 balance_per_lot=self.model.balance_per_lot,
                 random_start=False,
-                predict_mode=True,
+                predict_mode=True,  # Set to True to always use most recent data
                 point_value=self.model.point_value,
                 min_lots=self.model.min_lots,
                 max_lots=self.model.max_lots,
@@ -347,45 +347,46 @@ class TradingBot:
                 currency_conversion=usd_zar_rate
             )
             
-            # Initialize environment and set current position if exists
+            # Reset environment to initialize
             obs, _ = env.reset()
-            if self.current_position:
-                env.current_position = self.current_position.copy()
             
-            # Get fresh observation that includes position info
+            # Get observation with updated position metrics - predict_mode=True automatically uses the last data point
             obs = env.get_observation()
             
-            # Make prediction using environment with position info
-            prediction = self.model.predict_single(data_for_prediction, env=env)
+            # Use the model's predict method directly with the observation from our environment
+            action, _ = self.model.model.predict(obs, deterministic=True)
             
-            # Log features for debugging
+            # Convert to discrete action
+            if isinstance(action, np.ndarray):
+                action_value = int(action.item())
+            else:
+                action_value = int(action)
+            discrete_action = action_value % 4
+            
+            # Get current position type for context
+            current_position_type = 0
+            if env.current_position:
+                current_position_type = env.current_position['direction']
+                
+            # Generate human readable description
+            description = self.model._generate_prediction_description(discrete_action, current_position_type)
+            
+            # Create the prediction dictionary similar to what predict_single would return
+            prediction = {
+                'action': discrete_action,
+                'action_raw': action_value,
+                'description': description,
+                'valid_action': True,  # We'll handle validity check in trade execution
+                'position_type': current_position_type,
+                'timestamp': data_for_prediction.index[-1]
+            }
+            
+            # Extract current price for trade logging
+            current_price = data_for_prediction['close'].iloc[-1]
+            
+            # Create normalized feature dictionary for trade tracking using our environment's observation
+            features_for_tracking = {}
             try:
-                # Initialize features dictionary
-                features_for_tracking = {}
-                
-                # Get observation with environment setup to ensure consistent feature extraction
-                env = TradingEnv(
-                    data=data_for_prediction,
-                    initial_balance=self.model.initial_balance,
-                    balance_per_lot=self.model.balance_per_lot,
-                    random_start=False,
-                    predict_mode=True,
-                    point_value=self.model.point_value,
-                    min_lots=self.model.min_lots,
-                    max_lots=self.model.max_lots,
-                    contract_size=self.model.contract_size,
-                    currency_conversion=usd_zar_rate
-                )
-                
-                # Reset environment to initialize
-                obs, _ = env.reset()
-                
-                # Position environment at the last step
-                env.current_step = env.data_length - 1
-                
-                # Get observation with updated position metrics
-                obs = env.get_observation()
-                
                 # Create feature dictionary if observation is available
                 if obs is not None and isinstance(obs, np.ndarray):
                     feature_names = env.feature_processor.get_feature_names()
@@ -429,12 +430,6 @@ class TradingBot:
                 f"Description: {prediction['description']}"
             )
             
-            # Get current price before trade execution
-            current_price = self.mt5.get_current_price(self.symbol)
-            if current_price is None:
-                self.logger.error("Failed to get current price")
-                return
-                
             # Execute trade and update position tracking
             success = self.trade_executor.execute_trade(prediction)
             
