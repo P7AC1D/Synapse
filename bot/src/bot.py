@@ -530,28 +530,33 @@ class TradingBot:
         if self.mt5:
             self.mt5.disconnect()
         
-        # Reset model states
-        if self.model:
-            self.model.reset_states()
-        
         self.logger.info("Cleanup complete")
         
     def run(self) -> None:
-        """Run the trading bot main loop."""
-        if not self.initialize():
-            self.logger.error("Initialization failed")
-            return
-            
-        self.setup_signal_handlers()
-        self.logger.info("Starting trading bot main loop...")
+        """Start the bot's main loop."""
+        self.logger.info("Trading Bot starting")
         
+        # Main loop - run until stopped
         try:
+            self.running = True
+            
+            # Initialize the update timer for tracking time between updates
+            last_update_time = time.time()
+            
             while self.running:
-                self.process_trading_cycle()
-                time.sleep(1)  # Sleep to avoid excessive CPU usage
-                
-        except Exception as e:
-            self.logger.exception(f"Unexpected error in main loop: {e}")
+                try:
+                    # Execute trading cycle
+                    self.process_trading_cycle()
+                    
+                    # Sleep to avoid excessive CPU usage
+                    time.sleep(1)
+                        
+                except Exception as e:
+                    self.logger.error(f"Error in main loop: {e}")
+                    time.sleep(1)  # Add delay before retry to avoid tight loops on persistent errors
+            
+        except KeyboardInterrupt:
+            self.logger.info("Keyboard interrupt received, shutting down")
         finally:
             self.cleanup()
 

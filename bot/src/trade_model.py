@@ -127,70 +127,6 @@ class TradeModel:
                 return f"{base_desc} current {position_map[position_type]} position"
             return f"{base_desc} but rejected - no position exists"
             
-    def reset_states(self) -> None:
-        """Reset the LSTM states. Call this when starting a new prediction sequence."""
-        self.lstm_states = None
-        
-    def preload_states(self, data: pd.DataFrame) -> None:
-        """
-        Preload LSTM states with historical data.
-        
-        Args:
-            data: DataFrame with market data for warmup
-        """
-        if self.model is None:
-            raise ValueError("Model not loaded. Call load_model() first.")
-            
-        # Create environment for state preloading
-        env = TradingEnv(
-            data=data,
-            initial_balance=self.initial_balance,
-            balance_per_lot=self.balance_per_lot,
-            random_start=False,
-            point_value=self.point_value,
-            min_lots=self.min_lots,
-            max_lots=self.max_lots,
-            contract_size=self.contract_size
-        )
-        
-        # Get initial observation
-        obs, _ = env.reset()
-        
-        self.logger.info(f"Starting LSTM state preload with {len(data)} bars")
-        
-        # Reset LSTM states to start fresh
-        self.lstm_states = None
-        
-        # Process all historical data to build up LSTM states
-        steps_processed = 0
-        
-        # Run prediction steps to initialize states
-        while True:
-            # Make prediction using current observation and LSTM states
-            action, new_lstm_states = self.model.predict(
-                obs,
-                state=self.lstm_states,
-                deterministic=True
-            )
-            
-            # Update LSTM states
-            self.lstm_states = new_lstm_states
-            
-            # Step the environment
-            obs, _, done, truncated, _ = env.step(int(action) % 4)  # Use actual model action
-            
-            steps_processed += 1
-            
-            # Log progress periodically
-            if steps_processed % 100 == 0:
-                self.logger.debug(f"Processed {steps_processed}/{len(data)} bars for LSTM preload")
-                
-            # Break if done
-            if done or truncated:
-                break
-                
-        self.logger.info(f"LSTM states preloaded with {steps_processed} historical bars")
-        
     def _calculate_backtest_metrics(self, env: TradingEnv, total_steps: int, total_reward: float) -> Dict[str, Any]:
         """
         Calculate metrics from backtest results.
@@ -447,8 +383,7 @@ class TradeModel:
             slippage_range=slippage_range
         )
         
-        # Initialize LSTM states
-        lstm_states = None
+        # Initialize environment
         obs, _ = env.reset()
         
         done = False
@@ -456,10 +391,9 @@ class TradeModel:
         total_reward = 0.0
         
         while not done:
-            # Make prediction
-            raw_action, lstm_states = self.model.predict(
+            # Make prediction (without LSTM states)
+            raw_action, _ = self.model.predict(
                 obs,
-                state=lstm_states,
                 deterministic=True
             )
             

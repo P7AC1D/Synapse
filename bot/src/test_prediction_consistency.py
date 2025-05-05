@@ -257,10 +257,6 @@ class PredictionConsistencyTester:
             
         logger.info(f"Testing prediction consistency over {num_steps} steps")
         
-        # Reset models
-        self.bot_model.reset_states()
-        self.backtest_model.reset_states()
-        
         # Create environments for both paths
         backtest_env = TradingEnv(
             data=self.data.copy(),

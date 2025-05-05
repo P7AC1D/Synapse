@@ -343,7 +343,6 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                             min_lots: float = 0.01, max_lots: float = 200.0,
                             contract_size: float = 100.0,
                             currency_conversion: float = None,
-                            reset_states_on_gap: bool = True,
                             spread_variation: float = 0.0,
                             slippage_range: float = 0.0,
                             balance_recheck_bars: int = 0) -> Dict[str, Any]:
@@ -627,7 +626,6 @@ def main():
                 max_lots=args.max_lots,
                 contract_size=args.contract_size,
                 currency_conversion=args.currency_conversion,
-                reset_states_on_gap=args.reset_states_on_gap,
                 spread_variation=args.spread_variation,
                 slippage_range=args.slippage_range,
                 balance_recheck_bars=args.balance_recheck_bars,
