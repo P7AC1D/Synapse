@@ -163,13 +163,6 @@ class FeatureProcessor:
             }
             features_df = pd.DataFrame(features, index=data.index)
             
-            # Store ATR in DataFrame immediately for proper alignment
-            atr_df = pd.DataFrame({'atr': atr}, index=data.index)
-            
-            # Count NaN values before dropping
-            nan_count_before = features_df.isna().sum().sum()
-            nan_rows_before = features_df.isna().any(axis=1).sum()
-            
             # Clean up NaN values - this will primarily drop rows at the beginning 
             # where technical indicators don't have enough data points
             features_df = features_df.dropna()
@@ -180,32 +173,12 @@ class FeatureProcessor:
             print(f"Data preprocessing: Dropped {rows_dropped} rows out of {original_length} " 
                   f"({percentage_dropped:.2f}%) due to NaN values")
             
-            # Get the corresponding ATR values after dropping NaNs
-            common_index = features_df.index
-            atr_df = atr_df.loc[common_index]
+            # Keep the original ATR values (not normalized) for potential position sizing
+            atr_aligned = atr_series.loc[features_df.index].values
             
             # Validation
             if len(features_df) < 100:
-                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
-            
-            # Convert to array after guaranteed alignment
-            atr_aligned = atr_df.values.reshape(-1)
-            
-            # Double-check alignment (should never fail now)
-            if len(atr_aligned) != len(features_df):
-                # If lengths still don't match, use minimum length
-                min_len = min(len(features_df), len(atr_aligned))
-                features_df = features_df.iloc[-min_len:]
-                atr_aligned = atr_aligned[-min_len:]
-            
-            # Validate feature ranges
-            for col, values in features_df.items():
-                if col in ['volatility_breakout']:
-                    if (values < 0).any() or (values > 1).any():
-                        raise ValueError(f"Feature {col} contains values outside [0, 1] range")
-                elif col not in ['returns']:
-                    if (values < -1).any() or (values > 1).any():
-                        raise ValueError(f"Feature {col} contains values outside [-1, 1] range")
+                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")            
             
             return features_df, atr_aligned
 

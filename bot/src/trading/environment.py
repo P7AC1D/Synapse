@@ -103,12 +103,14 @@ class TradingEnv(gym.Env, EzPickle):
         self.original_index = data.index
         self.data_length = len(self.raw_data)
         
-        # Store price data
+        # Store price data - only include rows that correspond to valid feature rows
+        # This ensures proper alignment as we've already dropped rows with NaN values in features
+        aligned_index = self.raw_data.index
         self.prices = {
-            'close': data.loc[self.original_index, 'close'].values,
-            'high': data.loc[self.original_index, 'high'].values,
-            'low': data.loc[self.original_index, 'low'].values,
-            'spread': data.loc[self.original_index, 'spread'].values,
+            'close': data.loc[aligned_index, 'close'].values,
+            'high': data.loc[aligned_index, 'high'].values,
+            'low': data.loc[aligned_index, 'low'].values,
+            'spread': data.loc[aligned_index, 'spread'].values,
             'atr': self.atr_values
         }
         
