@@ -34,8 +34,6 @@ def main():
                       help='Account balance required per 0.01 lot')
     parser.add_argument('--random_start', action='store_true',
                       help='Start training from random positions in the dataset')
-    parser.add_argument('--no_random_start', action='store_true',
-                      help='Explicitly disable random start (overrides --random_start)')
     
     parser.add_argument('--total_timesteps', type=int, default=200000,
                       help='Total timesteps for training')
@@ -45,20 +43,6 @@ def main():
                       help='Final learning rate')
     parser.add_argument('--eval_freq', type=int, default=10000,
                       help='Evaluation frequency in timesteps')
-    
-    # Neural network parameters
-    parser.add_argument('--net_arch', type=str, default='[64,64]',
-                      help='Network architecture as a list of layer sizes (default: [64,64])')
-    parser.add_argument('--activation_fn', type=str, default='tanh',
-                      choices=['tanh', 'relu', 'elu'],
-                      help='Activation function (default: tanh)')
-    parser.add_argument('--ent_coef', type=float, default=0.01,
-                      help='Entropy coefficient for exploration (default: 0.01)')
-    parser.add_argument('--gamma', type=float, default=0.99,
-                      help='Discount factor (default: 0.99)')
-    parser.add_argument('--lr_schedule', type=str, default='linear',
-                      choices=['linear', 'exponential', 'constant'],
-                      help='Learning rate schedule (default: linear)')
     
     # Trading environment parameters
     parser.add_argument('--point_value', type=float, default=0.01,
