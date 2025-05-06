@@ -99,8 +99,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.feature_processor.setup_observation_space()
         
-        # Save datetime index and data length
-        self.original_index = data.index
+        # Save data length
         self.data_length = len(self.raw_data)
         
         # Store price data - only include rows that correspond to valid feature rows
@@ -144,8 +143,7 @@ class TradingEnv(gym.Env, EzPickle):
             
         # Update counters
         self.episode_steps += 1
-        self.current_step += 1
-        
+        self.current_step += 1        
         
         # Update hold time for existing positions
         if self.current_position:

@@ -82,7 +82,7 @@ class ActionHandler:
             "entry_price": adjusted_entry_price,
             "entry_spread": raw_spread,
             "lot_size": lot_size,
-            "entry_time": str(self.env.original_index[self.env.current_step]),
+            "entry_time": str(self.env.raw_data.index[self.env.current_step]),
             "entry_step": self.env.current_step,
             "current_profit_points": 0.0
         }
@@ -138,7 +138,7 @@ class ActionHandler:
             "entry_price": entry_price,
             "exit_price": exit_price,
             "entry_time": self.env.current_position["entry_time"],
-            "exit_time": str(self.env.original_index[self.env.current_step]),
+            "exit_time": str(self.env.raw_data.index[self.env.current_step]),
             "profit_points": profit_points_normalized,
             "pnl": pnl,
             "hold_time": self.env.current_step - entry_step,
