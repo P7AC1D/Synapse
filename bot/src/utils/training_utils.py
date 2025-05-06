@@ -391,7 +391,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             env_params = {
                 'initial_balance': args.initial_balance,
                 'balance_per_lot': args.balance_per_lot,
-                'random_start': args.random_start,
+                'random_start': args.random_start if not args.no_random_start else False,
                 'point_value': args.point_value,
                 'min_lots': args.min_lots,
                 'max_lots': args.max_lots,
@@ -403,18 +403,51 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             
             period_timesteps = base_timesteps
             
+            # Parse network architecture from string to list
+            net_arch = eval(args.net_arch)
+            
+            # Set up activation function based on user choice
+            activation_fn_map = {
+                'tanh': th.nn.Tanh,
+                'relu': th.nn.ReLU,
+                'elu': th.nn.ELU
+            }
+            activation_fn = activation_fn_map[args.activation_fn]
+            
+            # Create custom policy_kwargs with user-defined parameters
+            policy_kwargs = {
+                "net_arch": net_arch,
+                "activation_fn": activation_fn
+            }
+            
+            # Calculate learning rate based on schedule
+            if args.lr_schedule == 'exponential':
+                if iteration > 0:
+                    # Exponential decay factor
+                    decay = (args.final_learning_rate / args.learning_rate) ** (1 / total_iterations)
+                    current_lr = args.learning_rate * (decay ** iteration)
+                else:
+                    current_lr = args.learning_rate
+            elif args.lr_schedule == 'constant':
+                current_lr = args.learning_rate
+            else:  # linear
+                step_fraction = iteration / max(total_iterations - 1, 1)
+                current_lr = args.learning_rate - step_fraction * (args.learning_rate - args.final_learning_rate)
+            
             if model is None:
                 print("\nPerforming initial training...")
                 
-                # Initialize new model with optimized hyperparameters for trading
+                # Initialize new model with user-specified hyperparameters
                 model = PPO(
                     "MlpPolicy",
                     train_env,
-                    policy_kwargs=POLICY_KWARGS,
+                    policy_kwargs=policy_kwargs,
+                    learning_rate=current_lr,
+                    gamma=args.gamma,
+                    ent_coef=args.ent_coef,
                     verbose=0,
                     device=args.device,
-                    seed=args.seed,
-                    **MODEL_KWARGS
+                    seed=args.seed
                 )
                 
                 # Set up initial training callbacks
@@ -472,8 +505,10 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             else:
                 print(f"\nContinuing training with existing model...")
                 print(f"Training timesteps: {period_timesteps}")
-                args.learning_rate = args.learning_rate * 0.95
+                
+                # Update learning rate based on schedule for continued training
                 model.set_env(train_env)
+                model.learning_rate = current_lr
                 
                 # Calculate base timesteps for this iteration
                 start_timesteps = iteration * period_timesteps

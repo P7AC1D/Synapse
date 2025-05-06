@@ -374,22 +374,21 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
         os.makedirs(trades_log_path, exist_ok=True)
         trade_tracker = TradeTracker(trades_log_path)
     
-    # Progress tracking
-    progress_steps = max(1, len(data) // 100)  # Update every 1%
+    # Get the actual length of the processed data from the environment
+    processed_data_length = env.data_length
     
-    # Ensure we have enough data
-    if len(data) < 100:  # Minimum data requirement
-        raise ValueError(f"Insufficient data: need at least 100 bars, got {len(data)}")
+    # Progress tracking based on processed data length
+    progress_steps = max(1, processed_data_length // 100)  # Update every 1%
     
     # Main prediction loop
     while True:
         try:
             if total_steps % progress_steps == 0:
-                progress = (total_steps / len(data)) * 100
-                print(f"\rProgress: {progress:.1f}% (step {total_steps}/{len(data)})", end="")
+                progress = (total_steps / processed_data_length) * 100
+                print(f"\rProgress: {progress:.1f}% (step {total_steps}/{processed_data_length})", end="")
                 
-                # Log raw features periodically if verbose
-                if verbose:
+                # Log raw features periodically if verbose and within bounds
+                if verbose and total_steps < len(data):
                     current_data = data.iloc[:total_steps+1]
                     feature_processor = env.feature_processor
                     atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
@@ -408,8 +407,8 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             if balance_recheck_bars > 0 and total_steps % balance_recheck_bars == 0:
                 env.metrics.balance = env.metrics.get_current_balance()
             
-            # Add random spread variation if configured
-            if spread_variation > 0:
+            # Add random spread variation if configured and within bounds
+            if spread_variation > 0 and total_steps < len(data):
                 current_spread = data['spread'].iloc[total_steps]
                 variation = np.random.uniform(-spread_variation, spread_variation)
                 data.at[data.index[total_steps], 'spread'] = max(0, current_spread + variation)
@@ -447,8 +446,8 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                 total_reward += reward
                 total_steps += 1
                 
-                # Track trade events if enabled
-                if trade_tracker:
+                # Track trade events if enabled and within bounds
+                if trade_tracker and total_steps < len(data.index):
                     # Get current timestamp from the data index
                     current_timestamp = data.index[total_steps]
                     
@@ -463,7 +462,7 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                     elif not env.current_position and current_position:  # Position closed
                         trade_tracker.log_trade_exit(
                             'model_close',
-                            info.get('close_price', data['close'].iloc[total_steps]),
+                            info.get('close_price', data['close'].iloc[min(total_steps, len(data) - 1)]),
                             info.get('pnl', 0.0),
                             feature_dict,
                             timestamp=current_timestamp
@@ -471,7 +470,7 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                     elif env.current_position:  # Position update
                         trade_tracker.log_trade_update(
                             feature_dict,
-                            data['close'].iloc[total_steps],
+                            data['close'].iloc[min(total_steps, len(data) - 1)],
                             env.metrics.current_unrealized_pnl,
                             timestamp=current_timestamp
                         )
@@ -504,7 +503,7 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
     
     # Handle any open position at the end
     if env.current_position:
-        env.current_step = len(data) - 1
+        env.current_step = min(env.data_length - 1, env.current_step)
         pnl, trade_info = action_handler.close_position()
         if pnl != 0:
             env.trades.append(trade_info)
