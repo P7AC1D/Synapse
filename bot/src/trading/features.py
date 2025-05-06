@@ -48,15 +48,13 @@ class FeatureProcessor:
         atr = ta.volatility.AverageTrueRange(
             high=high_s, low=low_s, close=close_s, 
             window=self.atr_period
-        ).average_true_range()
-        atr = atr.bfill().fillna(atr.mean()).values
+        ).average_true_range().values
         
         # Calculate RSI
         rsi = ta.momentum.RSIIndicator(
             close=close_s,
             window=self.rsi_period
-        ).rsi()
-        rsi = rsi.bfill().fillna(50).values  # Default to neutral RSI
+        ).rsi().values
         
         # Calculate Bollinger Bands
         bb = ta.volatility.BollingerBands(
@@ -64,16 +62,19 @@ class FeatureProcessor:
             window=self.boll_period,
             window_dev=2
         )
-        upper = bb.bollinger_hband().bfill().fillna(close_s.iloc[0]).values
-        lower = bb.bollinger_lband().bfill().fillna(close_s.iloc[0]).values
+        upper = bb.bollinger_hband().values
+        lower = bb.bollinger_lband().values
         
         # Calculate ADX for trend strength
         adx = ta.trend.ADXIndicator(
             high=high_s, low=low_s, close=close_s,
             window=self.atr_period
-        ).adx()
-        adx = adx.bfill().fillna(0).values
-        trend_strength = np.clip(adx/25 - 1, -1, 1)  # Same normalization as before
+        ).adx().values
+        
+        # Normalize trend strength
+        trend_strength = np.zeros_like(adx)
+        valid_mask = ~np.isnan(adx)
+        trend_strength[valid_mask] = np.clip(adx[valid_mask]/25 - 1, -1, 1)
         
         return atr, rsi, (upper, lower), trend_strength
 
@@ -87,7 +88,8 @@ class FeatureProcessor:
             Tuple of (features DataFrame, ATR values)
         """
         
-        features_df = pd.DataFrame(index=data.index)
+        # Keep track of original data length for logging
+        original_length = len(data)
         
         with np.errstate(divide='ignore', invalid='ignore'):
             close = data['close'].values
@@ -98,13 +100,11 @@ class FeatureProcessor:
             # Calculate technical indicators using TA-Lib
             atr, rsi, (upper_band, lower_band), trend_strength = self._calculate_indicators(high, low, close)
             
-            # Store ATR in DataFrame immediately for proper alignment
-            atr_df = pd.DataFrame({'atr': atr}, index=data.index)
-            
             # Calculate ATR normalization
             window_size = 20
-            atr_sma = pd.Series(atr).rolling(window_size, min_periods=1).mean().values
-            atr_ratio = atr / (atr_sma + 1e-8)
+            atr_series = pd.Series(atr, index=data.index)
+            atr_sma = atr_series.rolling(window_size, min_periods=1).mean().values
+            atr_ratio = np.divide(atr, atr_sma, where=atr_sma!=0, out=np.zeros_like(atr))
             
             # Scale ATR ratio
             min_expected_ratio = 0.5
@@ -152,7 +152,7 @@ class FeatureProcessor:
             # Create features DataFrame
             features = {
                 'returns': returns,
-                'rsi': rsi / 50 - 1,
+                'rsi': np.divide(rsi, 50, out=np.zeros_like(rsi), where=~np.isnan(rsi)) - 1,
                 'atr': atr_norm,
                 'volatility_breakout': volatility_breakout,
                 'trend_strength': trend_strength,
@@ -163,16 +163,26 @@ class FeatureProcessor:
             }
             features_df = pd.DataFrame(features, index=data.index)
             
-            # Clean up NaN values
+            # Store ATR in DataFrame immediately for proper alignment
+            atr_df = pd.DataFrame({'atr': atr}, index=data.index)
+            
+            # Count NaN values before dropping
+            nan_count_before = features_df.isna().sum().sum()
+            nan_rows_before = features_df.isna().any(axis=1).sum()
+            
+            # Clean up NaN values - this will primarily drop rows at the beginning 
+            # where technical indicators don't have enough data points
             features_df = features_df.dropna()
             
-            # Apply lookback and ensure alignment
-            if len(features_df) > self.lookback:
-                features_df = features_df.iloc[self.lookback:]
-                # Ensure exact index alignment between features and ATR
-                common_index = features_df.index.intersection(atr_df.index)
-                features_df = features_df.loc[common_index]
-                atr_df = atr_df.loc[common_index]
+            # Log dropped data information
+            rows_dropped = original_length - len(features_df)
+            percentage_dropped = (rows_dropped / original_length) * 100
+            print(f"Data preprocessing: Dropped {rows_dropped} rows out of {original_length} " 
+                  f"({percentage_dropped:.2f}%) due to NaN values")
+            
+            # Get the corresponding ATR values after dropping NaNs
+            common_index = features_df.index
+            atr_df = atr_df.loc[common_index]
             
             # Validation
             if len(features_df) < 100:
