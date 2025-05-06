@@ -82,14 +82,13 @@ class UnifiedEvalCallback(BaseCallback):
             env.env.current_step = start_pos
         obs, _ = env.reset(seed=eval_seed)
         done = False
-        lstm_states = None
         running_balance = env.env.initial_balance
         max_balance = running_balance
         episode_reward = 0
         
         while not done:
-            action, lstm_states = self.model.predict(
-                obs, state=lstm_states, deterministic=self.deterministic
+            action, _ = self.model.predict(
+                obs, deterministic=self.deterministic
             )
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
@@ -177,24 +176,49 @@ class UnifiedEvalCallback(BaseCallback):
         return result
     
     def _calculate_final_score(self, metrics: Dict[str, Dict[str, float]]) -> float:
-        """Calculate final score for model comparison."""
+        """Calculate final score for model comparison with enhanced criteria."""
         validation = metrics['validation']
         combined = metrics['combined']
         
+        # Reject models with negative returns
         if validation['return'] <= 0 or combined['return'] <= 0:
             return float('-inf')
             
-        # Calculate average return between validation and combined datasets
-        average_return = (validation['return'] + combined['return']) / 2
+        # Get key performance metrics
+        val_return = validation['return']
+        combined_return = combined['return']
         
-        # Add profit factor bonus if available
-        bonus = 0.0
-        if 'profit_factor' in validation.get('performance', {}):
-            pf = validation['performance']['profit_factor']
-            if pf > 1.0:  # Only reward profit factors above 1.0
-                bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
+        # 1. Validation performance weight adjustment (40% weight)
+        score = val_return * 0.4
         
-        return average_return + bonus
+        # 2. Combined dataset performance (30% weight)
+        score += combined_return * 0.3
+        
+        # 3. Add consistency score component (10% weight)
+        # Higher when validation and combined returns are close
+        consistency = metrics['scores']['consistency']
+        if consistency > 0.05:  # Ensure some minimum consistency
+            consistency_bonus = min(consistency, 0.5) * 0.2  # Cap at 10% total
+            score += consistency_bonus
+        
+        # 4. Profit factor bonus (up to 10% extra)
+        pf_bonus = 0.0
+        if validation.get('profit_factor', 0) > 1.0:
+            pf_bonus = min(validation['profit_factor'] - 1.0, 2.0) * 0.05
+        score += pf_bonus
+        
+        # 5. Risk-adjusted return component (10% weight)
+        # Calculate risk-adjusted return for validation set
+        max_dd = max(
+            validation.get('max_balance_drawdown', 0.05),
+            validation.get('max_equity_drawdown', 0.05)
+        )
+        
+        # Avoid division by zero by adding small constant
+        risk_adj_return = val_return / (max_dd + 0.05)
+        score += risk_adj_return * 0.1
+        
+        return score
 
     def _evaluate_against_previous(self) -> bool:
         """
@@ -216,8 +240,8 @@ class UnifiedEvalCallback(BaseCallback):
         
         try:
             # Load and evaluate previous best model
-            from sb3_contrib.ppo_recurrent import RecurrentPPO
-            prev_model = RecurrentPPO.load(best_model_path)
+            from stable_baselines3 import PPO
+            prev_model = PPO.load(best_model_path, device='cpu')
             
             # Store current model temporarily
             temp_model = self.model
@@ -239,7 +263,11 @@ class UnifiedEvalCallback(BaseCallback):
             return current_score > prev_score
             
         except Exception as e:
-            self.logger.warning(f"Error comparing with best model: {e}")
+            # Use error method if warning is not available
+            if hasattr(self.logger, 'warning'):
+                self.logger.warning(f"Error comparing with best model: {e}")
+            else:
+                self.logger.error(f"Error comparing with best model: {e}")
             return True  # Default to accepting current model on error
         
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
@@ -492,14 +520,30 @@ class UnifiedEvalCallback(BaseCallback):
                 # Separator
                 print(f"\n  {'-'*50}")
                 
-                # Selection metrics
-                average_return = (metrics['validation']['return'] + metrics['combined']['return']) / 2
-                profit_factor_bonus = min(max(0, metrics['validation']['profit_factor'] - 1.0), 2.0) * 0.1
-                print(f"  Selection (Score: {self.best_score:.3f}):")
-                print(f"    Averaged Return: {average_return*100:.2f}%")
-                print(f"      - Validation: {metrics['validation']['return']*100:.2f}%")
-                print(f"      - Combined: {metrics['combined']['return']*100:.2f}%")
-                print(f"    Profit Factor Bonus: +{profit_factor_bonus:.3f}")
+                # New scoring system metrics
+                print(f"  Enhanced Selection Metrics (Score: {self.best_score:.3f}):")
+                
+                # Validation vs Combined weights
+                print(f"    Validation Performance (40%): {metrics['validation']['return']*100:.2f}%")
+                print(f"    Combined Performance (30%): {metrics['combined']['return']*100:.2f}%")
+                
+                # Consistency score
+                consistency = metrics['scores']['consistency']
+                print(f"    Consistency Score: {consistency:.3f} (bonus: +{min(consistency, 0.5) * 0.2:.3f})")
+                
+                # Risk-adjusted returns
+                max_dd = max(
+                    metrics['validation'].get('max_balance_drawdown', 0.05),
+                    metrics['validation'].get('max_equity_drawdown', 0.05)
+                )
+                risk_adj_return = metrics['validation']['return'] / (max_dd + 0.05)
+                print(f"    Risk-Adjusted Return: {risk_adj_return:.2f}")
+                
+                # Profit factor bonus
+                profit_factor_bonus = min(max(0, metrics['validation']['profit_factor'] - 1.0), 2.0) * 0.05
+                print(f"    Profit Factor: {metrics['validation']['profit_factor']:.2f} (bonus: +{profit_factor_bonus:.3f})")
+                
+                # Progress
                 print(f"    Progress: {self.num_timesteps/self.training_timesteps*100:.1f}%")
                 
                 # Separator

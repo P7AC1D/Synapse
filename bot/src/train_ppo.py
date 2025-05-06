@@ -6,19 +6,19 @@ import argparse
 import json
 import numpy as np
 import pandas as pd
-from sb3_contrib.ppo_recurrent import RecurrentPPO
+from stable_baselines3 import PPO
 import torch as th
 from datetime import datetime
 
 from utils.training_utils import save_training_state, load_training_state, train_walk_forward
 
 def main():
-    parser = argparse.ArgumentParser(description='Train a PPO-LSTM model for trading')    
+    parser = argparse.ArgumentParser(description='Train a PPO model for trading')    
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the input dataset CSV file')
     
-    parser.add_argument('--device', type=str, choices=['cuda', 'cpu'], default='cuda',
-                      help='Device to use for training')
+    parser.add_argument('--device', type=str, choices=['cuda', 'cpu'], default='cpu',
+                      help='Device to use for training (default: cpu)')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
     
@@ -63,6 +63,7 @@ def main():
     th.manual_seed(args.seed)
     if args.device == 'cuda':
         th.cuda.manual_seed(args.seed)
+        print("Note: Training PPO with MLP policy on GPU may be slower than CPU. Consider using CPU for this model type.")
     
     data = pd.read_csv(args.data_path)
     data.set_index('time', inplace=True)

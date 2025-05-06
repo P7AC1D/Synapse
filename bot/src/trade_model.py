@@ -6,13 +6,13 @@ from typing import Dict, List, Optional, Union, Any, Tuple
 
 import numpy as np
 import pandas as pd
-from sb3_contrib.ppo_recurrent import RecurrentPPO
+from stable_baselines3 import PPO
 
 from trading.environment import TradingEnv
 from trading.actions import Action
 
 class TradeModel:
-    """Class for loading and making predictions with a trained PPO-LSTM model."""
+    """Class for loading and making predictions with a trained PPO model."""
     
     def __init__(self, model_path: str, balance_per_lot: float = 1000.0, initial_balance: float = 10000.0,
                  point_value: float = 0.01,
@@ -47,22 +47,21 @@ class TradeModel:
             'spread'  # Price data
         ]
         
-        self.lstm_states = None  # Store LSTM states between predictions
-        
         # Load the model
         self.load_model()
         
     def load_model(self) -> bool:
-        """Load the pre-trained PPO-LSTM model.
+        """Load the pre-trained PPO model.
         
         Returns:
             bool: True if model loaded successfully, False otherwise
         """
         try:
             # Load the PPO model with saved hyperparameters
-            self.model = RecurrentPPO.load(
+            self.model = PPO.load(
                 self.model_path,
-                print_system_info=False
+                print_system_info=False,
+                device='cpu'
             )
             self.logger.info(f"Model successfully loaded from {self.model_path}")
             return True
@@ -128,70 +127,6 @@ class TradeModel:
                 return f"{base_desc} current {position_map[position_type]} position"
             return f"{base_desc} but rejected - no position exists"
             
-    def reset_states(self) -> None:
-        """Reset the LSTM states. Call this when starting a new prediction sequence."""
-        self.lstm_states = None
-        
-    def preload_states(self, data: pd.DataFrame) -> None:
-        """
-        Preload LSTM states with historical data.
-        
-        Args:
-            data: DataFrame with market data for warmup
-        """
-        if self.model is None:
-            raise ValueError("Model not loaded. Call load_model() first.")
-            
-        # Create environment for state preloading
-        env = TradingEnv(
-            data=data,
-            initial_balance=self.initial_balance,
-            balance_per_lot=self.balance_per_lot,
-            random_start=False,
-            point_value=self.point_value,
-            min_lots=self.min_lots,
-            max_lots=self.max_lots,
-            contract_size=self.contract_size
-        )
-        
-        # Get initial observation
-        obs, _ = env.reset()
-        
-        self.logger.info(f"Starting LSTM state preload with {len(data)} bars")
-        
-        # Reset LSTM states to start fresh
-        self.lstm_states = None
-        
-        # Process all historical data to build up LSTM states
-        steps_processed = 0
-        
-        # Run prediction steps to initialize states
-        while True:
-            # Make prediction using current observation and LSTM states
-            action, new_lstm_states = self.model.predict(
-                obs,
-                state=self.lstm_states,
-                deterministic=True
-            )
-            
-            # Update LSTM states
-            self.lstm_states = new_lstm_states
-            
-            # Step the environment
-            obs, _, done, truncated, _ = env.step(int(action) % 4)  # Use actual model action
-            
-            steps_processed += 1
-            
-            # Log progress periodically
-            if steps_processed % 100 == 0:
-                self.logger.debug(f"Processed {steps_processed}/{len(data)} bars for LSTM preload")
-                
-            # Break if done
-            if done or truncated:
-                break
-                
-        self.logger.info(f"LSTM states preloaded with {steps_processed} historical bars")
-        
     def _calculate_backtest_metrics(self, env: TradingEnv, total_steps: int, total_reward: float) -> Dict[str, Any]:
         """
         Calculate metrics from backtest results.
@@ -448,8 +383,7 @@ class TradeModel:
             slippage_range=slippage_range
         )
         
-        # Initialize LSTM states
-        lstm_states = None
+        # Initialize environment
         obs, _ = env.reset()
         
         done = False
@@ -457,10 +391,9 @@ class TradeModel:
         total_reward = 0.0
         
         while not done:
-            # Make prediction
-            raw_action, lstm_states = self.model.predict(
+            # Make prediction (without LSTM states)
+            raw_action, _ = self.model.predict(
                 obs,
-                state=lstm_states,
                 deterministic=True
             )
             
@@ -485,3 +418,79 @@ class TradeModel:
         
         # Calculate metrics with additional error handling
         return self._calculate_backtest_metrics(env, step, total_reward)
+
+    def predict_single(self, data: pd.DataFrame, env: Optional[TradingEnv] = None) -> Dict[str, Any]:
+        """
+        Make a single prediction at the last data point.
+        
+        Args:
+            data: DataFrame with market data
+            env: Optional existing TradingEnv instance with position info
+            
+        Returns:
+            Dictionary with prediction details
+        """
+        if self.model is None:
+            raise ValueError("Model not loaded. Call load_model() first.")
+            
+        # Prepare data
+        data = self.prepare_data(data)
+        
+        # Use existing environment if provided, otherwise create a new one
+        if env is None:
+            env = TradingEnv(
+                data=data,
+                initial_balance=self.initial_balance,
+                balance_per_lot=self.balance_per_lot,
+                random_start=False,
+                predict_mode=True,
+                point_value=self.point_value,
+                min_lots=self.min_lots,
+                max_lots=self.max_lots,
+                contract_size=self.contract_size
+            )
+            # Initialize environment
+            obs, _ = env.reset()
+            
+        # Get observation (will include position info if env has it)
+        obs = env.get_observation()
+        
+        # Make prediction
+        action, _ = self.model.predict(
+            obs, 
+            deterministic=True
+        )
+        
+        # Convert to discrete action
+        if isinstance(action, np.ndarray):
+            action_value = int(action.item())
+        else:
+            action_value = int(action)
+        discrete_action = action_value % 4
+            
+        # Get current position type for context
+        current_position_type = 0
+        if env.current_position:
+            current_position_type = env.current_position['direction']
+            
+        # Generate human readable description
+        description = self._generate_prediction_description(discrete_action, current_position_type)
+        
+        # Action mask (whether action is valid)
+        valid_action = True
+        
+        # Check if action is valid (can't open a position if one exists, can't close without a position)
+        if (current_position_type != 0 and discrete_action in [1, 2]) or (current_position_type == 0 and discrete_action == 3):
+            valid_action = False
+            
+        # Return prediction details
+        prediction = {
+            'action': discrete_action,
+            'action_raw': action_value,
+            'description': description,
+            'valid_action': valid_action,
+            'position_type': current_position_type,
+            'timestamp': data.index[-1] if isinstance(data.index, pd.DatetimeIndex) else None
+        }
+            
+        return prediction

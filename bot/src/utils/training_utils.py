@@ -1,7 +1,7 @@
 """
-Training utilities for PPO-LSTM model with walk-forward optimization.
+Training utilities for PPO model with walk-forward optimization.
 
-This module provides functions and configurations for training a PPO-LSTM model
+This module provides functions and configurations for training a PPO model
 using walk-forward optimization. It includes:
 - Model architecture and hyperparameter configurations
 - Training state management
@@ -9,7 +9,7 @@ using walk-forward optimization. It includes:
 - Walk-forward training loop implementation
 
 The implementation is optimized for sparse reward scenarios in financial trading,
-with careful management of temporal dependencies and exploration strategies.
+with careful management of exploration strategies.
 """
 import os
 import json
@@ -17,28 +17,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Tuple, Dict, Any, List
 import time
-"""
-Training utilities for PPO-LSTM model with walk-forward optimization.
-
-This module provides functions and configurations for training a PPO-LSTM model
-using walk-forward optimization. It includes:
-- Model architecture and hyperparameter configurations
-- Training state management
-- Model evaluation and comparison functions
-- Walk-forward training loop implementation
-
-The implementation is optimized for sparse reward scenarios in financial trading,
-with careful management of temporal dependencies and exploration strategies.
-"""
-import os
-import json
-import pandas as pd
 import threading
 from utils.progress import show_progress_continuous, stop_progress_indicator
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.utils import get_linear_fn
-from sb3_contrib.ppo_recurrent import RecurrentPPO
+from stable_baselines3 import PPO
 from trading.environment import TradingEnv
 import torch as th
 
@@ -48,35 +32,31 @@ from callbacks.eval_callback import UnifiedEvalCallback
 # Model architecture configuration
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
-    "lstm_hidden_size": 256,          # Larger LSTM for more temporal context
-    "n_lstm_layers": 2,               # Keep 2 layers
-    "shared_lstm": False,             # Separate LSTM architectures
-    "enable_critic_lstm": True,       # Enable LSTM for value estimation
     "net_arch": {
-        "pi": [128, 64],              # Deeper policy network
-        "vf": [128, 64]               # Matching value network
+        "pi": [256, 128, 64],    # Deeper policy network to compensate for removal of LSTM
+        "vf": [256, 128, 64]     # Matching value network
     },
-    "activation_fn": th.nn.Mish,      # Better activation function
+    "activation_fn": th.nn.Mish,  # Better activation function
     "optimizer_kwargs": {
         "eps": 1e-5,
-        "weight_decay": 1e-6          # Slightly reduced regularization
+        "weight_decay": 1e-6      # Slightly reduced regularization
     }
 }
 
 # Training hyperparameters
 MODEL_KWARGS = {
-    "learning_rate": 5e-4,           # Lower learning rate for sparse rewards
-    "n_steps": 512,                  # Longer sequences for better reward propagation
-    "batch_size": 256,               # Larger batch for stable sparse reward learning
-    "gamma": 0.99,                   # High gamma for sparse rewards
-    "gae_lambda": 0.98,              # Higher lambda for better advantage estimation
-    "clip_range": 0.1,               # Smaller clipping for stability
-    "clip_range_vf": 0.1,            # Match policy clipping
-    "ent_coef": 0.05,               # Lower entropy to focus on sparse signals
-    "vf_coef": 1.0,                 # Higher value importance for sparse rewards
-    "max_grad_norm": 0.5,           # Conservative gradient clipping
-    "n_epochs": 12,                 # More epochs for thorough learning
-    "use_sde": False,               # No stochastic dynamics
+    "learning_rate": 5e-4,        # Lower learning rate for sparse rewards
+    "n_steps": 2048,              # Increased from 512 to capture more temporal patterns without LSTM
+    "batch_size": 256,            # Larger batch for stable sparse reward learning
+    "gamma": 0.99,                # High gamma for sparse rewards
+    "gae_lambda": 0.98,           # Higher lambda for better advantage estimation
+    "clip_range": 0.1,            # Smaller clipping for stability
+    "clip_range_vf": 0.1,         # Match policy clipping
+    "ent_coef": 0.05,             # Lower entropy to focus on sparse signals
+    "vf_coef": 1.0,               # Higher value importance for sparse rewards
+    "max_grad_norm": 0.5,         # Conservative gradient clipping
+    "n_epochs": 12,               # More epochs for thorough learning
+    "use_sde": False,             # No stochastic dynamics
 }
 
 def format_time_remaining(seconds: float) -> str:
@@ -159,8 +139,8 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         return None
         
     try:
-        from sb3_contrib.ppo_recurrent import RecurrentPPO
-        model = RecurrentPPO.load(model_path)
+        from stable_baselines3 import PPO
+        model = PPO.load(model_path, device=args.device)
         
         # Create evaluation environment
         env = TradingEnv(
@@ -186,12 +166,10 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             # Run evaluation
             obs, _ = env.reset()
             done = False
-            lstm_states = None
             
             while not done:
-                action, lstm_states = model.predict(
+                action, _ = model.predict(
                     obs,
-                    state=lstm_states,
                     deterministic=True
                 )
                 obs, reward, terminated, truncated, info = env.step(action)
@@ -203,30 +181,40 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             # Always stop the progress indicator
             stop_progress_indicator()
         
-        # Calculate score using same weights as evaluation callback
+        # Calculate score using enhanced scoring system
         score = 0.0
         
-        # Return component (60% weight)
+        # Get key performance metrics
         returns = performance['return_pct'] / 100
-        score += returns * 0.6
-        
-        # Drawdown penalty (30% weight)
         max_dd = max(performance['max_drawdown_pct'], performance['max_equity_drawdown_pct']) / 100
-        drawdown_penalty = max(0, 1 - max_dd * 2)
-        score += drawdown_penalty * 0.3
+        profit_factor = performance['profit_factor']
+        win_rate = performance['win_rate'] / 100
         
-        # Profit factor bonus (up to 10% extra)
+        # 1. Risk-adjusted return component (40% weight)
+        # Add small constant to avoid division by zero
+        risk_adj_return = returns / (max_dd + 0.05)  
+        score += risk_adj_return * 0.4
+        
+        # 2. Raw returns component (30% weight)
+        score += returns * 0.3
+        
+        # 3. Profit factor bonus (up to 20% extra)
         pf_bonus = 0.0
-        if performance['profit_factor'] > 1.0:
-            pf_bonus = min(performance['profit_factor'] - 1.0, 2.0) * 0.05
+        if profit_factor > 1.0:
+            pf_bonus = min(profit_factor - 1.0, 2.0) * 0.1
         score += pf_bonus
+        
+        # 4. Win rate component (10% weight)
+        win_rate_score = win_rate * 0.1
+        score += win_rate_score
         
         return {
             'score': score,
             'returns': returns,
+            'risk_adj_return': risk_adj_return,
             'drawdown': max_dd,
-            'profit_factor': performance['profit_factor'],
-            'win_rate': performance['win_rate'],
+            'profit_factor': profit_factor,
+            'win_rate': win_rate,
             'total_trades': performance['total_trades'],
             'metrics': performance
         }
@@ -271,6 +259,7 @@ def compare_models_on_full_dataset(current_model_path: str, previous_model_path:
     print(f"Current Model:")
     print(f"  Score: {current_metrics['score']:.4f}")
     print(f"  Return: {current_metrics['returns']*100:.2f}%")
+    print(f"  Risk-Adjusted Return: {current_metrics['risk_adj_return']:.2f}")
     print(f"  Max DD: {current_metrics['drawdown']*100:.2f}%")
     print(f"  PF: {current_metrics['profit_factor']:.2f}")
     print(f"  Win Rate: {current_metrics['win_rate']:.2f}%")
@@ -278,6 +267,7 @@ def compare_models_on_full_dataset(current_model_path: str, previous_model_path:
     print(f"\nPrevious Model:")
     print(f"  Score: {previous_metrics['score']:.4f}")
     print(f"  Return: {previous_metrics['returns']*100:.2f}%")
+    print(f"  Risk-Adjusted Return: {previous_metrics['risk_adj_return']:.2f}")
     print(f"  Max DD: {previous_metrics['drawdown']*100:.2f}%")
     print(f"  PF: {previous_metrics['profit_factor']:.2f}")
     print(f"  Win Rate: {previous_metrics['win_rate']:.2f}%")
@@ -305,7 +295,7 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     except (FileNotFoundError, json.JSONDecodeError):
         return 0, None, {}
 
-def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
+def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> PPO:
     """
     Train a model using walk-forward optimization.
     
@@ -323,7 +313,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         args: Training arguments including hyperparameters
         
     Returns:
-        RecurrentPPO: Final trained model or last checkpoint if interrupted
+        PPO: Final trained model or last checkpoint if interrupted
         
     Notes:
         - Uses 'validation_size' from args to split training/validation
@@ -346,7 +336,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
     if os.path.exists(best_model_path):
         print(f"Resuming training from step {training_start} with best model")
-        model = RecurrentPPO.load(best_model_path)
+        model = PPO.load(best_model_path, device=args.device)
     else:
         print("Starting new training")
         training_start = 0
@@ -417,8 +407,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 print("\nPerforming initial training...")
                 
                 # Initialize new model with optimized hyperparameters for trading
-                model = RecurrentPPO(
-                    "MlpLstmPolicy",
+                model = PPO(
+                    "MlpPolicy",
                     train_env,
                     policy_kwargs=POLICY_KWARGS,
                     verbose=0,
@@ -467,14 +457,14 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 if os.path.exists(curr_best_path):
                     if os.path.exists(best_model_path):
                         if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
-                            model = RecurrentPPO.load(curr_best_path)
+                            model = PPO.load(curr_best_path, device=args.device)
                             model.save(best_model_path)
                             print("\nCurrent best model outperformed previous - saved as best model")
                         else:
-                            model = RecurrentPPO.load(best_model_path)
+                            model = PPO.load(best_model_path, device=args.device)
                             print("\nKeeping previous best model")
                     else:
-                        model = RecurrentPPO.load(curr_best_path)
+                        model = PPO.load(curr_best_path, device=args.device)
                         model.save(best_model_path)
                         print("\nNo previous best model - using current best as first best model")
                         
@@ -532,14 +522,14 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             if os.path.exists(curr_best_path):
                 if os.path.exists(best_model_path):
                     if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
-                        model = RecurrentPPO.load(curr_best_path)
+                        model = PPO.load(curr_best_path, device=args.device)
                         model.save(best_model_path)
                         print("\nCurrent best model outperformed previous - saved as best model")
                     else:
-                        model = RecurrentPPO.load(best_model_path)
+                        model = PPO.load(best_model_path, device=args.device)
                         print("\nKeeping previous best model")
                 else:
-                    model = RecurrentPPO.load(curr_best_path)
+                    model = PPO.load(curr_best_path, device=args.device)
                     model.save(best_model_path)
                     print("\nNo previous best model - using current best as first best model")
                     
@@ -551,7 +541,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             else:
                 print("\nNo curr_best model found - reloading best model for next iteration")
                 if os.path.exists(best_model_path):
-                    model = RecurrentPPO.load(best_model_path)
+                    model = PPO.load(best_model_path, device=args.device)
                     print("Loaded best model from previous iterations")
                 else:
                     print("No best model found - continuing with current model")
@@ -572,6 +562,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     # Load best model for return
     best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
     if os.path.exists(best_model_path):
-        model = RecurrentPPO.load(best_model_path)
+        model = PPO.load(best_model_path, device=args.device)
 
     return model

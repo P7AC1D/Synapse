@@ -41,6 +41,10 @@ class MT5Connector:
         """Initialize MT5 connector."""
         self.connected = False
         self.logger = logging.getLogger(__name__)
+        
+    def is_connected(self) -> bool:
+        """Check if connected to MT5 platform."""
+        return self.connected
 
     def connect(self) -> bool:
         """Connect to MT5 platform."""

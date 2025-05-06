@@ -480,3 +480,51 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+def test_mt5_connector_interface(self):
+        """Test loading model from disk and running predictions on example data."""
+        # Only test basic functionality - verify model loads
+        self.logger.info("Testing model loading...")
+        self.model = TradeModel(self.model_path, balance_per_lot=self.balance_per_lot)
+        
+        self.assertTrue(self.model.model is not None, "Model should be loaded")
+        
+        # Run prediction on sample data
+        self.logger.info("Testing prediction on sample data...")
+        result = self.model.predict_single(self.test_data)
+        
+        # Verify basic prediction shape/structure
+        self.assertIsInstance(result, dict, "Prediction result should be a dictionary")
+        self.assertIn('action', result, "Prediction should contain action")
+        self.assertIn('description', result, "Prediction should contain description")
+        
+        # Test basic consistency with direct model prediction
+        self.logger.info("Testing prediction consistency with direct model...")
+        # Get observation from environment
+        env = TradingEnv(
+            data=self.test_data,
+            initial_balance=10000.0,
+            balance_per_lot=self.balance_per_lot
+        )
+        obs, _ = env.reset()
+        
+        # Direct model prediction
+        action, _ = self.model.model.predict(obs, deterministic=True)
+        
+        # Check if results are consistent
+        if isinstance(action, np.ndarray):
+            action_value = int(action.item())
+        else:
+            action_value = int(action)
+        direct_action = action_value % 4
+        
+        # Assert prediction consistency 
+        self.assertEqual(direct_action, result['action'], 
+                         "Direct prediction and predict_single should match")
+                         
+        # Get description for verification
+        position_type = 0  # Assume no position
+        description = self.model._generate_prediction_description(direct_action, position_type)
+        
+        self.logger.info(f"Prediction action: {direct_action}, Description: {description}")
+        self.logger.info(f"Test passed")

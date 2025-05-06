@@ -145,7 +145,26 @@ class TradingBot:
             if not self.mt5.connect():
                 self.logger.error("Failed to connect to MT5")
                 return False
-                
+            
+            # Verify MT5 connection before proceeding
+            if not self.mt5.is_connected():
+                self.logger.error("MT5 connection verification failed")
+                return False
+
+            # Initialize data fetcher with connection verification
+            try:
+                self.data_fetcher = DataFetcher(
+                    self.mt5, self.symbol, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH + 1
+                )
+                # Verify data fetcher by attempting to fetch one bar
+                test_data = self.data_fetcher.fetch_current_bar(include_history=False)
+                if test_data is None:
+                    self.logger.error("Failed to verify DataFetcher functionality")
+                    return False
+            except Exception as e:
+                self.logger.error(f"Failed to initialize DataFetcher: {e}")
+                return False
+            
             # Get symbol parameters from connector
             try:
                 contract_size, min_lots, max_lots, volume_step, point_value, digits = self.mt5.get_symbol_info(self.symbol)
@@ -187,21 +206,13 @@ class TradingBot:
             
             # Get initial data for warmup
             initial_data = self.data_fetcher.fetch_data()
-            if initial_data is None or len(initial_data) < self.model.initial_warmup:
-                self.logger.error(f"Failed to fetch enough initial data (need {self.model.initial_warmup} bars)")
+            if initial_data is None or len(initial_data) < 100:  # Just need enough data to start
+                self.logger.error(f"Failed to fetch enough initial data (need at least 100 bars)")
                 return False
                 
             # Initialize full historical data with all available data (matching backtest approach)
             self.full_historical_data = initial_data.copy()
             self.logger.info(f"Initialized full historical data with {len(self.full_historical_data)} bars")
-            
-            # Preload LSTM states using sequential processing through full historical data
-            try:
-                # Use the improved preload_states method directly
-                self.model.preload_states(self.full_historical_data.copy())
-            except Exception as e:
-                self.logger.error(f"Failed to preload LSTM states: {e}")
-                return False
 
             # Get initial bar data
             current_bar = self.data_fetcher.fetch_current_bar()
@@ -311,66 +322,24 @@ class TradingBot:
                 self.logger.warning(f"Failed to get USD/ZAR rate, using 19.0: {str(e)}")
                 usd_zar_rate = 19.0
 
-            # Update position info for prediction
-            if self.current_position:
-                try:
-                    # Try to parse entry_time - handle different possible formats
-                    entry_time_str = self.current_position["entry_time"]
-                    self.logger.debug(f"Original entry_time value: {entry_time_str}")
-                    
-                    # Handle numeric timestamp (seconds since epoch)
-                    if isinstance(entry_time_str, (int, float)) or (isinstance(entry_time_str, str) and entry_time_str.isdigit()):
-                        try:
-                            # Convert to integer if it's a string containing digits
-                            timestamp = int(float(entry_time_str))
-                            # Check if this is a large timestamp in seconds or milliseconds
-                            if timestamp > 1000000000000:  # If in milliseconds
-                                timestamp = timestamp / 1000
-                            entry_time = pd.to_datetime(timestamp, unit='s')
-                            self.logger.debug(f"Converted timestamp {timestamp} to datetime: {entry_time}")
-                        except (ValueError, OverflowError) as e:
-                            self.logger.warning(f"Failed to convert timestamp {entry_time_str} to datetime: {e}")
-                            # Set a default entry time at the start of our data
-                            entry_time = self.full_historical_data.index[0]
-                    else:
-                        # Try to parse as ISO format string
-                        try:
-                            entry_time = pd.to_datetime(entry_time_str)
-                        except (ValueError, TypeError) as e:
-                            self.logger.warning(f"Failed to parse entry_time string: {e}")
-                            # Set a default entry time at the start of our data
-                            entry_time = self.full_historical_data.index[0]
-                    
-                    # Find the index position of entry time in our full dataset
-                    entry_indices = np.where(self.full_historical_data.index >= entry_time)[0]
-                    if len(entry_indices) > 0:
-                        self.current_position["entry_step"] = entry_indices[0]
-                    else:
-                        # If we can't find it, set to beginning of current data
-                        self.current_position["entry_step"] = 0
-                        
-                except Exception as e:
-                    self.logger.warning(f"Error processing entry_time, using default: {e}")
-                    self.current_position["entry_step"] = 0
-
             # Update model's balance before prediction
             current_balance = self.mt5.get_account_balance()
-            self.logger.debug(f"Updaing model balance: {self.model.initial_balance} -> {current_balance}")
+            self.logger.debug(f"Updating model balance: {self.model.initial_balance} -> {current_balance}")
             self.model.initial_balance = current_balance
             
-            # Work with the complete dataset
+            # Work with the complete dataset for prediction
             data_for_prediction = self.full_historical_data.copy()
             
             # Log historical data size being used for prediction
-            self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction (backtest-style)")
-            
-            # Create environment using full historical data to match backtest approach
+            self.logger.info(f"Using {len(data_for_prediction)} historical bars for prediction")
+
+            # Create a single trading environment that will be used for both prediction and feature extraction
             env = TradingEnv(
                 data=data_for_prediction,
                 initial_balance=self.model.initial_balance,
                 balance_per_lot=self.model.balance_per_lot,
                 random_start=False,
-                predict_mode=True,  # We're in live trading mode
+                predict_mode=True,  # Set to True to always use most recent data
                 point_value=self.model.point_value,
                 min_lots=self.model.min_lots,
                 max_lots=self.model.max_lots,
@@ -380,86 +349,81 @@ class TradingBot:
             
             # Reset environment to initialize
             obs, _ = env.reset()
-            
-            # Set position state and update metrics if needed            
-            position_type = 0
+
+            # Copy current position to environment
             if self.current_position:
-                unrealized_pnl = self.current_position.get('profit', 0.0)
-                position_type = self.current_position.get('direction', 0)
-                
-                # Update environment position state
                 env.current_position = self.current_position.copy()
-                env.metrics.update_unrealized_pnl(unrealized_pnl)
             
-            # Position environment at the last step 
-            env.current_step = env.data_length - 1
-            
-            # Get observation with updated position metrics
+            # Get observation with updated position metrics - predict_mode=True automatically uses the last data point
             obs = env.get_observation()
             
-            # Log raw feature values for debugging
-            rates_data = data_for_prediction.copy()
-            feature_processor = env.feature_processor
-            atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
-                rates_data['high'].values,
-                rates_data['low'].values,
-                rates_data['close'].values
-            )
+            # Use the model's predict method directly with the observation from our environment
+            action, _ = self.model.model.predict(obs, deterministic=True)
             
-            # Log raw feature values for the last bar
-            self.logger.debug("\nRaw feature values (last bar):")
-            if len(atr) > 0:
-                self.logger.debug(f"ATR: {atr[-1]:.6f}")
-            if len(rsi) > 0:
-                self.logger.debug(f"RSI: {rsi[-1]:.6f}")
-            if len(upper_band) > 0:
-                self.logger.debug(f"BB Upper: {upper_band[-1]:.6f}")
-            if len(lower_band) > 0:
-                self.logger.debug(f"BB Lower: {lower_band[-1]:.6f}")
-            if len(trend_strength) > 0:
-                self.logger.debug(f"Trend Strength: {trend_strength[-1]:.6f}")
+            # Convert to discrete action
+            if isinstance(action, np.ndarray):
+                action_value = int(action.item())
+            else:
+                action_value = int(action)
+            discrete_action = action_value % 4
             
-            # Create normalized feature dictionary for tracking
-            feature_dict = {}
-            if obs is not None and isinstance(obs, np.ndarray):
-                feature_names = env.feature_processor.get_feature_names()
+            # Get current position type for context
+            current_position_type = 0
+            if env.current_position:
+                current_position_type = env.current_position['direction']
                 
-                self.logger.debug("\nNormalized features for prediction:")
-                for i, feat in enumerate(obs):
-                    feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
-                    feature_dict[feature_name] = float(feat)  # Convert numpy values to Python float
-                    self.logger.debug(f"  {feature_name}: {feat:.6f}")
+            # Generate human readable description
+            description = self.model._generate_prediction_description(discrete_action, current_position_type)
             
-            # Make prediction using the same approach as backtest
-            action, new_lstm_states = self.model.model.predict(
-                obs,
-                state=self.model.lstm_states,
-                deterministic=True
-            )
-            self.model.lstm_states = new_lstm_states  # Update LSTM states
-            
-            # Convert action to discrete value
-            try:
-                if isinstance(action, np.ndarray):
-                    action_value = int(action.item())
-                else:
-                    action_value = int(action)
-                discrete_action = action_value % 4
-                
-                # Force HOLD if position exists and trying to open new one
-                if self.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
-                    discrete_action = 0  # HOLD
-            except (ValueError, TypeError):
-                discrete_action = 0
-            
-            # Generate prediction description
-            description = self.model._generate_prediction_description(discrete_action, position_type)
-            
-            # Create prediction dict
+            # Create the prediction dictionary similar to what predict_single would return
             prediction = {
                 'action': discrete_action,
-                'description': description
+                'action_raw': action_value,
+                'description': description,
+                'valid_action': True,  # We'll handle validity check in trade execution
+                'position_type': current_position_type,
+                'timestamp': data_for_prediction.index[-1]
             }
+            
+            # Extract current price for trade logging
+            current_price = data_for_prediction['close'].iloc[-1]
+            
+            # Create normalized feature dictionary for trade tracking using our environment's observation
+            features_for_tracking = {}
+            try:
+                # Create feature dictionary if observation is available
+                if obs is not None and isinstance(obs, np.ndarray):
+                    feature_names = env.feature_processor.get_feature_names()
+                    
+                    self.logger.debug("\nNormalized features for prediction:")
+                    for i, feat in enumerate(obs):
+                        feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
+                        features_for_tracking[feature_name] = float(feat)  # Convert numpy values to Python float
+                        self.logger.debug(f"  {feature_name}: {feat:.6f}")
+                        
+                # Also log raw feature values for debugging
+                feature_processor = env.feature_processor
+                atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
+                    data_for_prediction['high'].values,
+                    data_for_prediction['low'].values,
+                    data_for_prediction['close'].values
+                )
+                
+                # Log raw feature values for the last bar
+                self.logger.debug("\nRaw feature values (last bar):")
+                if len(atr) > 0:
+                    self.logger.debug(f"ATR: {atr[-1]:.6f}")
+                if len(rsi) > 0:
+                    self.logger.debug(f"RSI: {rsi[-1]:.6f}")
+                if len(upper_band) > 0:
+                    self.logger.debug(f"BB Upper: {upper_band[-1]:.6f}")
+                if len(lower_band) > 0:
+                    self.logger.debug(f"BB Lower: {lower_band[-1]:.6f}")
+                if len(trend_strength) > 0:
+                    self.logger.debug(f"Trend Strength: {trend_strength[-1]:.6f}")
+                    
+            except Exception as e:
+                self.logger.warning(f"Error extracting features for tracking: {e}")
             
             # Convert prediction to trade action
             action_map = {0: 'HOLD', 1: 'BUY', 2: 'SELL', 3: 'CLOSE'}
@@ -476,17 +440,15 @@ class TradingBot:
             # Update position tracking and log trade events
             if success:
                 if prediction['action'] == 3:  # Close
-                    current_price = data_for_prediction['close'].iloc[-1]
                     if self.current_position:
                         self.trade_tracker.log_trade_exit(
                             'model_close',
                             current_price,
                             self.current_position.get('profit', 0.0),
-                            feature_dict
+                            features_for_tracking
                         )
                     self.current_position = None
                 elif prediction['action'] in [1, 2] and not self.current_position:  # New position
-                    current_price = data_for_prediction['close'].iloc[-1]
                     self.current_position = {
                         "direction": 1 if prediction['action'] == 1 else -1,
                         "entry_price": current_price,
@@ -497,7 +459,7 @@ class TradingBot:
                     # Log trade entry with features
                     self.trade_tracker.log_trade_entry(
                         'buy' if prediction['action'] == 1 else 'sell',
-                        feature_dict,
+                        features_for_tracking,
                         current_price,
                         self.trade_executor.last_lot_size
                     )
@@ -505,8 +467,8 @@ class TradingBot:
                 # Log trade update if position exists
                 if self.current_position:
                     self.trade_tracker.log_trade_update(
-                        feature_dict,
-                        data_for_prediction['close'].iloc[-1],
+                        features_for_tracking,
+                        current_price,
                         self.current_position.get('profit', 0.0)
                     )
             
@@ -530,28 +492,38 @@ class TradingBot:
         if self.mt5:
             self.mt5.disconnect()
         
-        # Reset model states
-        if self.model:
-            self.model.reset_states()
-        
         self.logger.info("Cleanup complete")
         
     def run(self) -> None:
-        """Run the trading bot main loop."""
-        if not self.initialize():
-            self.logger.error("Initialization failed")
-            return
-            
-        self.setup_signal_handlers()
-        self.logger.info("Starting trading bot main loop...")
+        """Start the bot's main loop."""
+        self.logger.info("Trading Bot starting")
         
+        # Initialize components first
+        if not self.initialize():
+            self.logger.error("Failed to initialize bot components. Shutting down.")
+            return
+        
+        # Main loop - run until stopped
         try:
+            self.running = True
+            
+            # Initialize the update timer for tracking time between updates
+            last_update_time = time.time()
+            
             while self.running:
-                self.process_trading_cycle()
-                time.sleep(1)  # Sleep to avoid excessive CPU usage
-                
-        except Exception as e:
-            self.logger.exception(f"Unexpected error in main loop: {e}")
+                try:
+                    # Execute trading cycle
+                    self.process_trading_cycle()
+                    
+                    # Sleep to avoid excessive CPU usage
+                    time.sleep(1)
+                        
+                except Exception as e:
+                    self.logger.error(f"Error in main loop: {e}")
+                    time.sleep(1)  # Add delay before retry to avoid tight loops on persistent errors
+            
+        except KeyboardInterrupt:
+            self.logger.info("Keyboard interrupt received, shutting down")
         finally:
             self.cleanup()
 
