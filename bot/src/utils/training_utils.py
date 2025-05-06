@@ -261,16 +261,16 @@ def compare_models_on_full_dataset(current_model_path: str, previous_model_path:
     print(f"  Return: {current_metrics['returns']*100:.2f}%")
     print(f"  Risk-Adjusted Return: {current_metrics['risk_adj_return']:.2f}")
     print(f"  Max DD: {current_metrics['drawdown']*100:.2f}%")
-    print(f"  PF: {current_metrics['profit_factor']:.2f}")
-    print(f"  Win Rate: {current_metrics['win_rate']:.2f}%")
+    print(f"  PF: {current_metrics['profit_factor']*100:.2f}")
+    print(f"  Win Rate: {current_metrics['win_rate']*100:.2f}%")
     
     print(f"\nPrevious Model:")
     print(f"  Score: {previous_metrics['score']:.4f}")
     print(f"  Return: {previous_metrics['returns']*100:.2f}%")
     print(f"  Risk-Adjusted Return: {previous_metrics['risk_adj_return']:.2f}")
     print(f"  Max DD: {previous_metrics['drawdown']*100:.2f}%")
-    print(f"  PF: {previous_metrics['profit_factor']:.2f}")
-    print(f"  Win Rate: {previous_metrics['win_rate']:.2f}%")
+    print(f"  PF: {previous_metrics['profit_factor']*100:.2f}")
+    print(f"  Win Rate: {previous_metrics['win_rate']*100:.2f}%")
     
     # Compare scores
     return current_metrics['score'] > previous_metrics['score']
