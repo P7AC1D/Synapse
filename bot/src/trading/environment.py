@@ -110,8 +110,7 @@ class TradingEnv(gym.Env, EzPickle):
             'close': data.loc[aligned_index, 'close'].values,
             'high': data.loc[aligned_index, 'high'].values,
             'low': data.loc[aligned_index, 'low'].values,
-            'spread': data.loc[aligned_index, 'spread'].values,
-            'atr': self.atr_values
+            'spread': data.loc[aligned_index, 'spread'].values
         }
         
         # State variables
@@ -135,7 +134,6 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Get position info before action
         position_type = self.current_position["direction"] if self.current_position else 0
-        current_atr = self.prices['atr'][self.current_step]
         
         # Detect invalid actions
         invalid_action = False
@@ -199,7 +197,6 @@ class TradingEnv(gym.Env, EzPickle):
             action=action,
             position_type=position_type,
             pnl=pnl if action == Action.CLOSE else unrealized_pnl,
-            atr=current_atr,
             current_hold=self.current_hold_time,
             optimal_hold=None,
             invalid_action=invalid_action

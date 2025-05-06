@@ -48,7 +48,6 @@ class ActionHandler:
         """
             
         current_price = self.env.prices['close'][self.env.current_step]
-        current_atr = self.env.prices['atr'][self.env.current_step]
         
         # Apply slippage if configured
         slippage = 0.0
@@ -85,7 +84,6 @@ class ActionHandler:
             "lot_size": lot_size,
             "entry_time": str(self.env.original_index[self.env.current_step]),
             "entry_step": self.env.current_step,
-            "entry_atr": current_atr,
             "current_profit_points": 0.0
         }
         
