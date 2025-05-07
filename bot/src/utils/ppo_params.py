@@ -40,8 +40,7 @@ def get_ppo_params(args):
         "ent_coef": 0.01,           # Entropy coefficient for exploration (lower for trading)
         "vf_coef": 0.5,             # Value function loss coefficient
         "max_grad_norm": 0.5,       # Gradient clipping
-        "device": args.device,
-        "verbose": 1
+        "verbose": 0
     }
     
     # Trading-specific adjustments for stochastic financial markets
