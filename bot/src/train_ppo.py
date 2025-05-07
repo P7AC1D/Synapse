@@ -24,12 +24,12 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=5000,
-                      help='Initial training window size in bars')
+    parser.add_argument('--initial_window', type=int, default=10080,
+                      help='Initial training window size in bars (default: 10080')
     parser.add_argument('--validation_size', type=float, default=0.2,
                       help='Fraction of window to use for validation (default: 0.2)')
-    parser.add_argument('--step_size', type=int, default=1000,
-                      help='Walk-forward step size in bars')
+    parser.add_argument('--step_size', type=int, default=2016,
+                      help='Walk-forward step size in bars (default: 2016')
     parser.add_argument('--balance_per_lot', type=float, default=500.0,
                       help='Account balance required per 0.01 lot')
     parser.add_argument('--random_start', action='store_true',
@@ -74,19 +74,20 @@ def main():
     
     # Calculate window sizes - using bars directly
     initial_window = args.initial_window
-    
-    # Calculate step size as 10% of window size if using default
     step_size = args.step_size
-    if step_size == 672:  # If using default value
-        step_size = max(int(initial_window * 0.1), step_size)
     
     # Display window configuration with approximate days
-    bars_per_day = 24 * 4  # For displaying approximate days
+    bars_per_day = 96  # 96 bars/day for 15min data (24 hours * 4 bars per hour)
     val_size = int(initial_window * args.validation_size)
     train_size = initial_window - val_size
     
+    # Calculate window coverage of total dataset
+    total_bars = len(data)
+    window_percent = (initial_window / total_bars) * 100
+    
     print(f"\nWindow Configuration:")
-    print(f"Initial Window: {initial_window} bars (~{initial_window/bars_per_day:.1f} days)")
+    print(f"Dataset size: {total_bars} bars")
+    print(f"Initial Window: {initial_window} bars (~{initial_window/bars_per_day:.1f} days, {window_percent:.1f}% of dataset)")
     print(f"Step Size: {step_size} bars (~{step_size/bars_per_day:.1f} days)")
     print(f"Training Window: {train_size} bars (~{train_size/bars_per_day:.1f} days)")
     print(f"Validation Window: {val_size} bars (~{val_size/bars_per_day:.1f} days)")
