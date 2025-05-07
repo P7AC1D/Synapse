@@ -1,6 +1,7 @@
 """PPO hyperparameters for trading model."""
 import torch as th
-from stable_baselines3.common.policies import MlpPolicy
+from stable_baselines3.common.policies import ActorCriticPolicy
+from stable_baselines3.ppo import MlpPolicy
 from stable_baselines3.common.callbacks import CallbackList
 
 def get_ppo_params(args):
@@ -25,7 +26,7 @@ def get_ppo_params(args):
     
     # Core PPO parameters - baseline configuration
     ppo_params = {
-        "policy": MlpPolicy,
+        "policy": "MlpPolicy",  # Use string instead of class reference for compatibility
         "policy_kwargs": policy_kwargs,
         "learning_rate": args.learning_rate,  # Scheduled learning rate decay handled in training loop
         "n_steps": 1024,            # Update after collecting 1024 steps
