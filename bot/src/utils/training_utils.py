@@ -295,7 +295,7 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     except (FileNotFoundError, json.JSONDecodeError):
         return 0, None, {}
 
-def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> PPO:
+def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args, ppo_hyperparams=None) -> PPO:
     """
     Train a model using walk-forward optimization.
     
@@ -311,6 +311,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         initial_window: Size of initial training window
         step_size: Step size for moving window forward
         args: Training arguments including hyperparameters
+        ppo_hyperparams: Optional dictionary of PPO hyperparameters to override defaults
         
     Returns:
         PPO: Final trained model or last checkpoint if interrupted
@@ -349,6 +350,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     min_window_overlap = 0.5  # 50% minimum overlap between windows
     if step_size > initial_window * (1 - min_window_overlap):
         raise ValueError(f"Step size too large. Should be <= {initial_window * (1 - min_window_overlap)} for sufficient overlap")
+
+    # Use provided hyperparameters if available, otherwise use defaults
+    model_kwargs = ppo_hyperparams if ppo_hyperparams is not None else MODEL_KWARGS
 
     try:
         while training_start + initial_window <= total_periods:
@@ -406,15 +410,13 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             if model is None:
                 print("\nPerforming initial training...")
                 
-                # Initialize new model with optimized hyperparameters for trading
+                # Initialize new model with provided hyperparameters
                 model = PPO(
-                    "MlpPolicy",
-                    train_env,
-                    policy_kwargs=POLICY_KWARGS,
+                    train_env=train_env,
                     verbose=0,
                     device=args.device,
                     seed=args.seed,
-                    **MODEL_KWARGS
+                    **model_kwargs
                 )
                 
                 # Set up initial training callbacks
@@ -472,7 +474,14 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             else:
                 print(f"\nContinuing training with existing model...")
                 print(f"Training timesteps: {period_timesteps}")
-                args.learning_rate = args.learning_rate * 0.95
+                if "learning_rate" in model_kwargs:
+                    # Apply learning rate decay
+                    lr_decay = 0.95 ** iteration
+                    initial_lr = args.learning_rate
+                    current_lr = initial_lr * lr_decay
+                    model_kwargs["learning_rate"] = max(current_lr, args.final_learning_rate)
+                    print(f"Learning rate decayed to: {model_kwargs['learning_rate']:.6f}")
+                    
                 model.set_env(train_env)
                 
                 # Calculate base timesteps for this iteration
