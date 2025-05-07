@@ -41,7 +41,7 @@ def main():
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=5e-5,
                       help='Final learning rate')
-    parser.add_argument('--eval_freq', type=int, default=10000,
+    parser.add_argument('--eval_freq', type=int, default=50000,
                       help='Evaluation frequency in timesteps')
     
     # Trading environment parameters

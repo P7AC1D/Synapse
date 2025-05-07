@@ -176,10 +176,6 @@ class FeatureProcessor:
             # Keep the original ATR values (not normalized) for potential position sizing
             atr_aligned = atr_series.loc[features_df.index].values
             
-            # Validation
-            if len(features_df) < 100:
-                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")            
-            
             return features_df, atr_aligned
 
     def get_feature_names(self) -> list:

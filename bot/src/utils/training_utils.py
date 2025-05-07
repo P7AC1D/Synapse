@@ -33,20 +33,20 @@ from callbacks.eval_callback import UnifiedEvalCallback
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
     "net_arch": {
-        "pi": [256, 128, 64],    # Deeper policy network to compensate for removal of LSTM
-        "vf": [256, 128, 64]     # Matching value network
+        "pi": [256, 256],    # Deeper policy network to compensate for removal of LSTM
+        "vf": [256, 256]     # Matching value network
     },
-    "activation_fn": th.nn.Mish,  # Better activation function
+    "activation_fn": th.nn.ReLU,
     "optimizer_kwargs": {
         "eps": 1e-5,
-        "weight_decay": 1e-6      # Slightly reduced regularization
+        "weight_decay": 1e-6
     }
 }
 
 # Training hyperparameters
 MODEL_KWARGS = {
     "learning_rate": 5e-4,        # Lower learning rate for sparse rewards
-    "n_steps": 2048,              # Increased from 512 to capture more temporal patterns without LSTM
+    "n_steps": 8192,              # Increased from 512 to capture more temporal patterns without LSTM
     "batch_size": 256,            # Larger batch for stable sparse reward learning
     "gamma": 0.99,                # High gamma for sparse rewards
     "gae_lambda": 0.98,           # Higher lambda for better advantage estimation
