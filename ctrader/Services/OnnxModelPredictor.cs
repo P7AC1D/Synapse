@@ -759,119 +759,258 @@ namespace DRLTrader.Services
                     throw new InvalidOperationException("Inconsistent data lengths in market data");
                 }
                 
-                // Extract the last bar's data and create features
+                // Extract data and create features
                 var features = new List<float>();
-                
-                // Price features
                 int lastIdx = data.Close.Count - 1;
                 _logger($"Processing last bar at index {lastIdx}");
                 
-                // Safely calculate returns
-                float returns;
-                if (lastIdx > 0 && !double.IsNaN(data.Close[lastIdx]) && !double.IsNaN(data.Close[lastIdx - 1]) && 
-                    data.Close[lastIdx - 1] != 0)
-                {
-                    returns = (float)((data.Close[lastIdx] / data.Close[lastIdx - 1]) - 1.0);
-                }
-                else
-                {
-                    returns = 0f;
-                    _logger("WARNING: Could not calculate returns, using 0");
-                }
-                features.Add(returns);
-                
-                // Convert prices to float with validation
-                float close = (float)data.Close[lastIdx];
-                float open = (float)data.Open[lastIdx];
-                float high = (float)data.High[lastIdx];
-                float low = (float)data.Low[lastIdx];
-                float volume = (float)data.Volume[lastIdx];
-                
-                // Check for NaN or infinity
-                if (float.IsNaN(close) || float.IsInfinity(close) || close == 0)
-                {
-                    _logger("WARNING: Invalid close price detected, using fallback value");
-                    close = 1.0f; // Fallback value
-                }
-                
-                // Basic features - normalize by close price with safety checks
                 try
                 {
-                    // Volatility
-                    float volatility = (high - low) / close;
-                    if (float.IsNaN(volatility) || float.IsInfinity(volatility))
+                    // Convert to arrays for calculation
+                    double[] close = data.Close.Select(d => (double)d).ToArray();
+                    double[] open = data.Open.Select(d => (double)d).ToArray();
+                    double[] high = data.High.Select(d => (double)d).ToArray();
+                    double[] low = data.Low.Select(d => (double)d).ToArray();
+                    double[] volume = data.Volume.Select(d => (double)d).ToArray();
+                    
+                    // 1. Calculate returns (same as Python implementation)
+                    float returns;
+                    if (lastIdx > 0 && !double.IsNaN(close[lastIdx]) && !double.IsNaN(close[lastIdx - 1]) && 
+                        close[lastIdx - 1] != 0)
                     {
-                        volatility = 0f;
-                        _logger("WARNING: Invalid volatility calculated, using 0");
+                        returns = (float)((close[lastIdx] / close[lastIdx - 1]) - 1.0);
                     }
-                    features.Add(volatility);
-                    
-                    // Volume (normalized)
-                    float normalizedVolume = volume / (volume > 0 ? volume : 1);
-                    features.Add(normalizedVolume);
-                    
-                    // Return for current bar
-                    float barReturn = (close - open) / (open != 0 ? open : 1);
-                    if (float.IsNaN(barReturn) || float.IsInfinity(barReturn))
+                    else
                     {
-                        barReturn = 0f;
-                        _logger("WARNING: Invalid bar return calculated, using 0");
+                        returns = 0f;
                     }
-                    features.Add(barReturn);
+                    // Clip returns like Python code does
+                    returns = Math.Clamp(returns, -0.1f, 0.1f);
+                    features.Add(returns);
                     
-                    // Position in bar
-                    float positionInBar = (close - low) / ((high - low > 0) ? (high - low) : 1);
-                    if (float.IsNaN(positionInBar) || float.IsInfinity(positionInBar))
+                    // 2. Calculate RSI (14-period) - simplified implementation
+                    int rsiPeriod = 14;
+                    float rsi = 50f; // Default to neutral
+                    if (lastIdx >= rsiPeriod)
                     {
-                        positionInBar = 0.5f;
-                        _logger("WARNING: Invalid position in bar calculated, using 0.5");
+                        double[] gains = new double[rsiPeriod];
+                        double[] losses = new double[rsiPeriod];
+                        
+                        for (int i = 0; i < rsiPeriod; i++)
+                        {
+                            double change = close[lastIdx - i] - close[lastIdx - i - 1];
+                            if (change > 0)
+                                gains[i] = change;
+                            else
+                                losses[i] = -change;
+                        }
+                        
+                        double avgGain = gains.Average();
+                        double avgLoss = losses.Average();
+                        
+                        if (avgLoss != 0)
+                        {
+                            double rs = avgGain / avgLoss;
+                            rsi = (float)(100.0 - (100.0 / (1.0 + rs)));
+                        }
+                        else if (avgGain != 0)
+                        {
+                            rsi = 100f;
+                        }
                     }
-                    features.Add(positionInBar);
+                    // Normalize RSI to [-1, 1] like Python does
+                    features.Add(rsi / 50f - 1f);
                     
-                    // Add time features
+                    // 3. Calculate ATR (14-period)
+                    int atrPeriod = 14;
+                    float atr = 0f;
+                    if (lastIdx >= atrPeriod)
+                    {
+                        double[] trValues = new double[atrPeriod];
+                        
+                        for (int i = 0; i < atrPeriod; i++)
+                        {
+                            int idx = lastIdx - i;
+                            double tr1 = high[idx] - low[idx];
+                            double tr2 = Math.Abs(high[idx] - close[Math.Max(0, idx - 1)]);
+                            double tr3 = Math.Abs(low[idx] - close[Math.Max(0, idx - 1)]);
+                            trValues[i] = Math.Max(Math.Max(tr1, tr2), tr3);
+                        }
+                        
+                        atr = (float)trValues.Average();
+                    }
+                    else if (lastIdx >= 1)
+                    {
+                        // Simplified ATR if we don't have enough data
+                        atr = (float)(high[lastIdx] - low[lastIdx]);
+                    }
+                    
+                    // Normalize ATR like Python code - ATR ratio to its SMA
+                    int windowSize = Math.Min(20, lastIdx + 1);
+                    double atrSma = 0;
+                    if (lastIdx >= windowSize)
+                    {
+                        double[] atrValues = new double[windowSize];
+                        for (int i = 0; i < windowSize; i++)
+                        {
+                            int idx = lastIdx - i;
+                            double tr1 = high[idx] - low[idx];
+                            double tr2 = idx > 0 ? Math.Abs(high[idx] - close[idx - 1]) : 0;
+                            double tr3 = idx > 0 ? Math.Abs(low[idx] - close[idx - 1]) : 0;
+                            atrValues[i] = Math.Max(Math.Max(tr1, tr2), tr3);
+                        }
+                        atrSma = atrValues.Average();
+                    }
+                    else
+                    {
+                        atrSma = atr;
+                    }
+                    
+                    float atrRatio = atrSma != 0 ? atr / (float)atrSma : 1f;
+                    float minExpectedRatio = 0.5f;
+                    float maxExpectedRatio = 2.0f;
+                    float expectedRange = maxExpectedRatio - minExpectedRatio;
+                    float atrNorm = 2f * (atrRatio - minExpectedRatio) / expectedRange - 1f;
+                    atrNorm = Math.Clamp(atrNorm, -1f, 1f);
+                    features.Add(atrNorm);
+                    
+                    // 4. Calculate volume change
+                    float volumeChange = 0f;
+                    if (lastIdx > 0 && volume[lastIdx - 1] != 0)
+                    {
+                        volumeChange = (float)((volume[lastIdx] - volume[lastIdx - 1]) / volume[lastIdx - 1]);
+                        volumeChange = Math.Clamp(volumeChange, -1f, 1f);
+                    }
+                    features.Add(volumeChange);
+                    
+                    // 5. Calculate volatility breakout (Bollinger Band position)
+                    float volatilityBreakout = 0.5f; // Default to middle
+                    int bollPeriod = 20;
+                    if (lastIdx >= bollPeriod)
+                    {
+                        double[] closePrices = new double[bollPeriod];
+                        for (int i = 0; i < bollPeriod; i++)
+                        {
+                            closePrices[i] = close[lastIdx - i];
+                        }
+                        
+                        double sma = closePrices.Average();
+                        double sum = closePrices.Sum(p => Math.Pow(p - sma, 2));
+                        double stdDev = Math.Sqrt(sum / bollPeriod);
+                        
+                        double upper = sma + (2 * stdDev);
+                        double lower = sma - (2 * stdDev);
+                        double bandRange = upper - lower;
+                        
+                        if (bandRange > 0)
+                        {
+                            volatilityBreakout = (float)((close[lastIdx] - lower) / bandRange);
+                            volatilityBreakout = Math.Clamp(volatilityBreakout, 0f, 1f);
+                        }
+                    }
+                    features.Add(volatilityBreakout);
+                    
+                    // 6. Calculate trend strength (ADX-like)
+                    float trendStrength = 0f; // Default to no trend
+                    int adxPeriod = 14;
+                    if (lastIdx >= adxPeriod + 1)
+                    {
+                        // Simplified ADX calculation - we use directional movement instead
+                        double posDMSum = 0;
+                        double negDMSum = 0;
+                        double trSum = 0;
+                        
+                        for (int i = 1; i <= adxPeriod; i++)
+                        {
+                            int idx = lastIdx - adxPeriod + i;
+                            if (idx > 0)
+                            {
+                                double posDM = high[idx] - high[idx - 1];
+                                double negDM = low[idx - 1] - low[idx];
+                                
+                                if (posDM > 0 && posDM > negDM)
+                                    posDMSum += posDM;
+                                
+                                if (negDM > 0 && negDM > posDM)
+                                    negDMSum += negDM;
+                                
+                                double tr1 = high[idx] - low[idx];
+                                double tr2 = Math.Abs(high[idx] - close[idx - 1]);
+                                double tr3 = Math.Abs(low[idx] - close[idx - 1]);
+                                trSum += Math.Max(Math.Max(tr1, tr2), tr3);
+                            }
+                        }
+                        
+                        if (trSum > 0)
+                        {
+                            double posDI = (posDMSum / trSum) * 100;
+                            double negDI = (negDMSum / trSum) * 100;
+                            double dx = Math.Abs(posDI - negDI) / (posDI + negDI) * 100;
+                            
+                            // Normalize like Python code (ADX/25 - 1)
+                            trendStrength = (float)(dx / 25.0 - 1.0);
+                            trendStrength = Math.Clamp(trendStrength, -1f, 1f);
+                        }
+                    }
+                    features.Add(trendStrength);
+                    
+                    // 7. Calculate candle pattern
+                    float body = (float)(close[lastIdx] - open[lastIdx]);
+                    float upperWick = (float)(high[lastIdx] - Math.Max(close[lastIdx], open[lastIdx]));
+                    float lowerWick = (float)(Math.Min(close[lastIdx], open[lastIdx]) - low[lastIdx]);
+                    float range = (float)(high[lastIdx] - low[lastIdx] + 1e-8);
+                    
+                    float candlePattern;
+                    if (upperWick + lowerWick > 0)
+                    {
+                        candlePattern = (body / range + (upperWick - lowerWick) / (upperWick + lowerWick)) / 2f;
+                    }
+                    else
+                    {
+                        candlePattern = body / range / 2f;
+                    }
+                    candlePattern = Math.Clamp(candlePattern, -1f, 1f);
+                    features.Add(candlePattern);
+                    
+                    // 8-9. Time features (same as before)
                     DateTimeOffset barTimeOffset;
                     try
                     {
                         barTimeOffset = DateTimeOffset.FromUnixTimeSeconds(data.Timestamp[lastIdx]);
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        _logger($"ERROR converting timestamp: {ex.Message}. Using current time.");
                         barTimeOffset = DateTimeOffset.UtcNow;
                     }
                     var barTime = barTimeOffset.DateTime;
                     
-                    // Time of day represented as sin/cos for circularity
-                    double hoursNormalized = barTime.Hour / 24.0 * 2.0 * Math.PI;
-                    features.Add((float)Math.Sin(hoursNormalized));
-                    features.Add((float)Math.Cos(hoursNormalized));
+                    double minutesInDay = 24.0 * 60.0;
+                    double timeIndex = barTime.Hour * 60.0 + barTime.Minute;
+                    double timeNormalized = 2.0 * Math.PI * timeIndex / minutesInDay;
                     
-                    // Day of week represented as sin/cos for circularity
-                    double dayOfWeekNormalized = ((int)barTime.DayOfWeek) / 7.0 * 2.0 * Math.PI;
-                    features.Add((float)Math.Sin(dayOfWeekNormalized));
-                    features.Add((float)Math.Cos(dayOfWeekNormalized));
+                    features.Add((float)Math.Sin(timeNormalized));
+                    features.Add((float)Math.Cos(timeNormalized));
                     
-                    // Position direction and PnL as features
+                    // 10-11. Position direction and PnL (unchanged)
                     features.Add((float)data.PositionDirection);
                     features.Add(float.IsNaN((float)data.PositionPnl) ? 0f : (float)data.PositionPnl);
+                    
+                    _logger($"Preprocessed {features.Count} features for single timestep");
+                    
+                    // Final validation
+                    for (int i = 0; i < features.Count; i++)
+                    {
+                        if (float.IsNaN(features[i]) || float.IsInfinity(features[i]))
+                        {
+                            _logger($"WARNING: Invalid value in feature {i}, replacing with 0");
+                            features[i] = 0f;
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
                     _logger($"ERROR during feature calculation: {ex.Message}");
                     throw;
-                }
-                
-                _logger($"Preprocessed {features.Count} features for single timestep");
-                
-                // Final validation of feature array
-                if (features.Any(f => float.IsNaN(f) || float.IsInfinity(f)))
-                {
-                    _logger("WARNING: NaN or Infinity values detected in features, replacing with 0");
-                    for (int i = 0; i < features.Count; i++)
-                    {
-                        if (float.IsNaN(features[i]) || float.IsInfinity(features[i]))
-                            features[i] = 0f;
-                    }
                 }
                 
                 return features.ToArray();
@@ -883,7 +1022,7 @@ namespace DRLTrader.Services
                 
                 // Return a safe default feature vector instead of throwing
                 _logger("Returning fallback feature vector to avoid crashing");
-                return new float[12] { 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f };
+                return new float[11] { 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f };
             }
         }
 
@@ -920,20 +1059,176 @@ namespace DRLTrader.Services
                     throw new InvalidOperationException("Inconsistent data lengths in market data");
                 }
                 
-                var features = new List<float>();
-                int featuresPerBar = 12; // Should match the number of features we extract per bar
+                // Convert to arrays for easier calculation
+                double[] close = data.Close.Select(d => (double)d).ToArray();
+                double[] open = data.Open.Select(d => (double)d).ToArray();
+                double[] high = data.High.Select(d => (double)d).ToArray();
+                double[] low = data.Low.Select(d => (double)d).ToArray();
+                double[] volume = data.Volume.Select(d => (double)d).ToArray();
                 
-                // Process each bar in the sequence
+                var features = new List<float>();
+                int featuresPerBar = 11; // Should match the number of features in the Python implementation
+                
+                // Calculate technical indicators for the entire series
+                // These arrays will hold indicator values for each bar
+                float[] atrValues = new float[data.Close.Count];
+                float[] rsiValues = new float[data.Close.Count];
+                float[] upperBand = new float[data.Close.Count];
+                float[] lowerBand = new float[data.Close.Count];
+                float[] adxValues = new float[data.Close.Count];
+                
+                // Calculate ATR (Average True Range)
+                int atrPeriod = 14;
+                for (int i = 0; i < data.Close.Count; i++)
+                {
+                    if (i >= 1)
+                    {
+                        double tr1 = high[i] - low[i];
+                        double tr2 = Math.Abs(high[i] - close[i - 1]);
+                        double tr3 = Math.Abs(low[i] - close[i - 1]);
+                        double tr = Math.Max(Math.Max(tr1, tr2), tr3);
+                        atrValues[i] = (float)tr;
+                    }
+                    else
+                    {
+                        atrValues[i] = (float)(high[i] - low[i]); // Fallback for first bar
+                    }
+                }
+                
+                // Apply SMA to smooth ATR values
+                for (int i = 0; i < data.Close.Count; i++)
+                {
+                    if (i >= atrPeriod)
+                    {
+                        float sum = 0;
+                        for (int j = 0; j < atrPeriod; j++)
+                        {
+                            sum += atrValues[i - j];
+                        }
+                        atrValues[i] = sum / atrPeriod;
+                    }
+                    else if (i > 0)
+                    {
+                        // For bars < period, use available data
+                        float sum = 0;
+                        for (int j = 0; j <= i; j++)
+                        {
+                            sum += atrValues[j];
+                        }
+                        atrValues[i] = sum / (i + 1);
+                    }
+                }
+                
+                // Calculate RSI
+                int rsiPeriod = 14;
+                double[] gains = new double[data.Close.Count];
+                double[] losses = new double[data.Close.Count];
+                
+                // First calculate gains and losses
+                for (int i = 1; i < data.Close.Count; i++)
+                {
+                    double change = close[i] - close[i - 1];
+                    if (change > 0)
+                    {
+                        gains[i] = change;
+                        losses[i] = 0;
+                    }
+                    else
+                    {
+                        gains[i] = 0;
+                        losses[i] = -change;
+                    }
+                }
+                
+                // Calculate average gains and losses
+                double[] avgGains = new double[data.Close.Count];
+                double[] avgLosses = new double[data.Close.Count];
+                
+                for (int i = rsiPeriod; i < data.Close.Count; i++)
+                {
+                    if (i == rsiPeriod)
+                    {
+                        // First RSI calculation uses simple average
+                        double gainSum = 0;
+                        double lossSum = 0;
+                        
+                        for (int j = 1; j <= rsiPeriod; j++)
+                        {
+                            gainSum += gains[j];
+                            lossSum += losses[j];
+                        }
+                        
+                        avgGains[i] = gainSum / rsiPeriod;
+                        avgLosses[i] = lossSum / rsiPeriod;
+                    }
+                    else
+                    {
+                        // Subsequent RSI calculations use smoothed average
+                        avgGains[i] = (avgGains[i - 1] * (rsiPeriod - 1) + gains[i]) / rsiPeriod;
+                        avgLosses[i] = (avgLosses[i - 1] * (rsiPeriod - 1) + losses[i]) / rsiPeriod;
+                    }
+                    
+                    // Calculate RSI
+                    if (avgLosses[i] == 0)
+                    {
+                        rsiValues[i] = 100f;
+                    }
+                    else
+                    {
+                        double rs = avgGains[i] / avgLosses[i];
+                        rsiValues[i] = (float)(100 - (100 / (1 + rs)));
+                    }
+                }
+                
+                // Backfill RSI values for early bars
+                for (int i = 0; i < rsiPeriod; i++)
+                {
+                    rsiValues[i] = 50f; // Neutral RSI
+                }
+                
+                // Calculate Bollinger Bands
+                int bollPeriod = 20;
+                for (int i = bollPeriod - 1; i < data.Close.Count; i++)
+                {
+                    // Calculate SMA for the period
+                    double sum = 0;
+                    for (int j = 0; j < bollPeriod; j++)
+                    {
+                        sum += close[i - j];
+                    }
+                    double sma = sum / bollPeriod;
+                    
+                    // Calculate standard deviation
+                    double squareSum = 0;
+                    for (int j = 0; j < bollPeriod; j++)
+                    {
+                        squareSum += Math.Pow(close[i - j] - sma, 2);
+                    }
+                    double stdDev = Math.Sqrt(squareSum / bollPeriod);
+                    
+                    // Calculate bands
+                    upperBand[i] = (float)(sma + (2 * stdDev));
+                    lowerBand[i] = (float)(sma - (2 * stdDev));
+                }
+                
+                // Backfill Bollinger values
+                for (int i = 0; i < bollPeriod - 1; i++)
+                {
+                    upperBand[i] = (float)close[i];
+                    lowerBand[i] = (float)close[i];
+                }
+                
+                // Process each bar in the sequence to create feature vectors
                 for (int i = 0; i < data.Close.Count; i++)
                 {
                     try
                     {
-                        // Calculate returns safely
+                        // 1. Calculate returns (clipped to [-0.1, 0.1])
                         float returns;
-                        if (i > 0 && !double.IsNaN(data.Close[i]) && !double.IsNaN(data.Close[i - 1]) && 
-                            data.Close[i - 1] != 0)
+                        if (i > 0 && close[i - 1] != 0)
                         {
-                            returns = (float)((data.Close[i] / data.Close[i - 1]) - 1.0);
+                            returns = (float)((close[i] / close[i - 1]) - 1.0);
+                            returns = Math.Clamp(returns, -0.1f, 0.1f);
                         }
                         else
                         {
@@ -941,48 +1236,126 @@ namespace DRLTrader.Services
                         }
                         features.Add(returns);
                         
-                        // Convert to float with safety checks
-                        float close = (float)data.Close[i];
-                        if (float.IsNaN(close) || float.IsInfinity(close) || close == 0)
+                        // 2. RSI (normalized to [-1, 1])
+                        float rsiNorm = rsiValues[i] / 50f - 1f;
+                        features.Add(rsiNorm);
+                        
+                        // 3. ATR (normalized)
+                        // Calculate ATR ratio to its SMA
+                        int windowSize = Math.Min(20, i + 1);
+                        float atrSma = 0f;
+                        
+                        if (i >= windowSize)
                         {
-                            close = 1.0f; // Fallback value
+                            float sum = 0;
+                            for (int j = 0; j < windowSize; j++)
+                            {
+                                sum += atrValues[i - j];
+                            }
+                            atrSma = sum / windowSize;
+                        }
+                        else if (i > 0)
+                        {
+                            float sum = 0;
+                            for (int j = 0; j <= i; j++)
+                            {
+                                sum += atrValues[j];
+                            }
+                            atrSma = sum / (i + 1);
+                        }
+                        else
+                        {
+                            atrSma = atrValues[i];
                         }
                         
-                        float open = (float)data.Open[i];
-                        float high = (float)data.High[i];
-                        float low = (float)data.Low[i];
-                        float volume = (float)data.Volume[i];
+                        float atrRatio = atrSma != 0 ? atrValues[i] / atrSma : 1f;
+                        float minExpectedRatio = 0.5f;
+                        float maxExpectedRatio = 2.0f;
+                        float expectedRange = maxExpectedRatio - minExpectedRatio;
+                        float atrNorm = 2f * (atrRatio - minExpectedRatio) / expectedRange - 1f;
+                        atrNorm = Math.Clamp(atrNorm, -1f, 1f);
+                        features.Add(atrNorm);
                         
-                        // Basic features with safety checks
-                        // Volatility
-                        float volatility = (high - low) / close;
-                        if (float.IsNaN(volatility) || float.IsInfinity(volatility))
+                        // 4. Volume change
+                        float volumeChange = 0f;
+                        if (i > 0 && volume[i - 1] != 0)
                         {
-                            volatility = 0f;
+                            volumeChange = (float)((volume[i] - volume[i - 1]) / volume[i - 1]);
+                            volumeChange = Math.Clamp(volumeChange, -1f, 1f);
                         }
-                        features.Add(volatility);
+                        features.Add(volumeChange);
                         
-                        // Volume
-                        float normalizedVolume = volume / (volume > 0 ? volume : 1);
-                        features.Add(normalizedVolume);
-                        
-                        // Return
-                        float barReturn = (close - open) / (open != 0 ? open : 1);
-                        if (float.IsNaN(barReturn) || float.IsInfinity(barReturn))
+                        // 5. Volatility breakout (Bollinger Band position)
+                        float volatilityBreakout = 0.5f; // Default to middle
+                        if (i >= bollPeriod - 1)
                         {
-                            barReturn = 0f;
+                            float bandRange = upperBand[i] - lowerBand[i];
+                            if (bandRange > 0)
+                            {
+                                volatilityBreakout = (float)((close[i] - lowerBand[i]) / bandRange);
+                                volatilityBreakout = Math.Clamp(volatilityBreakout, 0f, 1f);
+                            }
                         }
-                        features.Add(barReturn);
+                        features.Add(volatilityBreakout);
                         
-                        // Position in bar
-                        float positionInBar = (close - low) / ((high - low > 0) ? (high - low) : 1);
-                        if (float.IsNaN(positionInBar) || float.IsInfinity(positionInBar))
+                        // 6. Trend strength (ADX-like)
+                        float trendStrength = 0f; // Default to no trend
+                        if (i >= 14) // Use 14 period for ADX approximation
                         {
-                            positionInBar = 0.5f;
+                            // Simplified ADX calculation using DM from last 14 bars
+                            double posDMSum = 0;
+                            double negDMSum = 0;
+                            double trSum = 0;
+                            
+                            for (int j = Math.Max(1, i - 13); j <= i; j++)
+                            {
+                                double posDM = high[j] - high[j - 1];
+                                double negDM = low[j - 1] - low[j];
+                                
+                                if (posDM > 0 && posDM > negDM)
+                                    posDMSum += posDM;
+                                
+                                if (negDM > 0 && negDM > posDM)
+                                    negDMSum += negDM;
+                                
+                                trSum += atrValues[j]; // Use precalculated TR values
+                            }
+                            
+                            if (trSum > 0)
+                            {
+                                double posDI = (posDMSum / trSum) * 100;
+                                double negDI = (negDMSum / trSum) * 100;
+                                
+                                if (posDI + negDI > 0)
+                                {
+                                    double dx = Math.Abs(posDI - negDI) / (posDI + negDI) * 100;
+                                    // Normalize like Python code (ADX/25 - 1)
+                                    trendStrength = (float)(dx / 25.0 - 1.0);
+                                    trendStrength = Math.Clamp(trendStrength, -1f, 1f);
+                                }
+                            }
                         }
-                        features.Add(positionInBar);
+                        features.Add(trendStrength);
                         
-                        // Time features
+                        // 7. Calculate candle pattern
+                        float body = (float)(close[i] - open[i]);
+                        float upperWick = (float)(high[i] - Math.Max(close[i], open[i]));
+                        float lowerWick = (float)(Math.Min(close[i], open[i]) - low[i]);
+                        float range = (float)(high[i] - low[i] + 1e-8);
+                        
+                        float candlePattern;
+                        if (upperWick + lowerWick > 0)
+                        {
+                            candlePattern = (body / range + (upperWick - lowerWick) / (upperWick + lowerWick)) / 2f;
+                        }
+                        else
+                        {
+                            candlePattern = body / range / 2f;
+                        }
+                        candlePattern = Math.Clamp(candlePattern, -1f, 1f);
+                        features.Add(candlePattern);
+                        
+                        // 8-9. Time features using sin/cos encoding
                         DateTimeOffset barTimeOffset;
                         try
                         {
@@ -994,15 +1367,14 @@ namespace DRLTrader.Services
                         }
                         var barTime = barTimeOffset.DateTime;
                         
-                        double hoursNormalized = barTime.Hour / 24.0 * 2.0 * Math.PI;
-                        features.Add((float)Math.Sin(hoursNormalized));
-                        features.Add((float)Math.Cos(hoursNormalized));
+                        double minutesInDay = 24.0 * 60.0;
+                        double timeIndex = barTime.Hour * 60.0 + barTime.Minute;
+                        double timeNormalized = 2.0 * Math.PI * timeIndex / minutesInDay;
                         
-                        double dayOfWeekNormalized = ((int)barTime.DayOfWeek) / 7.0 * 2.0 * Math.PI;
-                        features.Add((float)Math.Sin(dayOfWeekNormalized));
-                        features.Add((float)Math.Cos(dayOfWeekNormalized));
+                        features.Add((float)Math.Sin(timeNormalized)); // Sin time
+                        features.Add((float)Math.Cos(timeNormalized)); // Cos time
                         
-                        // Position info
+                        // 10-11. Position direction and PnL
                         features.Add((float)data.PositionDirection);
                         features.Add(float.IsNaN((float)data.PositionPnl) ? 0f : (float)data.PositionPnl);
                     }
@@ -1011,9 +1383,13 @@ namespace DRLTrader.Services
                         _logger($"Error processing bar {i}: {ex.Message}");
                         
                         // Add default features for this bar to maintain consistency
-                        for (int j = features.Count % featuresPerBar; j < featuresPerBar; j++)
+                        int remainingFeatures = featuresPerBar - (features.Count % featuresPerBar);
+                        if (remainingFeatures < featuresPerBar)
                         {
-                            features.Add(0f);
+                            for (int j = 0; j < remainingFeatures; j++)
+                            {
+                                features.Add(0f);
+                            }
                         }
                     }
                 }
@@ -1057,7 +1433,7 @@ namespace DRLTrader.Services
                 
                 // Return a safe default feature vector instead of throwing
                 _logger("Returning fallback feature vector to avoid crashing");
-                int minFeaturesNeeded = data?.Close?.Count > 0 ? data.Close.Count * 12 : 12;
+                int minFeaturesNeeded = data?.Close?.Count > 0 ? data.Close.Count * 11 : 11;
                 return Enumerable.Repeat(0f, minFeaturesNeeded).ToArray();
             }
         }
