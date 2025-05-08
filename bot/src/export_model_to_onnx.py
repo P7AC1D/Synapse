@@ -5,26 +5,124 @@ import argparse
 import numpy as np
 import torch
 from sb3_contrib import RecurrentPPO
+from stable_baselines3 import PPO
 import torch.nn as nn
 from stable_baselines3.common.preprocessing import preprocess_obs
 from collections import namedtuple
 
-def export_recurrent_ppo_to_onnx(model_path, output_path, input_shape=(1, 500, 11)):
+def export_ppo_to_onnx(model_path, output_path, input_shape=(1, 11), is_recurrent=False):
     """
-    Export a RecurrentPPO model to ONNX format for use in MQL5.
+    Export a PPO or RecurrentPPO model to ONNX format for use in cTrader or MQL5.
     
     Args:
-        model_path: Path to the saved RecurrentPPO model (.zip file)
+        model_path: Path to the saved PPO model (.zip file)
         output_path: Path where to save the ONNX model
-        input_shape: Shape of the input tensor (batch_size, sequence_length, features)
-                    Default is (1, 500, 11) for 11 features:
+        input_shape: Shape of the input tensor
+                    - For standard PPO: (batch_size, features)
+                    - For RecurrentPPO: (batch_size, sequence_length, features)
+                    Default features include:
                     - returns, rsi, atr, volume_change, volatility_breakout, trend_strength,
                     - candle_pattern, sin_time, cos_time, position_type, unrealized_pnl
+        is_recurrent: Whether the model is a RecurrentPPO model or standard PPO model
     """
     print(f"Loading model from {model_path}...")
-    model = RecurrentPPO.load(model_path)
     
-    # Print model structure to help debug
+    if is_recurrent:
+        model = RecurrentPPO.load(model_path)
+        print("Loading RecurrentPPO model...")
+        return export_recurrent_ppo(model, output_path, input_shape)
+    else:
+        model = PPO.load(model_path)
+        print("Loading standard PPO model...")
+        return export_standard_ppo(model, output_path, input_shape)
+
+def export_standard_ppo(model, output_path, input_shape=(1, 11)):
+    """Export a standard PPO model to ONNX format."""
+    policy = model.policy
+    print("Model loaded. Policy structure:")
+    print(f"- Feature extractor type: {type(policy.features_extractor).__name__ if hasattr(policy, 'features_extractor') else 'None'}")
+    print(f"- MLP extractor type: {type(policy.mlp_extractor).__name__ if hasattr(policy, 'mlp_extractor') else 'None'}")
+    print(f"- Action distribution type: {type(policy.action_dist).__name__ if hasattr(policy, 'action_dist') else 'None'}")
+    
+    # Create a wrapper class for standard PPO policy
+    class SimplePPOWrapper(nn.Module):
+        def __init__(self, policy):
+            super(SimplePPOWrapper, self).__init__()
+            # Extract the needed components from the policy
+            self.features_extractor = policy.features_extractor
+            self.action_net = policy.action_net
+            self.mlp_extractor = policy.mlp_extractor
+            
+            # Print details for debugging
+            if hasattr(self.action_net, 'in_features'):
+                print(f"Action net - in_features: {self.action_net.in_features}, out_features: {self.action_net.out_features}")
+            
+        def forward(self, obs):
+            # Extract features if applicable
+            if self.features_extractor is not None:
+                features = self.features_extractor(obs)
+            else:
+                features = obs
+            
+            # Pass through the policy network from MLP extractor
+            policy_latent = self.mlp_extractor.policy_net(features)
+            
+            # Get action logits
+            action_logits = self.action_net(policy_latent)
+            
+            # Apply softmax to get probabilities
+            action_probs = torch.softmax(action_logits, dim=-1)
+            
+            return action_probs
+    
+    # Create the wrapper
+    wrapper = SimplePPOWrapper(policy)
+    wrapper.eval()  # Set to evaluation mode
+    
+    # Create dummy inputs with the expected shapes
+    dummy_obs = torch.zeros(input_shape, dtype=torch.float32)
+    
+    # Test the forward pass
+    print("\nTesting wrapper forward pass...")
+    try:
+        action_probs = wrapper(dummy_obs)
+        print(f"Forward pass successful!")
+        print(f"Output shapes: action_probs={action_probs.shape}")
+    except Exception as e:
+        print(f"Forward pass failed: {str(e)}")
+        print(f"\nExtracting more detailed network information:")
+        
+        # Print more information about the network components
+        for name, module in policy.named_modules():
+            print(f"Module: {name}, Type: {type(module).__name__}")
+            if isinstance(module, nn.Linear):
+                print(f"  Linear layer: in_features={module.in_features}, out_features={module.out_features}")
+        raise
+    
+    # Export the model to ONNX
+    print(f"Exporting model to {output_path}...")
+    try:
+        torch.onnx.export(
+            wrapper,
+            dummy_obs,
+            output_path,
+            export_params=True,
+            opset_version=12,  # Using higher opset version for better compatibility
+            do_constant_folding=True,
+            input_names=['observation'],
+            output_names=['action_probs'],
+            dynamic_axes={
+                'observation': {0: 'batch'},
+                'action_probs': {0: 'batch'},
+            }
+        )
+        print("Model exported successfully!")
+    except Exception as e:
+        print(f"Export failed: {str(e)}")
+        raise
+
+def export_recurrent_ppo(model, output_path, input_shape=(1, 500, 11)):
+    """Export a RecurrentPPO model to ONNX format."""
     policy = model.policy
     print("Model loaded. Policy structure:")
     print(f"- Feature extractor type: {type(policy.features_extractor).__name__ if hasattr(policy, 'features_extractor') else 'None'}")
@@ -148,10 +246,11 @@ def export_recurrent_ppo_to_onnx(model_path, output_path, input_shape=(1, 500, 1
         raise
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Export RecurrentPPO model to ONNX")
-    parser.add_argument("--model_path", type=str, required=True, help="Path to the saved RecurrentPPO model")
+    parser = argparse.ArgumentParser(description="Export PPO or RecurrentPPO model to ONNX")
+    parser.add_argument("--model_path", type=str, required=True, help="Path to the saved PPO model")
     parser.add_argument("--output_path", type=str, required=True, help="Path where to save the ONNX model")
-    parser.add_argument("--seq_length", type=int, default=500, help="Sequence length (number of bars)")
+    parser.add_argument("--is_recurrent", action="store_true", help="Whether the model is RecurrentPPO")
+    parser.add_argument("--seq_length", type=int, default=500, help="Sequence length for RecurrentPPO (number of bars)")
     parser.add_argument("--features", type=int, default=11, help="Number of features per bar (default: 11)")
     
     args = parser.parse_args()
@@ -159,8 +258,17 @@ if __name__ == "__main__":
     # Ensure output directory exists
     os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
     
-    export_recurrent_ppo_to_onnx(
-        args.model_path, 
-        args.output_path,
-        input_shape=(1, args.seq_length, args.features)
-    )
+    if args.is_recurrent:
+        export_ppo_to_onnx(
+            args.model_path, 
+            args.output_path,
+            input_shape=(1, args.seq_length, args.features),
+            is_recurrent=True
+        )
+    else:
+        export_ppo_to_onnx(
+            args.model_path, 
+            args.output_path,
+            input_shape=(1, args.features),
+            is_recurrent=False
+        )

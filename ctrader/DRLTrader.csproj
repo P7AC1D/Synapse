@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="cTrader.Automate" Version="1.0.8" />
+    <PackageReference Include="Microsoft.ML" Version="4.0.2" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.21.0" />
+    <PackageReference Include="Microsoft.ML.OnnxTransformer" Version="4.0.2" />
+  </ItemGroup>
+</Project>

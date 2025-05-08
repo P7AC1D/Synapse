@@ -1,0 +1,1168 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using DRLTrader.Models;
+using Microsoft.ML;
+using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
+
+namespace DRLTrader.Services
+{
+    /// <summary>
+    /// Provides local inference using ONNX models via ML.NET
+    /// </summary>
+    public class OnnxModelPredictor : IDisposable
+    {
+        private readonly InferenceSession _session;
+        private readonly bool _isRecurrentModel;
+        private float[] _lstmHidden;
+        private float[] _lstmCell;
+        private readonly int _hiddenSize;
+        private readonly int _numLayers;
+        private bool _disposed;
+        private Action<string> _logger;
+
+        /// <summary>
+        /// Initialize a new ONNX model predictor
+        /// </summary>
+        /// <param name="modelPath">Path to the ONNX model file</param>
+        /// <param name="isRecurrent">Whether the model is recurrent (LSTM-based)</param>
+        /// <param name="hiddenSize">For recurrent models, the hidden state size</param>
+        /// <param name="numLayers">For recurrent models, the number of LSTM layers</param>
+        public OnnxModelPredictor(string modelPath, bool isRecurrent = false, int hiddenSize = 64, int numLayers = 1)
+        {
+            // Use Console.WriteLine as default logger since cAlgo Print method is not accessible here
+            _logger = Console.WriteLine;
+            
+            _logger($"==== Initializing ONNX Model Predictor ====");
+            _logger($"Model path: {modelPath}");
+            _logger($"Is recurrent model: {isRecurrent}");
+            _logger($"Hidden size: {hiddenSize}");
+            _logger($"Number of LSTM layers: {numLayers}");
+            
+            // Check file existence with more details
+            try
+            {
+                _logger($"Checking if model file exists...");
+                if (!File.Exists(modelPath))
+                {
+                    _logger($"ERROR: ONNX model not found at: {modelPath}");
+                    _logger($"Current directory: {Directory.GetCurrentDirectory()}");
+                    _logger($"File path is absolute: {Path.IsPathRooted(modelPath)}");
+                    
+                    // Try to list files in model directory
+                    try
+                    {
+                        string modelDirectory = Path.GetDirectoryName(modelPath);
+                        if (Directory.Exists(modelDirectory))
+                        {
+                            _logger($"Model directory exists: {modelDirectory}");
+                            _logger($"Files in model directory:");
+                            foreach (var file in Directory.GetFiles(modelDirectory))
+                            {
+                                _logger($"  - {file}");
+                            }
+                        }
+                        else
+                        {
+                            _logger($"Model directory does not exist: {modelDirectory}");
+                        }
+                    }
+                    catch (Exception dirEx)
+                    {
+                        _logger($"Error listing files in model directory: {dirEx.Message}");
+                    }
+                    
+                    throw new FileNotFoundException($"ONNX model not found at: {modelPath}");
+                }
+                _logger($"Model file exists: {modelPath}");
+                _logger($"Model file size: {new FileInfo(modelPath).Length} bytes");
+            }
+            catch (Exception ex)
+            {
+                _logger($"ERROR checking model file: {ex.Message}");
+                _logger($"Stack trace: {ex.StackTrace}");
+                throw;
+            }
+
+            _isRecurrentModel = isRecurrent;
+            _hiddenSize = hiddenSize;
+            _numLayers = numLayers;
+
+            // Initialize LSTM states if using a recurrent model
+            if (isRecurrent)
+            {
+                _logger($"Initializing LSTM states for recurrent model");
+                _lstmHidden = new float[numLayers * 1 * hiddenSize]; // [num_layers, batch_size, hidden_size]
+                _lstmCell = new float[numLayers * 1 * hiddenSize];   // [num_layers, batch_size, hidden_size]
+                _logger($"LSTM states initialized with shapes: [{numLayers}, 1, {hiddenSize}]");
+            }
+
+            // Create inference session with the ONNX model
+            try
+            {
+                _logger($"Creating ONNX inference session...");
+                var sessionOptions = new SessionOptions();
+                _logger($"Setting session options...");
+                sessionOptions.EnableMemoryPattern = true;
+                sessionOptions.EnableCpuMemArena = true;
+                sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
+                _logger($"Session options set: MemPattern={sessionOptions.EnableMemoryPattern}, CpuArena={sessionOptions.EnableCpuMemArena}, OptLevel={sessionOptions.GraphOptimizationLevel}");
+
+                _logger($"Loading model into inference session...");
+                byte[] modelBytes;
+                try
+                {
+                    modelBytes = File.ReadAllBytes(modelPath);
+                    _logger($"Model file loaded into memory: {modelBytes.Length} bytes");
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR reading model file: {ex.Message}");
+                    _logger($"Stack trace: {ex.StackTrace}");
+                    throw;
+                }
+
+                try
+                {
+                    _session = new InferenceSession(modelBytes, sessionOptions);
+                    _logger($"Inference session created successfully");
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR creating inference session: {ex.Message}");
+                    _logger($"Stack trace: {ex.StackTrace}");
+                    
+                    // Check for specific known errors
+                    if (ex.Message.Contains("DLL") || ex.Message.Contains("dependency"))
+                    {
+                        _logger("This may be a missing dependency issue. Check that Microsoft Visual C++ Redistributable is installed.");
+                    }
+                    
+                    throw;
+                }
+
+                // Log model metadata
+                _logger($"ONNX model loaded: {modelPath}");
+                _logger($"Model inputs ({_session.InputMetadata.Count}):");
+                foreach (var input in _session.InputMetadata)
+                {
+                    _logger($"  - {input.Key}: {string.Join("x", input.Value.Dimensions)}");
+                }
+                
+                _logger($"Model outputs ({_session.OutputMetadata.Count}):");
+                foreach (var output in _session.OutputMetadata)
+                {
+                    _logger($"  - {output.Key}: {string.Join("x", output.Value.Dimensions)}");
+                }
+                
+                _logger($"==== ONNX Model Predictor initialized successfully ====");
+            }
+            catch (Exception ex)
+            {
+                _logger($"==== FAILED to initialize ONNX Model Predictor ====");
+                _logger($"Error: {ex.Message}");
+                _logger($"Stack trace: {ex.StackTrace}");
+                
+                // Check for inner exception
+                if (ex.InnerException != null)
+                {
+                    _logger($"Inner exception: {ex.InnerException.Message}");
+                    _logger($"Inner exception stack trace: {ex.InnerException.StackTrace}");
+                }
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Get prediction from the ONNX model
+        /// </summary>
+        public PredictionResponse GetPrediction(MarketData data)
+        {
+            try
+            {
+                _logger($"Getting prediction for symbol: {data.Symbol}, Bars: {data.Close.Count}");
+                
+                // Validate input data
+                if (data == null)
+                {
+                    _logger("ERROR: Null MarketData passed to GetPrediction");
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = "ERROR: Null input data, defaulting to Hold"
+                    };
+                }
+
+                if (data.Close == null || data.Close.Count == 0 || 
+                    data.Open == null || data.Open.Count == 0 ||
+                    data.High == null || data.High.Count == 0 ||
+                    data.Low == null || data.Low.Count == 0 ||
+                    data.Volume == null || data.Volume.Count == 0 ||
+                    data.Timestamp == null || data.Timestamp.Count == 0)
+                {
+                    _logger("ERROR: MarketData contains null or empty collections");
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = "ERROR: Invalid market data, defaulting to Hold"
+                    };
+                }
+
+                // Check that all collections have the same length
+                int referenceLength = data.Close.Count;
+                if (data.Open.Count != referenceLength || 
+                    data.High.Count != referenceLength || 
+                    data.Low.Count != referenceLength ||
+                    data.Volume.Count != referenceLength ||
+                    data.Timestamp.Count != referenceLength)
+                {
+                    _logger($"WARNING: Inconsistent data lengths - Close:{data.Close.Count}, Open:{data.Open.Count}, " +
+                           $"High:{data.High.Count}, Low:{data.Low.Count}, Volume:{data.Volume.Count}, Timestamp:{data.Timestamp.Count}");
+                    
+                    // Try to adjust the data to make it consistent
+                    int minLength = new[] { 
+                        data.Close.Count, data.Open.Count, data.High.Count, 
+                        data.Low.Count, data.Volume.Count, data.Timestamp.Count 
+                    }.Min();
+                    
+                    _logger($"Adjusting all data collections to minimum length: {minLength}");
+                    
+                    if (minLength == 0)
+                    {
+                        _logger("ERROR: Cannot process zero-length data");
+                        return new PredictionResponse
+                        {
+                            Action = "Hold",
+                            Confidence = 1.0f,
+                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                            Description = "ERROR: Zero-length data, defaulting to Hold"
+                        };
+                    }
+
+                    // Truncate all collections to the minimum length
+                    while (data.Close.Count > minLength) data.Close.RemoveAt(data.Close.Count - 1);
+                    while (data.Open.Count > minLength) data.Open.RemoveAt(data.Open.Count - 1);
+                    while (data.High.Count > minLength) data.High.RemoveAt(data.High.Count - 1);
+                    while (data.Low.Count > minLength) data.Low.RemoveAt(data.Low.Count - 1);
+                    while (data.Volume.Count > minLength) data.Volume.RemoveAt(data.Volume.Count - 1);
+                    while (data.Timestamp.Count > minLength) data.Timestamp.RemoveAt(data.Timestamp.Count - 1);
+                }
+                
+                // Call the appropriate prediction method
+                if (_isRecurrentModel)
+                {
+                    _logger("Using recurrent model for prediction");
+                    return GetRecurrentPrediction(data);
+                }
+                else
+                {
+                    _logger("Using standard model for prediction");
+                    return GetStandardPrediction(data);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger($"ERROR in GetPrediction: {ex.Message}");
+                _logger($"Stack trace: {ex.StackTrace}");
+                
+                // Return safe default rather than crashing
+                return new PredictionResponse
+                {
+                    Action = "Hold",
+                    Confidence = 1.0f,
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    Description = $"ERROR: {ex.Message}, defaulting to Hold"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Get prediction using a standard (non-recurrent) model
+        /// </summary>
+        private PredictionResponse GetStandardPrediction(MarketData data)
+        {
+            try
+            {
+                _logger("Preprocessing features for standard model...");
+                // Create input tensor with shape [1, features]
+                var features = PreprocessFeatures(data);
+                _logger($"Preprocessed features count: {features.Length}");
+                
+                var inputTensor = new DenseTensor<float>(features, new[] { 1, features.Length });
+                _logger($"Created input tensor with shape: [1, {features.Length}]");
+
+                // Create input dictionary for ONNX inference
+                var inputs = new List<NamedOnnxValue>
+                {
+                    NamedOnnxValue.CreateFromTensor("observation", inputTensor)
+                };
+                _logger("Created input dictionary for inference");
+                
+                // Log inputs for diagnostic purposes
+                _logger("Input names for model:");
+                foreach (var input in _session.InputMetadata)
+                {
+                    _logger($"  - {input.Key}: {string.Join("x", input.Value.Dimensions)}");
+                }
+                _logger("Expected output names:");
+                foreach (var output in _session.OutputMetadata)
+                {
+                    _logger($"  - {output.Key}: {string.Join("x", output.Value.Dimensions)}");
+                }
+
+                // Run inference
+                _logger("Running inference...");
+                IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
+                try
+                {
+                    results = _session.Run(inputs);
+                    _logger("Inference completed successfully");
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR during model inference: {ex.Message}");
+                    _logger($"Stack trace: {ex.StackTrace}");
+                    
+                    // Return safe default since inference failed
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = $"ERROR during model inference: {ex.Message}, defaulting to Hold"
+                    };
+                }
+                
+                // Get the output tensor (action probabilities)
+                _logger("Processing output...");
+                
+                // Check if we have any results
+                if (results == null || !results.Any())
+                {
+                    _logger("ERROR: Model returned no results");
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = "ERROR: Model returned no results, defaulting to Hold"
+                    };
+                }
+                
+                // Log all available output names
+                _logger("Available output names in results:");
+                foreach (var r in results)
+                {
+                    _logger($"  - {r.Name}");
+                }
+                
+                // Use First() safely
+                DisposableNamedOnnxValue firstOutput;
+                try
+                {
+                    firstOutput = results.First();
+                    _logger($"Retrieved first output with name: {firstOutput.Name}");
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR retrieving first output: {ex.Message}");
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = "ERROR accessing model output, defaulting to Hold"
+                    };
+                }
+                
+                // Convert to tensor safely
+                Tensor<float> outputTensor;
+                try
+                {
+                    outputTensor = firstOutput.AsTensor<float>();
+                    _logger($"Output tensor retrieved successfully");
+                    _logger($"Output tensor shape: [{string.Join(", ", outputTensor.Dimensions.ToArray())}]");
+                    _logger($"Output tensor length: {outputTensor.Length}");
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR converting output to tensor: {ex.Message}");
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = "ERROR converting model output, defaulting to Hold"
+                    };
+                }
+                
+                // Check if tensor has elements before accessing them
+                if (outputTensor.Length == 0)
+                {
+                    _logger("ERROR: Output tensor is empty");
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = "ERROR: Empty output tensor, defaulting to Hold"
+                    };
+                }
+                
+                // Log all action probabilities for debugging
+                _logger("Raw action probabilities:");
+                try {
+                    for (int i = 0; i < Math.Min(outputTensor.Length, 4); i++) // Safety: limit to 4 elements max (our action space)
+                    {
+                        TradingAction actionType = MapIndexToAction(i);
+                        _logger($"  - {actionType}: {outputTensor[i]:P2}");
+                    }
+                }
+                catch (Exception ex) {
+                    _logger($"ERROR logging action probabilities: {ex.Message}");
+                }
+
+                // Get the action with highest probability (same as argmax in Python)
+                int actionIndex = GetMaxProbabilityIndex(outputTensor);
+                TradingAction selectedAction = MapIndexToAction(actionIndex);
+                
+                // Safely get confidence
+                float confidence;
+                try {
+                    confidence = outputTensor[actionIndex];
+                }
+                catch (Exception ex) {
+                    _logger($"ERROR retrieving confidence value: {ex.Message}");
+                    confidence = 1.0f;
+                }
+                
+                // Safely get timestamp
+                long timestamp;
+                try {
+                    timestamp = data.Timestamp.Last();
+                }
+                catch (Exception) {
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    _logger("WARNING: Could not get timestamp from data, using current time");
+                }
+                
+                _logger($"Final prediction: Action={selectedAction}, Confidence={confidence:P2}, Timestamp={timestamp}");
+                
+                return new PredictionResponse
+                {
+                    Action = selectedAction.ToString(),
+                    Confidence = confidence,
+                    Timestamp = timestamp,
+                    Description = $"Local ONNX prediction: {selectedAction} ({confidence:P2})"
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger($"ERROR in GetStandardPrediction: {ex.Message}");
+                _logger($"Stack trace: {ex.StackTrace}");
+                return new PredictionResponse
+                {
+                    Action = "Hold",
+                    Confidence = 1.0f,
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    Description = $"ERROR in standard prediction: {ex.Message}, defaulting to Hold"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Get prediction using a recurrent (LSTM) model
+        /// </summary>
+        private PredictionResponse GetRecurrentPrediction(MarketData data)
+        {
+            try 
+            {
+                _logger("Preprocessing sequence features for recurrent model...");
+                // Create sequence input tensor with shape [1, sequence_length, features]
+                var featuresSequence = PreprocessSequenceFeatures(data);
+                
+                var batchSize = 1;
+                var seqLength = data.Close.Count;
+                var featuresPerBar = featuresSequence.Length / seqLength;
+                
+                _logger($"Sequence shape parameters: batch_size={batchSize}, seq_length={seqLength}, features_per_bar={featuresPerBar}");
+                _logger($"Total features in sequence: {featuresSequence.Length}");
+                
+                var inputTensor = new DenseTensor<float>(
+                    featuresSequence, 
+                    new[] { batchSize, seqLength, featuresPerBar });
+                _logger($"Created input tensor with shape: [1, {seqLength}, {featuresPerBar}]");
+
+                // Create tensors for LSTM state
+                _logger("Creating LSTM state tensors...");
+                var hiddenTensor = new DenseTensor<float>(_lstmHidden, new[] { _numLayers, batchSize, _hiddenSize });
+                var cellTensor = new DenseTensor<float>(_lstmCell, new[] { _numLayers, batchSize, _hiddenSize });
+                _logger($"Created LSTM state tensors with shapes: [{_numLayers}, {batchSize}, {_hiddenSize}]");
+
+                // Create input dictionary
+                _logger("Creating input dictionary...");
+                var inputs = new List<NamedOnnxValue>
+                {
+                    NamedOnnxValue.CreateFromTensor("observation", inputTensor),
+                    NamedOnnxValue.CreateFromTensor("lstm_h", hiddenTensor),
+                    NamedOnnxValue.CreateFromTensor("lstm_c", cellTensor)
+                };
+                
+                // Log inputs for diagnostic purposes
+                _logger("Input names for model:");
+                foreach (var input in _session.InputMetadata)
+                {
+                    _logger($"  - {input.Key}: {string.Join("x", input.Value.Dimensions)}");
+                }
+                _logger("Expected output names:");
+                foreach (var output in _session.OutputMetadata)
+                {
+                    _logger($"  - {output.Key}: {string.Join("x", output.Value.Dimensions)}");
+                }
+
+                // Run inference with error handling
+                _logger("Running inference...");
+                IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
+                try
+                {
+                    results = _session.Run(inputs);
+                    _logger("Inference completed successfully");
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR during model inference: {ex.Message}");
+                    _logger($"Stack trace: {ex.StackTrace}");
+                    
+                    // Return safe default since inference failed
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = $"ERROR during recurrent inference: {ex.Message}, defaulting to Hold"
+                    };
+                }
+                
+                // Check if we have results
+                if (results == null || !results.Any())
+                {
+                    _logger("ERROR: Recurrent model returned no results");
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = "ERROR: Recurrent model returned no results, defaulting to Hold"
+                    };
+                }
+                
+                // Log all available output names
+                _logger("Available output names in results:");
+                foreach (var r in results)
+                {
+                    _logger($"  - {r.Name}");
+                }
+                
+                // Get action probabilities with error handling
+                _logger("Processing outputs...");
+                Tensor<float> outputTensor;
+                try
+                {
+                    var actionProbs = results.FirstOrDefault(x => x.Name == "action_probs");
+                    if (actionProbs == null)
+                    {
+                        _logger("ERROR: 'action_probs' output not found in model results");
+                        // Try to use first output as fallback
+                        actionProbs = results.First();
+                        _logger($"Using fallback output: {actionProbs.Name}");
+                    }
+                    
+                    outputTensor = actionProbs.AsTensor<float>();
+                    _logger($"Action probs tensor retrieved successfully");
+                    _logger($"Action probs tensor shape: [{string.Join(", ", outputTensor.Dimensions.ToArray())}]");
+                    _logger($"Action probs tensor length: {outputTensor.Length}");
+                    
+                    // Check if tensor has elements before accessing them
+                    if (outputTensor.Length == 0)
+                    {
+                        _logger("ERROR: Output tensor is empty");
+                        return new PredictionResponse
+                        {
+                            Action = "Hold",
+                            Confidence = 1.0f,
+                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                            Description = "ERROR: Empty output tensor, defaulting to Hold"
+                        };
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR getting action probabilities: {ex.Message}");
+                    return new PredictionResponse
+                    {
+                        Action = "Hold",
+                        Confidence = 1.0f,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        Description = $"ERROR getting action probabilities: {ex.Message}, defaulting to Hold"
+                    };
+                }
+                
+                // Log all probabilities for debugging
+                _logger("Raw action probabilities:");
+                try
+                {
+                    for (int i = 0; i < Math.Min(outputTensor.Length, 4); i++) // Safety: limit to 4 elements max
+                    {
+                        TradingAction actionType = MapIndexToAction(i);
+                        _logger($"  - {actionType}: {outputTensor[i]:P2}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR logging action probabilities: {ex.Message}");
+                }
+                
+                // Get updated LSTM states with error handling
+                try
+                {
+                    var newHiddenState = results.FirstOrDefault(x => x.Name == "new_lstm_h");
+                    var newCellState = results.FirstOrDefault(x => x.Name == "new_lstm_c");
+                    
+                    if (newHiddenState != null && newCellState != null)
+                    {
+                        var newHiddenTensor = newHiddenState.AsTensor<float>();
+                        var newCellTensor = newCellState.AsTensor<float>();
+                        _logger("Retrieved updated LSTM states");
+                        
+                        // Update internal states
+                        _lstmHidden = newHiddenTensor.ToArray();
+                        _lstmCell = newCellTensor.ToArray();
+                        _logger("Updated internal LSTM states");
+                    }
+                    else
+                    {
+                        _logger("WARNING: Could not find LSTM state outputs, keeping current state");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR updating LSTM states: {ex.Message}");
+                    // Continue processing without updating states
+                }
+                
+                // Process the output - simply take the highest probability action
+                int actionIndex = GetMaxProbabilityIndex(outputTensor);
+                TradingAction selectedAction = MapIndexToAction(actionIndex);
+                
+                // Safely get confidence
+                float confidence;
+                try
+                {
+                    confidence = outputTensor[actionIndex];
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR retrieving confidence value: {ex.Message}");
+                    confidence = 1.0f;
+                }
+                
+                // Safely get timestamp
+                long timestamp;
+                try
+                {
+                    timestamp = data.Timestamp.Last();
+                }
+                catch (Exception)
+                {
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    _logger("WARNING: Could not get timestamp from data, using current time");
+                }
+                
+                _logger($"Final prediction: Action={selectedAction}, Confidence={confidence:P2}, Timestamp={timestamp}");
+                
+                return new PredictionResponse
+                {
+                    Action = selectedAction.ToString(),
+                    Confidence = confidence,
+                    Timestamp = timestamp,
+                    Description = $"Local ONNX prediction: {selectedAction} ({confidence:P2})"
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger($"ERROR in GetRecurrentPrediction: {ex.Message}");
+                _logger($"Stack trace: {ex.StackTrace}");
+                return new PredictionResponse
+                {
+                    Action = "Hold",
+                    Confidence = 1.0f,
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    Description = $"ERROR in recurrent prediction: {ex.Message}, defaulting to Hold"
+                };
+            }
+        }
+
+        /// <summary>
+        /// Reset LSTM states to zero (useful between episodes or when market conditions change drastically)
+        /// </summary>
+        public void ResetLstmState()
+        {
+            if (_isRecurrentModel)
+            {
+                _logger("Resetting LSTM states to zero");
+                Array.Clear(_lstmHidden, 0, _lstmHidden.Length);
+                Array.Clear(_lstmCell, 0, _lstmCell.Length);
+                _logger("LSTM states reset completed");
+            }
+        }
+
+        /// <summary>
+        /// Preprocess features for a single timestep
+        /// </summary>
+        private float[] PreprocessFeatures(MarketData data)
+        {
+            try
+            {
+                _logger("Preprocessing features for single timestep...");
+                
+                // Validate data
+                if (data == null)
+                {
+                    _logger("ERROR: Received null MarketData");
+                    throw new ArgumentNullException(nameof(data));
+                }
+                
+                if (data.Close == null || data.Close.Count == 0)
+                {
+                    _logger("ERROR: MarketData contains no price data");
+                    throw new InvalidOperationException("Market data contains no price data");
+                }
+                
+                _logger($"MarketData validation: Close.Count={data.Close.Count}, Open.Count={data.Open.Count}, " +
+                        $"High.Count={data.High.Count}, Low.Count={data.Low.Count}, Volume.Count={data.Volume.Count}, " +
+                        $"Timestamp.Count={data.Timestamp.Count}");
+                
+                // Make sure all data arrays have the same length
+                if (data.Open.Count != data.Close.Count || 
+                    data.High.Count != data.Close.Count || 
+                    data.Low.Count != data.Close.Count ||
+                    data.Volume.Count != data.Close.Count ||
+                    data.Timestamp.Count != data.Close.Count)
+                {
+                    _logger("ERROR: Inconsistent data lengths in MarketData");
+                    throw new InvalidOperationException("Inconsistent data lengths in market data");
+                }
+                
+                // Extract the last bar's data and create features
+                var features = new List<float>();
+                
+                // Price features
+                int lastIdx = data.Close.Count - 1;
+                _logger($"Processing last bar at index {lastIdx}");
+                
+                // Safely calculate returns
+                float returns;
+                if (lastIdx > 0 && !double.IsNaN(data.Close[lastIdx]) && !double.IsNaN(data.Close[lastIdx - 1]) && 
+                    data.Close[lastIdx - 1] != 0)
+                {
+                    returns = (float)((data.Close[lastIdx] / data.Close[lastIdx - 1]) - 1.0);
+                }
+                else
+                {
+                    returns = 0f;
+                    _logger("WARNING: Could not calculate returns, using 0");
+                }
+                features.Add(returns);
+                
+                // Convert prices to float with validation
+                float close = (float)data.Close[lastIdx];
+                float open = (float)data.Open[lastIdx];
+                float high = (float)data.High[lastIdx];
+                float low = (float)data.Low[lastIdx];
+                float volume = (float)data.Volume[lastIdx];
+                
+                // Check for NaN or infinity
+                if (float.IsNaN(close) || float.IsInfinity(close) || close == 0)
+                {
+                    _logger("WARNING: Invalid close price detected, using fallback value");
+                    close = 1.0f; // Fallback value
+                }
+                
+                // Basic features - normalize by close price with safety checks
+                try
+                {
+                    // Volatility
+                    float volatility = (high - low) / close;
+                    if (float.IsNaN(volatility) || float.IsInfinity(volatility))
+                    {
+                        volatility = 0f;
+                        _logger("WARNING: Invalid volatility calculated, using 0");
+                    }
+                    features.Add(volatility);
+                    
+                    // Volume (normalized)
+                    float normalizedVolume = volume / (volume > 0 ? volume : 1);
+                    features.Add(normalizedVolume);
+                    
+                    // Return for current bar
+                    float barReturn = (close - open) / (open != 0 ? open : 1);
+                    if (float.IsNaN(barReturn) || float.IsInfinity(barReturn))
+                    {
+                        barReturn = 0f;
+                        _logger("WARNING: Invalid bar return calculated, using 0");
+                    }
+                    features.Add(barReturn);
+                    
+                    // Position in bar
+                    float positionInBar = (close - low) / ((high - low > 0) ? (high - low) : 1);
+                    if (float.IsNaN(positionInBar) || float.IsInfinity(positionInBar))
+                    {
+                        positionInBar = 0.5f;
+                        _logger("WARNING: Invalid position in bar calculated, using 0.5");
+                    }
+                    features.Add(positionInBar);
+                    
+                    // Add time features
+                    DateTimeOffset barTimeOffset;
+                    try
+                    {
+                        barTimeOffset = DateTimeOffset.FromUnixTimeSeconds(data.Timestamp[lastIdx]);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger($"ERROR converting timestamp: {ex.Message}. Using current time.");
+                        barTimeOffset = DateTimeOffset.UtcNow;
+                    }
+                    var barTime = barTimeOffset.DateTime;
+                    
+                    // Time of day represented as sin/cos for circularity
+                    double hoursNormalized = barTime.Hour / 24.0 * 2.0 * Math.PI;
+                    features.Add((float)Math.Sin(hoursNormalized));
+                    features.Add((float)Math.Cos(hoursNormalized));
+                    
+                    // Day of week represented as sin/cos for circularity
+                    double dayOfWeekNormalized = ((int)barTime.DayOfWeek) / 7.0 * 2.0 * Math.PI;
+                    features.Add((float)Math.Sin(dayOfWeekNormalized));
+                    features.Add((float)Math.Cos(dayOfWeekNormalized));
+                    
+                    // Position direction and PnL as features
+                    features.Add((float)data.PositionDirection);
+                    features.Add(float.IsNaN((float)data.PositionPnl) ? 0f : (float)data.PositionPnl);
+                }
+                catch (Exception ex)
+                {
+                    _logger($"ERROR during feature calculation: {ex.Message}");
+                    throw;
+                }
+                
+                _logger($"Preprocessed {features.Count} features for single timestep");
+                
+                // Final validation of feature array
+                if (features.Any(f => float.IsNaN(f) || float.IsInfinity(f)))
+                {
+                    _logger("WARNING: NaN or Infinity values detected in features, replacing with 0");
+                    for (int i = 0; i < features.Count; i++)
+                    {
+                        if (float.IsNaN(features[i]) || float.IsInfinity(features[i]))
+                            features[i] = 0f;
+                    }
+                }
+                
+                return features.ToArray();
+            }
+            catch (Exception ex)
+            {
+                _logger($"CRITICAL ERROR in PreprocessFeatures: {ex.Message}");
+                _logger($"Stack trace: {ex.StackTrace}");
+                
+                // Return a safe default feature vector instead of throwing
+                _logger("Returning fallback feature vector to avoid crashing");
+                return new float[12] { 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f };
+            }
+        }
+
+        /// <summary>
+        /// Preprocess sequence features for the whole time series
+        /// </summary>
+        private float[] PreprocessSequenceFeatures(MarketData data)
+        {
+            try
+            {
+                _logger($"Preprocessing sequence features for {data.Close.Count} bars...");
+                
+                // Validate data
+                if (data == null)
+                {
+                    _logger("ERROR: Received null MarketData");
+                    throw new ArgumentNullException(nameof(data));
+                }
+                
+                if (data.Close == null || data.Close.Count == 0)
+                {
+                    _logger("ERROR: MarketData contains no price data");
+                    throw new InvalidOperationException("Market data contains no price data");
+                }
+                
+                // Make sure all data arrays have the same length
+                if (data.Open.Count != data.Close.Count || 
+                    data.High.Count != data.Close.Count || 
+                    data.Low.Count != data.Close.Count ||
+                    data.Volume.Count != data.Close.Count ||
+                    data.Timestamp.Count != data.Close.Count)
+                {
+                    _logger("ERROR: Inconsistent data lengths in MarketData");
+                    throw new InvalidOperationException("Inconsistent data lengths in market data");
+                }
+                
+                var features = new List<float>();
+                int featuresPerBar = 12; // Should match the number of features we extract per bar
+                
+                // Process each bar in the sequence
+                for (int i = 0; i < data.Close.Count; i++)
+                {
+                    try
+                    {
+                        // Calculate returns safely
+                        float returns;
+                        if (i > 0 && !double.IsNaN(data.Close[i]) && !double.IsNaN(data.Close[i - 1]) && 
+                            data.Close[i - 1] != 0)
+                        {
+                            returns = (float)((data.Close[i] / data.Close[i - 1]) - 1.0);
+                        }
+                        else
+                        {
+                            returns = 0f;
+                        }
+                        features.Add(returns);
+                        
+                        // Convert to float with safety checks
+                        float close = (float)data.Close[i];
+                        if (float.IsNaN(close) || float.IsInfinity(close) || close == 0)
+                        {
+                            close = 1.0f; // Fallback value
+                        }
+                        
+                        float open = (float)data.Open[i];
+                        float high = (float)data.High[i];
+                        float low = (float)data.Low[i];
+                        float volume = (float)data.Volume[i];
+                        
+                        // Basic features with safety checks
+                        // Volatility
+                        float volatility = (high - low) / close;
+                        if (float.IsNaN(volatility) || float.IsInfinity(volatility))
+                        {
+                            volatility = 0f;
+                        }
+                        features.Add(volatility);
+                        
+                        // Volume
+                        float normalizedVolume = volume / (volume > 0 ? volume : 1);
+                        features.Add(normalizedVolume);
+                        
+                        // Return
+                        float barReturn = (close - open) / (open != 0 ? open : 1);
+                        if (float.IsNaN(barReturn) || float.IsInfinity(barReturn))
+                        {
+                            barReturn = 0f;
+                        }
+                        features.Add(barReturn);
+                        
+                        // Position in bar
+                        float positionInBar = (close - low) / ((high - low > 0) ? (high - low) : 1);
+                        if (float.IsNaN(positionInBar) || float.IsInfinity(positionInBar))
+                        {
+                            positionInBar = 0.5f;
+                        }
+                        features.Add(positionInBar);
+                        
+                        // Time features
+                        DateTimeOffset barTimeOffset;
+                        try
+                        {
+                            barTimeOffset = DateTimeOffset.FromUnixTimeSeconds(data.Timestamp[i]);
+                        }
+                        catch
+                        {
+                            barTimeOffset = DateTimeOffset.UtcNow;
+                        }
+                        var barTime = barTimeOffset.DateTime;
+                        
+                        double hoursNormalized = barTime.Hour / 24.0 * 2.0 * Math.PI;
+                        features.Add((float)Math.Sin(hoursNormalized));
+                        features.Add((float)Math.Cos(hoursNormalized));
+                        
+                        double dayOfWeekNormalized = ((int)barTime.DayOfWeek) / 7.0 * 2.0 * Math.PI;
+                        features.Add((float)Math.Sin(dayOfWeekNormalized));
+                        features.Add((float)Math.Cos(dayOfWeekNormalized));
+                        
+                        // Position info
+                        features.Add((float)data.PositionDirection);
+                        features.Add(float.IsNaN((float)data.PositionPnl) ? 0f : (float)data.PositionPnl);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger($"Error processing bar {i}: {ex.Message}");
+                        
+                        // Add default features for this bar to maintain consistency
+                        for (int j = features.Count % featuresPerBar; j < featuresPerBar; j++)
+                        {
+                            features.Add(0f);
+                        }
+                    }
+                }
+                
+                _logger($"Preprocessed total of {features.Count} features for sequence");
+                
+                // Final validation - ensure we have the correct number of features
+                int expectedFeatureCount = data.Close.Count * featuresPerBar;
+                if (features.Count != expectedFeatureCount)
+                {
+                    _logger($"WARNING: Feature count mismatch. Expected {expectedFeatureCount}, got {features.Count}");
+                    
+                    // Pad or truncate to correct size
+                    if (features.Count < expectedFeatureCount)
+                    {
+                        _logger("Padding feature array with zeros");
+                        features.AddRange(Enumerable.Repeat(0f, expectedFeatureCount - features.Count));
+                    }
+                    else if (features.Count > expectedFeatureCount)
+                    {
+                        _logger("Truncating feature array to expected size");
+                        features = features.Take(expectedFeatureCount).ToList();
+                    }
+                }
+                
+                // Replace any NaN or Infinity values
+                for (int i = 0; i < features.Count; i++)
+                {
+                    if (float.IsNaN(features[i]) || float.IsInfinity(features[i]))
+                    {
+                        features[i] = 0f;
+                    }
+                }
+                
+                return features.ToArray();
+            }
+            catch (Exception ex)
+            {
+                _logger($"CRITICAL ERROR in PreprocessSequenceFeatures: {ex.Message}");
+                _logger($"Stack trace: {ex.StackTrace}");
+                
+                // Return a safe default feature vector instead of throwing
+                _logger("Returning fallback feature vector to avoid crashing");
+                int minFeaturesNeeded = data?.Close?.Count > 0 ? data.Close.Count * 12 : 12;
+                return Enumerable.Repeat(0f, minFeaturesNeeded).ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Get the index with the highest probability
+        /// </summary>
+        private int GetMaxProbabilityIndex(Tensor<float> tensor)
+        {
+            try
+            {
+                if (tensor == null)
+                {
+                    _logger("WARNING: Received null tensor in GetMaxProbabilityIndex");
+                    return 0; // Default to Hold action
+                }
+                
+                if (tensor.Length == 0)
+                {
+                    _logger("WARNING: Received empty tensor in GetMaxProbabilityIndex");
+                    return 0; // Default to Hold action
+                }
+                
+                _logger($"Finding max probability among {tensor.Length} values");
+                
+                int maxIndex = 0;
+                float maxValue = tensor[0];
+                
+                for (int i = 1; i < tensor.Length; i++)
+                {
+                    if (tensor[i] > maxValue)
+                    {
+                        maxValue = tensor[i];
+                        maxIndex = i;
+                    }
+                }
+                
+                _logger($"Max probability found: index={maxIndex}, value={maxValue}");
+                return maxIndex;
+            }
+            catch (Exception ex)
+            {
+                _logger($"ERROR in GetMaxProbabilityIndex: {ex.Message}");
+                return 0; // Default to Hold action in case of error
+            }
+        }
+
+        /// <summary>
+        /// Map the model's output index to a trading action
+        /// </summary>
+        private TradingAction MapIndexToAction(int index)
+        {
+            _logger($"Mapping action index {index} to trading action");
+            
+            // Check for invalid indices
+            if (index < 0)
+            {
+                _logger($"WARNING: Negative action index {index}, defaulting to Hold");
+                return TradingAction.Hold;
+            }
+            
+            // This mapping should match your model's training setup
+            switch (index)
+            {
+                case 0:
+                    _logger("Mapped index 0 to Hold");
+                    return TradingAction.Hold;
+                case 1:
+                    _logger("Mapped index 1 to Buy");
+                    return TradingAction.Buy;
+                case 2:
+                    _logger("Mapped index 2 to Sell");
+                    return TradingAction.Sell;
+                case 3:
+                    _logger("Mapped index 3 to Close");
+                    return TradingAction.Close;
+                default:
+                    _logger($"WARNING: Unknown action index {index}, defaulting to Hold");
+                    return TradingAction.Hold;
+            }
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    _logger?.Invoke("Disposing ONNX Model Predictor resources");
+                    _session?.Dispose();
+                    _logger?.Invoke("ONNX session disposed");
+                }
+                _disposed = true;
+            }
+        }
+
+        ~OnnxModelPredictor()
+        {
+            Dispose(false);
+        }
+    }
+}
