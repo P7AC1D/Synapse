@@ -37,9 +37,10 @@ namespace cAlgo.Robots
 
         private OnnxModelPredictor _onnxPredictor;
         private RiskManager _riskManager;
-        private TradeManager _tradeManager;
         private readonly Queue<Bar> _bars;
         private bool _isInitialized;
+
+        private const string POSITION_LABEL = "DRLTrader";
 
         public DRLTrader()
         {
@@ -283,19 +284,6 @@ namespace cAlgo.Robots
                 Print($"Stack trace: {ex.StackTrace}");
                 return;
             }
-            
-            try
-            {
-                Print("Initializing Trade Manager");
-                _tradeManager = new TradeManager(this, Symbol, _riskManager);
-                Print("Trade Manager initialized successfully");
-            }
-            catch (Exception ex)
-            {
-                Print($"ERROR initializing Trade Manager: {ex.Message}");
-                Print($"Stack trace: {ex.StackTrace}");
-                return;
-            }
 
             try
             {
@@ -340,34 +328,27 @@ namespace cAlgo.Robots
                 }
 
                 Print("Getting current position info...");
-                // Get current position info correctly by finding all positions
-                var positions = Positions.FindAll(Symbol.Name);
-                Position position = positions.FirstOrDefault();
+                // Get current position directly from the TradeManager
+                var position = Positions.FirstOrDefault(p => p.SymbolName == Symbol.Name && p.Label == POSITION_LABEL);
                 
-                // Calculate net position direction and PnL
+                // Calculate position direction and PnL
                 int positionDirection = 0;
                 double positionPnl = 0.0;
                 
-                if (positions.Count > 0) 
+                if (position != null) 
                 {
-                    // Sum up the direction and PnL from all positions
-                    foreach (var pos in positions)
-                    {
-                        positionDirection += pos.TradeType == TradeType.Buy ? 1 : -1;
-                        positionPnl += pos.NetProfit / Math.Abs(positionDirection); // Normalize PnL by position count
-                    }
+                    // Set direction based on the current managed position
+                    positionDirection = position.TradeType == TradeType.Buy ? 1 : -1;
                     
-                    // Clamp direction to [-1, 0, 1] as expected by the model
-                    positionDirection = Math.Sign(positionDirection);
+                    // Get PnL from the current position and normalize to [-1, 1] range
+                    // Use account balance for normalization instead of fixed value
+                    positionPnl = Math.Clamp(position.NetProfit / Account.Balance, -1.0, 1.0);
                     
-                    // Normalize PnL to [-1, 1] range
-                    positionPnl = Math.Clamp(positionPnl / 1000.0, -1.0, 1.0);
-                    
-                    Print($"Current position: Direction={positionDirection}, PnL={positionPnl}, Count={positions.Count}");
+                    Print($"Current position: Direction={positionDirection}, PnL={positionPnl}, ID={position.Id}, Raw PnL={position.NetProfit}, Balance={Account.Balance}");
                 }
                 else
                 {
-                    Print($"No open positions found: Direction={positionDirection}, PnL={positionPnl}");
+                    Print($"No open position found: Direction={positionDirection}, PnL={positionPnl}");
                 }
 
                 // Create market data
@@ -423,7 +404,7 @@ namespace cAlgo.Robots
                 Print("Executing trade based on prediction...");
                 try
                 {
-                    bool success = _tradeManager.ExecuteTradeAsync(prediction).Result;
+                    bool success = ExecuteTradeAsync(prediction, position).Result;
                     if (!success)
                         Print("Trade execution failed");
                     else
@@ -453,6 +434,160 @@ namespace cAlgo.Robots
                 Print("==== End of error report ====");
             }
         }
+
+        /// Execute trade based on prediction
+        /// </summary>
+        public async Task<bool> ExecuteTradeAsync(PredictionResponse prediction, Position position)
+        {
+            try
+            {
+                // Parse the action
+                if (!Enum.TryParse(prediction.Action, true, out TradingAction action))
+                {
+                    Print($"Invalid action received: {prediction.Action}");
+                    return false;
+                }
+
+                // Check for current position
+                bool hasPosition = position != null;
+                
+                if (hasPosition)
+                {
+                    Print($"Current position: {position.Id}, {position.TradeType}, {position.VolumeInUnits} units, PnL: {position.NetProfit}");
+                }
+
+                switch (action)
+                {
+                    case TradingAction.Hold:
+                        Print("Hold signal - no trade execution");
+                        return true;
+
+                    case TradingAction.Close:
+                        if (hasPosition)
+                        {
+                            return await ClosePositionAsync(position);
+                        }
+                        else
+                        {
+                            Print("No position to close");
+                            return true;
+                        }
+
+                    case TradingAction.Buy:
+                        if (hasPosition)
+                        {
+                            // Ignore Buy signal when any position is open
+                            Print("Buy signal received but a position is already open - ignoring");
+                            return true;
+                        }
+                        else
+                        {
+                            return await OpenPositionAsync(action);
+                        }
+                        
+                    case TradingAction.Sell:
+                        if (hasPosition)
+                        {
+                            // Ignore Sell signal when any position is open
+                            Print("Sell signal received but a position is already open - ignoring");
+                            return true;
+                        }
+                        else
+                        {
+                            return await OpenPositionAsync(action);
+                        }
+
+                    default:
+                        Print($"Unsupported action: {action}");
+                        return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Error executing trade: {ex.Message}");
+                Print($"Stack trace: {ex.StackTrace}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Open a new position based on the trading action
+        /// </summary>
+        private Task<bool> OpenPositionAsync(TradingAction action)
+        {
+            try
+            {
+                // Calculate position size
+                double volume = _riskManager.CalculatePositionSize(Account.Balance);
+                
+                // Get current market price
+                double entryPrice = action == TradingAction.Buy ? Symbol.Ask : Symbol.Bid;
+                
+                // Calculate stop loss
+                TradeType tradeType = action == TradingAction.Buy ? TradeType.Buy : TradeType.Sell;
+                double stopLoss = _riskManager.CalculateStopLoss(entryPrice, tradeType);
+                
+                // Open position
+                var result = ExecuteMarketOrder(
+                    tradeType,
+                    Symbol.Name,
+                    volume,
+                    POSITION_LABEL,
+                    stopLoss,
+                    null  // No take profit
+                );
+                
+                if (result.IsSuccessful)
+                {
+                    Print($"Position opened: {action} {volume:F2} lots @ {entryPrice:F5} (SL: {stopLoss:F5})");
+                    return Task.FromResult(true);
+                }
+                else
+                {
+                    Print($"Failed to open position: {result.Error}");
+                    return Task.FromResult(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Error opening position: {ex.Message}");
+                return Task.FromResult(false);
+            }
+        }        /// <summary>
+        /// Close current position if it exists
+        /// </summary>
+        private Task<bool> ClosePositionAsync(Position position)
+        {
+            try
+            {
+                
+                if (position == null)
+                {
+                    Print("No position to close");
+                    return Task.FromResult(true);
+                }
+
+                Print($"Attempting to close position {position.Id}...");
+                var result = ClosePosition(position);
+                if (result.IsSuccessful)
+                {
+                    Print($"Position {position.Id} closed successfully");
+                    return Task.FromResult(true);
+                }
+                else
+                {
+                    Print($"Failed to close position: {result.Error}");
+                    return Task.FromResult(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Error closing position: {ex.Message}");
+                Print($"Stack trace: {ex.StackTrace}");
+                return Task.FromResult(false);
+            }
+        }
+
 
         protected override void OnStop()
         {

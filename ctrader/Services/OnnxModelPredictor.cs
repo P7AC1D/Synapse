@@ -449,7 +449,7 @@ namespace DRLTrader.Services
                 float confidence;
                 try {
                     // Check if tensor is 2D [1,4] or 1D [4]
-                    bool is2DTensor = outputTensor.Dimensions.Count == 2 && outputTensor.Dimensions[0] == 1;
+                    bool is2DTensor = outputTensor.Dimensions.Length == 2 && outputTensor.Dimensions[0] == 1;
                     confidence = is2DTensor ? outputTensor[0, actionIndex] : outputTensor[actionIndex];
                     _logger($"Confidence value retrieved successfully: {confidence:F6} ({confidence:P2})");
                 }
