@@ -1441,6 +1441,15 @@ namespace DRLTrader.Services
                 
                 _logger($"Finding max probability among {tensor.Length} values");
                 
+                // Detailed logging of all probabilities
+                _logger("DETAILED ACTION PROBABILITIES:");
+                for (int i = 0; i < tensor.Length; i++)
+                {
+                    TradingAction action = MapIndexToAction(i);
+                    _logger($"  - Index {i} ({action}): {tensor[i]:F6} ({tensor[i]:P2})");
+                }
+                
+                // Find the actual max value
                 int maxIndex = 0;
                 float maxValue = tensor[0];
                 
@@ -1453,12 +1462,36 @@ namespace DRLTrader.Services
                     }
                 }
                 
-                _logger($"Max probability found: index={maxIndex}, value={maxValue}");
+                // Double-check if the max is correct (debugging only)
+                bool isMaxCorrect = true;
+                for (int i = 0; i < tensor.Length; i++)
+                {
+                    if (i != maxIndex && tensor[i] > tensor[maxIndex])
+                    {
+                        isMaxCorrect = false;
+                        _logger($"ERROR: Found higher value at {i}: {tensor[i]} > {tensor[maxIndex]}");
+                    }
+                }
+                
+                TradingAction selectedAction = MapIndexToAction(maxIndex);
+                _logger($"Max probability found: index={maxIndex}, action={selectedAction}, value={maxValue:F6} ({maxValue:P2}), isMaxCorrect={isMaxCorrect}");
+                
+                // Safety check for suspiciously close values
+                const float EPSILON = 1e-6f;
+                for (int i = 0; i < tensor.Length; i++)
+                {
+                    if (i != maxIndex && Math.Abs(tensor[i] - maxValue) < EPSILON)
+                    {
+                        _logger($"WARNING: Value at index {i} ({MapIndexToAction(i)}) is suspiciously close to max: {tensor[i]:F8} vs {maxValue:F8}");
+                    }
+                }
+                
                 return maxIndex;
             }
             catch (Exception ex)
             {
                 _logger($"ERROR in GetMaxProbabilityIndex: {ex.Message}");
+                _logger($"Stack trace: {ex.StackTrace}");
                 return 0; // Default to Hold action in case of error
             }
         }
