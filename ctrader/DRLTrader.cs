@@ -340,13 +340,35 @@ namespace cAlgo.Robots
                 }
 
                 Print("Getting current position info...");
-                // Get current position info
-                var position = Positions.Find(Symbol.Name);
-                int positionDirection = position != null 
-                    ? (position.TradeType == TradeType.Buy ? 1 : -1) 
-                    : 0;
-                double positionPnl = position?.NetProfit ?? 0.0;
-                Print($"Current position: Direction={positionDirection}, PnL={positionPnl}");
+                // Get current position info correctly by finding all positions
+                var positions = Positions.FindAll(Symbol.Name);
+                Position position = positions.FirstOrDefault();
+                
+                // Calculate net position direction and PnL
+                int positionDirection = 0;
+                double positionPnl = 0.0;
+                
+                if (positions.Count > 0) 
+                {
+                    // Sum up the direction and PnL from all positions
+                    foreach (var pos in positions)
+                    {
+                        positionDirection += pos.TradeType == TradeType.Buy ? 1 : -1;
+                        positionPnl += pos.NetProfit / Math.Abs(positionDirection); // Normalize PnL by position count
+                    }
+                    
+                    // Clamp direction to [-1, 0, 1] as expected by the model
+                    positionDirection = Math.Sign(positionDirection);
+                    
+                    // Normalize PnL to [-1, 1] range
+                    positionPnl = Math.Clamp(positionPnl / 1000.0, -1.0, 1.0);
+                    
+                    Print($"Current position: Direction={positionDirection}, PnL={positionPnl}, Count={positions.Count}");
+                }
+                else
+                {
+                    Print($"No open positions found: Direction={positionDirection}, PnL={positionPnl}");
+                }
 
                 // Create market data
                 Print("Preparing market data...");

@@ -38,8 +38,26 @@ namespace DRLTrader.Services
                     return false;
                 }
 
-                // Update current position tracking
-                _currentPosition = _robot.Positions.Find(_symbol.Name);
+                // Get ALL positions for the symbol to ensure we're finding everything
+                var positions = _robot.Positions.FindAll(_symbol.Name);
+                int positionCount = positions.Count;
+                
+                if (positionCount > 0)
+                {
+                    _robot.Print($"Found {positionCount} existing positions for {_symbol.Name}");
+                    foreach (var pos in positions)
+                    {
+                        _robot.Print($"Position: {pos.Id}, {pos.TradeType}, {pos.Volume} lots, PnL: {pos.NetProfit}");
+                    }
+                    
+                    // Update current position to the first one found
+                    _currentPosition = positions.FirstOrDefault();
+                }
+                else
+                {
+                    _robot.Print($"No existing positions found for {_symbol.Name}");
+                    _currentPosition = null;
+                }
 
                 switch (action)
                 {
@@ -48,17 +66,56 @@ namespace DRLTrader.Services
                         return true;
 
                     case TradingAction.Close:
-                        return await ClosePositionAsync();
-
-                    case TradingAction.Buy:
-                    case TradingAction.Sell:
-                        // Don't open new position if one exists
-                        if (_currentPosition != null)
+                        if (positionCount > 0)
                         {
-                            _robot.Print($"Trade rejected: Position already exists");
+                            // Close all positions for this symbol
+                            return await CloseAllPositionsAsync(positions);
+                        }
+                        else
+                        {
+                            _robot.Print("No positions to close");
                             return true;
                         }
-                        return await OpenPositionAsync(action);
+
+                    case TradingAction.Buy:
+                        // If we have a sell position, close it first
+                        if (positionCount > 0 && _currentPosition.TradeType == TradeType.Sell)
+                        {
+                            _robot.Print("Closing existing Sell positions before opening Buy position");
+                            await CloseAllPositionsAsync(positions);
+                            return await OpenPositionAsync(action);
+                        }
+                        // If we already have a buy position, don't open another one
+                        else if (positionCount > 0 && _currentPosition.TradeType == TradeType.Buy)
+                        {
+                            _robot.Print($"Buy signal received but already have {positionCount} Buy positions - holding");
+                            return true;
+                        }
+                        // No positions, open a new one
+                        else
+                        {
+                            return await OpenPositionAsync(action);
+                        }
+                        
+                    case TradingAction.Sell:
+                        // If we have a buy position, close it first
+                        if (positionCount > 0 && _currentPosition.TradeType == TradeType.Buy)
+                        {
+                            _robot.Print("Closing existing Buy positions before opening Sell position");
+                            await CloseAllPositionsAsync(positions);
+                            return await OpenPositionAsync(action);
+                        }
+                        // If we already have a sell position, don't open another one
+                        else if (positionCount > 0 && _currentPosition.TradeType == TradeType.Sell)
+                        {
+                            _robot.Print($"Sell signal received but already have {positionCount} Sell positions - holding");
+                            return true;
+                        }
+                        // No positions, open a new one
+                        else
+                        {
+                            return await OpenPositionAsync(action);
+                        }
 
                     default:
                         _robot.Print($"Unsupported action: {action}");
@@ -68,6 +125,7 @@ namespace DRLTrader.Services
             catch (Exception ex)
             {
                 _robot.Print($"Error executing trade: {ex.Message}");
+                _robot.Print($"Stack trace: {ex.StackTrace}");
                 return false;
             }
         }
@@ -147,6 +205,33 @@ namespace DRLTrader.Services
             {
                 _robot.Print($"Error closing position: {ex.Message}");
                 return Task.FromResult(false);
+            }
+        }
+
+        /// <summary>
+        /// Close all positions for the given symbol
+        /// </summary>
+        private async Task<bool> CloseAllPositionsAsync(Position[] positions)
+        {
+            try
+            {
+                foreach (var position in positions)
+                {
+                    var result = _robot.ClosePosition(position);
+                    if (!result.IsSuccessful)
+                    {
+                        _robot.Print($"Failed to close position {position.Id}: {result.Error}");
+                        return false;
+                    }
+                }
+                _robot.Print("All positions closed");
+                _currentPosition = null;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _robot.Print($"Error closing all positions: {ex.Message}");
+                return false;
             }
         }
     }

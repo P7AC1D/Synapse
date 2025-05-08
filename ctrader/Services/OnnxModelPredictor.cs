@@ -448,7 +448,10 @@ namespace DRLTrader.Services
                 // Safely get confidence
                 float confidence;
                 try {
-                    confidence = outputTensor[actionIndex];
+                    // Check if tensor is 2D [1,4] or 1D [4]
+                    bool is2DTensor = outputTensor.Dimensions.Count == 2 && outputTensor.Dimensions[0] == 1;
+                    confidence = is2DTensor ? outputTensor[0, actionIndex] : outputTensor[actionIndex];
+                    _logger($"Confidence value retrieved successfully: {confidence:F6} ({confidence:P2})");
                 }
                 catch (Exception ex) {
                     _logger($"ERROR retrieving confidence value: {ex.Message}");
@@ -1455,7 +1458,7 @@ namespace DRLTrader.Services
                 _logger($"Finding max probability among {tensor.Length} values with tensor shape [{string.Join(", ", tensor.Dimensions.ToArray())}]");
                 
                 // Handle tensor shape properly. If it's a 2D tensor with shape [1, N], we need to access elements differently
-                bool is2DTensor = tensor.Dimensions.Count == 2 && tensor.Dimensions[0] == 1;
+                bool is2DTensor = tensor.Dimensions.Length == 2 && tensor.Dimensions[0] == 1;
                 
                 // Detailed logging of all probabilities
                 _logger("DETAILED ACTION PROBABILITIES:");
