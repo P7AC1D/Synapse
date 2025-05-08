@@ -10,3 +10,4 @@ MODEL_PATH = f"C:/Code/drl/bot/model/synapse.zip"
 MAX_SPREAD = 35.0  # Maximum allowed spread for trade execution
 BALANCE_PER_LOT = 2500.0  # Amount of balance required per 0.01 lot (matches TradingEnv)
 STOP_LOSS_PIPS = 25000.0  # Stop loss in pips for all trades
+TAKE_PROFIT_PIPS = 25000.0  # Take profit in pips for all trades

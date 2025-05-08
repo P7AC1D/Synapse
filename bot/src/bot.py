@@ -37,7 +37,8 @@ from config import (
     BALANCE_PER_LOT,
     MT5_COMMENT,
     MAX_SPREAD,
-    STOP_LOSS_PIPS
+    STOP_LOSS_PIPS,
+    TAKE_PROFIT_PIPS
 )
 
 
@@ -45,13 +46,15 @@ class TradingBot:
     """Trading bot that uses a PPO-LSTM model to make trading decisions."""
     
     def __init__(self, model_path=MODEL_PATH, symbol=MT5_SYMBOL, max_spread=MAX_SPREAD, 
-                 balance_per_lot=BALANCE_PER_LOT, stop_loss_pips=STOP_LOSS_PIPS):
+                 balance_per_lot=BALANCE_PER_LOT, stop_loss_pips=STOP_LOSS_PIPS,
+                 take_profit_pips=TAKE_PROFIT_PIPS):
         """Initialize the trading bot components."""
         self.model_path = model_path
         self.symbol = symbol
         self.max_spread = max_spread
         self.balance_per_lot = balance_per_lot
         self.stop_loss_pips = stop_loss_pips
+        self.take_profit_pips = take_profit_pips
         
         self.setup_logging()
         self.running = True
@@ -196,12 +199,13 @@ class TradingBot:
                 self.logger.error("Failed to load trading model")
                 return False
 
-            # Initialize trade executor with balance_per_lot and stop_loss_pips
+            # Initialize trade executor with balance_per_lot, stop_loss_pips and take_profit_pips
             self.trade_executor = TradeExecutor(
                 self.mt5, 
                 symbol=self.symbol,
                 balance_per_lot=self.balance_per_lot,
-                stop_loss_pips=self.stop_loss_pips
+                stop_loss_pips=self.stop_loss_pips,
+                take_profit_pips=self.take_profit_pips
             )
             
             # Get initial data for warmup
@@ -536,6 +540,7 @@ def main() -> int:
     parser.add_argument("--max_spread", type=float, default=MAX_SPREAD, help="Maximum allowed spread")
     parser.add_argument("--balance_per_lot", type=float, default=BALANCE_PER_LOT, help="Balance per lot")
     parser.add_argument("--stop_loss_pips", type=int, default=STOP_LOSS_PIPS, help="Stop loss in pips")
+    parser.add_argument("--take_profit_pips", type=int, default=TAKE_PROFIT_PIPS, help="Take profit in pips")
     args = parser.parse_args()
 
     bot = TradingBot(
@@ -543,7 +548,8 @@ def main() -> int:
         symbol=args.symbol,
         max_spread=args.max_spread,
         balance_per_lot=args.balance_per_lot,
-        stop_loss_pips=args.stop_loss_pips
+        stop_loss_pips=args.stop_loss_pips,
+        take_profit_pips=args.take_profit_pips
     )
     try:
         bot.run()
