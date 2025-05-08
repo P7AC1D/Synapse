@@ -1,5 +1,8 @@
 """Backtesting script for single trained trading model."""
 
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 import argparse
 import logging
 import numpy as np
