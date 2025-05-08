@@ -176,6 +176,19 @@ namespace DRLTrader.Services
         }
 
         /// <summary>
+        /// Set the logger to use for all messages
+        /// </summary>
+        /// <param name="logger">The action to call to log messages</param>
+        public void SetLogger(Action<string> logger)
+        {
+            if (logger != null)
+            {
+                _logger = logger;
+                _logger("Logger set to custom implementation");
+            }
+        }
+
+        /// <summary>
         /// Get prediction from the ONNX model
         /// </summary>
         public PredictionResponse GetPrediction(MarketData data)

@@ -237,6 +237,9 @@ namespace cAlgo.Robots
                         HiddenSize,
                         LstmLayers);
                     
+                    // Set the logger to use ctrader's Print method to ensure logs appear in ctrader
+                    _onnxPredictor.SetLogger(Print);
+                    
                     Print("ONNX predictor initialized successfully");
                 }
                 catch (Exception ex)
