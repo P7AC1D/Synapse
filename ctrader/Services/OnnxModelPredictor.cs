@@ -1452,52 +1452,36 @@ namespace DRLTrader.Services
                     return 0; // Default to Hold action
                 }
                 
-                _logger($"Finding max probability among {tensor.Length} values");
+                _logger($"Finding max probability among {tensor.Length} values with tensor shape [{string.Join(", ", tensor.Dimensions.ToArray())}]");
+                
+                // Handle tensor shape properly. If it's a 2D tensor with shape [1, N], we need to access elements differently
+                bool is2DTensor = tensor.Dimensions.Count == 2 && tensor.Dimensions[0] == 1;
                 
                 // Detailed logging of all probabilities
                 _logger("DETAILED ACTION PROBABILITIES:");
-                for (int i = 0; i < tensor.Length; i++)
+                for (int i = 0; i < Math.Min(tensor.Length, 4); i++) // Limit to 4 actions max
                 {
-                    TradingAction action = MapIndexToAction(i);
-                    _logger($"  - Index {i} ({action}): {tensor[i]:F6} ({tensor[i]:P2})");
+                    TradingAction actionType = MapIndexToAction(i);
+                    float value = is2DTensor ? tensor[0, i] : tensor[i]; // Access correctly based on shape
+                    _logger($"  - Index {i} ({actionType}): {value:F6} ({value:P2})");
                 }
                 
                 // Find the actual max value
                 int maxIndex = 0;
-                float maxValue = tensor[0];
+                float maxValue = is2DTensor ? tensor[0, 0] : tensor[0];
                 
-                for (int i = 1; i < tensor.Length; i++)
+                for (int i = 1; i < Math.Min(tensor.Length, 4); i++) // Limit to 4 actions max
                 {
-                    if (tensor[i] > maxValue)
+                    float value = is2DTensor ? tensor[0, i] : tensor[i];
+                    if (value > maxValue)
                     {
-                        maxValue = tensor[i];
+                        maxValue = value;
                         maxIndex = i;
                     }
                 }
                 
-                // Double-check if the max is correct (debugging only)
-                bool isMaxCorrect = true;
-                for (int i = 0; i < tensor.Length; i++)
-                {
-                    if (i != maxIndex && tensor[i] > tensor[maxIndex])
-                    {
-                        isMaxCorrect = false;
-                        _logger($"ERROR: Found higher value at {i}: {tensor[i]} > {tensor[maxIndex]}");
-                    }
-                }
-                
                 TradingAction selectedAction = MapIndexToAction(maxIndex);
-                _logger($"Max probability found: index={maxIndex}, action={selectedAction}, value={maxValue:F6} ({maxValue:P2}), isMaxCorrect={isMaxCorrect}");
-                
-                // Safety check for suspiciously close values
-                const float EPSILON = 1e-6f;
-                for (int i = 0; i < tensor.Length; i++)
-                {
-                    if (i != maxIndex && Math.Abs(tensor[i] - maxValue) < EPSILON)
-                    {
-                        _logger($"WARNING: Value at index {i} ({MapIndexToAction(i)}) is suspiciously close to max: {tensor[i]:F8} vs {maxValue:F8}");
-                    }
-                }
+                _logger($"Max probability found: index={maxIndex}, action={selectedAction}, value={maxValue:F6} ({maxValue:P2})");
                 
                 return maxIndex;
             }
