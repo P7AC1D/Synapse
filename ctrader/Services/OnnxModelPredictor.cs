@@ -866,9 +866,13 @@ namespace DRLTrader.Services
                     volumeChange = Math.Clamp(volumeChange, -1f, 1f);
                 }
                 features.Add(volumeChange);
-                
-                // 5. volatility_breakout: [0, 1] Trend with volatility context
+                  // 5. volatility_breakout: [0, 1] Trend with volatility context
                 float volatilityBreakout = 0.5f; // Default to middle
+                // These variables are declared outside the conditional to make them available for logging
+                double sma = 0;
+                double upperBand = 0;
+                double lowerBand = 0;
+                
                 if (lastIdx >= 20) // 20-period Bollinger Bands
                 {
                     // Calculate 20-period SMA
@@ -877,7 +881,7 @@ namespace DRLTrader.Services
                     {
                         sum += close[lastIdx - i];
                     }
-                    double sma = sum / 20;
+                    sma = sum / 20;
                     
                     // Calculate standard deviation
                     double sumSquares = 0;
@@ -887,8 +891,8 @@ namespace DRLTrader.Services
                     }
                     double stdDev = Math.Sqrt(sumSquares / 20);
                     
-                    double upperBand = sma + (2 * stdDev);
-                    double lowerBand = sma - (2 * stdDev);
+                    upperBand = sma + (2 * stdDev);
+                    lowerBand = sma - (2 * stdDev);
                     
                     // Calculate position in band - EXACTLY as in Python
                     double bandRange = upperBand - lowerBand;
@@ -1001,8 +1005,33 @@ namespace DRLTrader.Services
                 
                 // 11. unrealized_pnl: [-1, 1] Current position P&L
                 features.Add(float.IsNaN((float)data.PositionPnl) ? 0f : (float)data.PositionPnl);
-                
+                  // Log normalized features similar to Python bot
                 _logger($"Created {features.Count} features in exact Python order");
+                _logger("Normalized features for prediction:");
+                _logger($"  returns: {features[0]:F6}");
+                _logger($"  rsi: {features[1]:F6}");
+                _logger($"  atr: {features[2]:F6}");
+                _logger($"  volume_change: {features[3]:F6}");
+                _logger($"  volatility_breakout: {features[4]:F6}");
+                _logger($"  trend_strength: {features[5]:F6}");
+                _logger($"  candle_pattern: {features[6]:F6}");
+                _logger($"  sin_time: {features[7]:F6}");
+                _logger($"  cos_time: {features[8]:F6}");
+                _logger($"  position_type: {features[9]:F6}");
+                _logger($"  unrealized_pnl: {features[10]:F6}");
+                  // Log raw indicator values for the last bar
+                _logger("Raw feature values (last bar):");
+                _logger($"ATR: {atr:F6}");
+                _logger($"RSI: {rsi:F6}");
+                
+                // Log BB values if they were calculated
+                if (lastIdx >= 20)
+                {
+                    _logger($"BB Upper: {upperBand:F6}");
+                    _logger($"BB Lower: {lowerBand:F6}");
+                }
+                
+                _logger($"Trend Strength: {trendStrength:F6}");
                 
                 // Final validation
                 for (int i = 0; i < features.Count; i++)
@@ -1391,8 +1420,38 @@ namespace DRLTrader.Services
                         }
                     }
                 }
+                  _logger($"Preprocessed total of {features.Count} features for sequence");
                 
-                _logger($"Preprocessed total of {features.Count} features for sequence");
+                // Log the features from the last bar in the sequence (similar to Python bot)
+                if (features.Count >= featuresPerBar)
+                {
+                    // Get the last bar's features
+                    int lastBarStartIndex = features.Count - featuresPerBar;
+                    
+                    // Log normalized features
+                    _logger("Normalized features for last timestep prediction:");
+                    _logger($"  returns: {features[lastBarStartIndex]:F6}");
+                    _logger($"  rsi: {features[lastBarStartIndex + 1]:F6}");
+                    _logger($"  atr: {features[lastBarStartIndex + 2]:F6}");
+                    _logger($"  volume_change: {features[lastBarStartIndex + 3]:F6}");
+                    _logger($"  volatility_breakout: {features[lastBarStartIndex + 4]:F6}");
+                    _logger($"  trend_strength: {features[lastBarStartIndex + 5]:F6}");
+                    _logger($"  candle_pattern: {features[lastBarStartIndex + 6]:F6}");
+                    _logger($"  sin_time: {features[lastBarStartIndex + 7]:F6}");
+                    _logger($"  cos_time: {features[lastBarStartIndex + 8]:F6}");
+                    _logger($"  position_type: {features[lastBarStartIndex + 9]:F6}");
+                    _logger($"  unrealized_pnl: {features[lastBarStartIndex + 10]:F6}");
+                      // Log raw indicator values for the last bar
+                    int lastBarIndex = data.Close.Count - 1;
+                    _logger("Raw feature values (last bar):");
+                    _logger($"ATR: {atrValues[lastBarIndex]:F6}");
+                    _logger($"RSI: {rsiValues[lastBarIndex]:F6}");
+                    _logger($"BB Upper: {upperBand[lastBarIndex]:F6}");
+                    _logger($"BB Lower: {lowerBand[lastBarIndex]:F6}");
+                    // For trend strength, adxValues array may not be populated, so use the feature value
+                    float trendStrength = features[lastBarStartIndex + 5];
+                    _logger($"Trend Strength: {trendStrength:F6}");
+                }
                 
                 // Final validation - ensure we have the correct number of features
                 int expectedFeatureCount = data.Close.Count * featuresPerBar;
@@ -1528,6 +1587,50 @@ namespace DRLTrader.Services
                 default:
                     _logger($"WARNING: Unknown action index {index}, defaulting to Hold");
                     return TradingAction.Hold;
+            }
+        }
+
+        /// <summary>
+        /// Log feature values for debugging and transparency
+        /// </summary>
+        private void LogFeatureValues(float[] features, Dictionary<string, float> rawIndicators)
+        {
+            if (features == null || features.Length == 0)
+            {
+                _logger("Cannot log features: Empty feature array");
+                return;
+            }
+
+            // Log normalized features
+            _logger("Normalized features for prediction:");
+            
+            // Define feature names
+            string[] featureNames = { 
+                "returns", "rsi", "atr", "volume_change", "volatility_breakout", 
+                "trend_strength", "candle_pattern", "sin_time", "cos_time", 
+                "position_type", "unrealized_pnl" 
+            };
+            
+            // Log normalized values by name
+            for (int i = 0; i < Math.Min(features.Length, featureNames.Length); i++)
+            {
+                _logger($"  {featureNames[i]}: {features[i]:F6}");
+            }
+            
+            // Log raw indicator values
+            _logger("Raw feature values (last bar):");
+            if (rawIndicators != null)
+            {
+                if (rawIndicators.ContainsKey("ATR"))
+                    _logger($"ATR: {rawIndicators["ATR"]:F6}");
+                if (rawIndicators.ContainsKey("RSI"))
+                    _logger($"RSI: {rawIndicators["RSI"]:F6}");
+                if (rawIndicators.ContainsKey("BB_Upper"))
+                    _logger($"BB Upper: {rawIndicators["BB_Upper"]:F6}");
+                if (rawIndicators.ContainsKey("BB_Lower"))
+                    _logger($"BB Lower: {rawIndicators["BB_Lower"]:F6}");
+                if (rawIndicators.ContainsKey("Trend_Strength"))
+                    _logger($"Trend Strength: {rawIndicators["Trend_Strength"]:F6}");
             }
         }
 
