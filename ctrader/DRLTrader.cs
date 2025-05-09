@@ -35,10 +35,32 @@ namespace cAlgo.Robots
         [Parameter("Minimum Bars", DefaultValue = 100, Group = "Data")]
         public int MinimumBars { get; set; }
 
+        // Technical indicator parameters
+        [Parameter("ATR Period", DefaultValue = 14, Group = "Indicators")]
+        public int AtrPeriod { get; set; }
+        
+        [Parameter("RSI Period", DefaultValue = 14, Group = "Indicators")]
+        public int RsiPeriod { get; set; }
+        
+        [Parameter("Bollinger Period", DefaultValue = 20, Group = "Indicators")]
+        public int BollingerPeriod { get; set; }
+        
+        [Parameter("Bollinger Deviations", DefaultValue = 2.0, Group = "Indicators")]
+        public double BollingerDeviations { get; set; }
+        
+        [Parameter("ADX Period", DefaultValue = 14, Group = "Indicators")]
+        public int AdxPeriod { get; set; }
+
         private OnnxModelPredictor _onnxPredictor;
         private RiskManager _riskManager;
         private readonly Queue<Bar> _bars;
         private bool _isInitialized;
+        
+    // cTrader built-in indicators
+    private AverageTrueRange _atr;
+    private RelativeStrengthIndex _rsi;
+    private BollingerBands _bollingerBands;
+    private DirectionalMovementSystem _adx;
 
         private const string POSITION_LABEL = "DRLTrader";
 
@@ -269,8 +291,7 @@ namespace cAlgo.Robots
                 Print("==== End of error report ====");
             }
         }
-        
-        private void InitializeRemainingComponents()
+          private void InitializeRemainingComponents()
         {
             try
             {
@@ -281,6 +302,23 @@ namespace cAlgo.Robots
             catch (Exception ex)
             {
                 Print($"ERROR initializing Risk Manager: {ex.Message}");
+                Print($"Stack trace: {ex.StackTrace}");
+                return;
+            }
+
+            try
+            {
+                // Initialize technical indicators
+                Print("Initializing technical indicators...");
+                _atr = Indicators.AverageTrueRange(AtrPeriod, MovingAverageType.Simple);
+                _rsi = Indicators.RelativeStrengthIndex(Bars.ClosePrices, RsiPeriod);
+                _bollingerBands = Indicators.BollingerBands(Bars.ClosePrices, BollingerPeriod, BollingerDeviations, MovingAverageType.Simple);
+                _adx = Indicators.DirectionalMovementSystem(AdxPeriod);
+                Print("Technical indicators initialized successfully");
+            }
+            catch (Exception ex)
+            {
+                Print($"ERROR initializing technical indicators: {ex.Message}");
                 Print($"Stack trace: {ex.StackTrace}");
                 return;
             }
@@ -349,9 +387,7 @@ namespace cAlgo.Robots
                 else
                 {
                     Print($"No open position found: Direction={positionDirection}, PnL={positionPnl}");
-                }
-
-                // Create market data
+                }                // Create market data
                 Print("Preparing market data...");
                 var marketData = new MarketData
                 {
@@ -365,8 +401,13 @@ namespace cAlgo.Robots
                 bool useRandomPerturbation = false; // Set to true to apply random noise to make predictions more diverse
                 double perturbationScale = 0.0001; // Small scale to avoid changing actual market structure
                 
-                foreach (var bar in _bars)
+                // We need to convert our queue to a list to access by index
+                var barsList = _bars.ToList();
+                
+                for (int i = 0; i < barsList.Count; i++)
                 {
+                    var bar = barsList[i];
+                    
                     // Apply small random perturbation to price data to get varied model responses
                     double perturbation = useRandomPerturbation ? ((rnd.NextDouble() * 2 - 1) * perturbationScale) : 0;
                     
@@ -376,8 +417,29 @@ namespace cAlgo.Robots
                     marketData.Low.Add(bar.Low * (1 + perturbation));
                     marketData.Close.Add(bar.Close * (1 + perturbation));
                     marketData.Volume.Add(bar.TickVolume);
+                    
+                    // Add technical indicators for this bar
+                    // Need to handle the lookback period where indicator values might be unavailable
+                    int index = Bars.Count - _bars.Count + i;
+                    
+                    // Get indicator values with null checks to avoid errors during warmup period
+                    double atrValue = index >= AtrPeriod ? _atr.Result[index] : 0;
+                    double rsiValue = index >= RsiPeriod ? _rsi.Result[index] : 50; // Default to neutral RSI
+                    
+                    double bbUpper = index >= BollingerPeriod ? _bollingerBands.Top[index] : bar.High;
+                    double bbMiddle = index >= BollingerPeriod ? _bollingerBands.Main[index] : bar.Close;
+                    double bbLower = index >= BollingerPeriod ? _bollingerBands.Bottom[index] : bar.Low;
+                    
+                    double adxValue = index >= AdxPeriod ? _adx.ADX[index] : 0;
+                    
+                    marketData.ATR.Add(atrValue);
+                    marketData.RSI.Add(rsiValue);
+                    marketData.BollingerUpper.Add(bbUpper);
+                    marketData.BollingerMiddle.Add(bbMiddle);
+                    marketData.BollingerLower.Add(bbLower);
+                    marketData.ADX.Add(adxValue);
                 }
-                Print($"Market data prepared with {_bars.Count} bars");
+                Print($"Market data prepared with {_bars.Count} bars and technical indicators");
                 
                 // Reset the LSTM state occasionally to avoid getting stuck in one state
                 if (IsRecurrentModel && rnd.NextDouble() < 0.05) // 5% chance to reset

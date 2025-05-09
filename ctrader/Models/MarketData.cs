@@ -17,6 +17,14 @@ namespace DRLTrader.Models
         public string Symbol { get; set; }
         public int PositionDirection { get; set; }
         public double PositionPnl { get; set; }
+        
+        // Technical indicators
+        public List<double> ATR { get; set; }
+        public List<double> RSI { get; set; }
+        public List<double> BollingerUpper { get; set; }
+        public List<double> BollingerMiddle { get; set; }
+        public List<double> BollingerLower { get; set; }
+        public List<double> ADX { get; set; }
 
         public MarketData()
         {
@@ -26,6 +34,15 @@ namespace DRLTrader.Models
             Low = new List<double>();
             Close = new List<double>();
             Volume = new List<double>();
+            
+            // Initialize technical indicator lists
+            ATR = new List<double>();
+            RSI = new List<double>();
+            BollingerUpper = new List<double>();
+            BollingerMiddle = new List<double>();
+            BollingerLower = new List<double>();
+            ADX = new List<double>();
+            
             PositionDirection = 0;
             PositionPnl = 0.0;
         }
