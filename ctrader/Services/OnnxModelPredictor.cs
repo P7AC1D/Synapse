@@ -1016,8 +1016,8 @@ namespace DRLTrader.Services
                 // Debug the actual values
                 _logger($"sin_time: {sinTime}, cos_time: {cosTime}");
 
-                features.Add(sinTime);  // Add sin_time
-                features.Add(cosTime);  // Add cos_time
+                features.Add(cosTime);  // Add cos_time first to match Python
+                features.Add(sinTime);  // Add sin_time second to match Python
                 
                 // 10. position_type: [-1, 0, 1] Current position
                 features.Add((float)data.PositionDirection);
@@ -1468,8 +1468,8 @@ namespace DRLTrader.Services
                         double timeIndex = barTime.Hour * 60.0 + barTime.Minute;
                         double timeNormalized = 2.0 * Math.PI * timeIndex / minutesInDay;
                         
-                        features.Add((float)Math.Sin(timeNormalized)); // Sin time
-                        features.Add((float)Math.Cos(timeNormalized)); // Cos time
+                        features.Add((float)Math.Cos(timeNormalized)); // Cos time first to match Python
+                        features.Add((float)Math.Sin(timeNormalized)); // Sin time second to match Python
                         
                         // 10-11. Position direction and PnL
                         features.Add((float)data.PositionDirection);
