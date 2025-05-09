@@ -124,17 +124,6 @@ class FeatureProcessor:
             angle = 2 * np.pi * time_index / minutes_in_day
             sin_time = np.sin(angle)
             cos_time = np.cos(angle)
-              # Debug logging for the last time index
-            if len(time_index) > 0:
-                last_time = pd.to_datetime(data.index[-1], utc=True)
-                last_hour = last_time.hour
-                last_minute = last_time.minute
-                last_time_index = last_hour * 60 + last_minute
-                last_angle = 2 * np.pi * last_time_index / minutes_in_day
-                print(f"DEBUG: Last timestamp: {last_time}, Hours: {last_hour}, Minutes: {last_minute}")
-                print(f"DEBUG: Time index: {last_time_index} minutes, Angle: {last_angle} radians")
-                print(f"DEBUG: sin({last_angle}) = {np.sin(last_angle)}, cos({last_angle}) = {np.cos(last_angle)}")
-                print(f"DEBUG: Last index sin_time value: {sin_time[-1]}, cos_time value: {cos_time[-1]}")
             
             # Price action features
             body = close - opens
