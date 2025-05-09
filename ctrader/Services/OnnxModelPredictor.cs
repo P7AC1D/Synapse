@@ -779,30 +779,17 @@ namespace DRLTrader.Services
                 {
                     atr = (float)data.ATR[lastIdx];
                     
-                    // Apply the same normalization logic as before
-                    // For calculating normalized ATR, we need a moving average of the ATR
-                    float atrSma = 0f;
-                    int windowSize = Math.Min(20, data.ATR.Count);
+                    // Apply ATR normalization to match Python's implementation
+                    float[] atrWindow = data.ATR.Take(Math.Min(20, data.ATR.Count))
+                                          .Select(x => (float)x)
+                                          .ToArray();
                     
-                    // Calculate SMA of the available ATR values
-                    if (windowSize > 0)
-                    {
-                        float sum = 0f;
-                        int count = 0;
-                        
-                        for (int i = 0; i < windowSize; i++)
-                        {
-                            if (lastIdx + i < data.ATR.Count)
-                            {
-                                sum += (float)data.ATR[lastIdx + i];
-                                count++;
-                            }
-                        }
-                        
-                        if (count > 0)
-                            atrSma = sum / count;
-                    }
+                    // Calculate average ATR like Python's bfill().fillna(atr.mean())
+                    float atrMean = atrWindow.Average();
+                    atr = float.IsNaN(atr) ? atrMean : atr;
                     
+                    // Calculate SMA like Python's rolling(window_size).mean()
+                    float atrSma = atrWindow.Average();
                     float atrRatio = atrSma != 0 ? atr / atrSma : 1f;
                     float minExpectedRatio = 0.5f;
                     float maxExpectedRatio = 2.0f;
@@ -821,8 +808,8 @@ namespace DRLTrader.Services
                 float volumeChange = 0f;
                 if (data.Volume.Count > 1 && volume[1] != 0)
                 {
-                    // Compare index 0 (most recent) with index 1 (second most recent)
-                    volumeChange = (float)((volume[0] - volume[1]) / volume[1]);
+                    // Calculate volume change using rate of change
+                    volumeChange = (float)((volume[0] - volume[1]) / volume[1]);  // Current volume [0] minus previous volume [1]
                     volumeChange = Math.Clamp(volumeChange, -1f, 1f);
                 }
                 features.Add(volumeChange);                // 5. volatility_breakout: [0, 1] Trend with volatility context
@@ -1016,8 +1003,8 @@ namespace DRLTrader.Services
                 // Debug the actual values
                 _logger($"sin_time: {sinTime}, cos_time: {cosTime}");
 
-                features.Add(sinTime);  // Add sin_time
-                features.Add(cosTime);  // Add cos_time
+                features.Add(cosTime);  // Add cos_time first to match Python
+                features.Add(sinTime);  // Add sin_time second to match Python
                 
                 // 10. position_type: [-1, 0, 1] Current position
                 features.Add((float)data.PositionDirection);
@@ -1468,8 +1455,8 @@ namespace DRLTrader.Services
                         double timeIndex = barTime.Hour * 60.0 + barTime.Minute;
                         double timeNormalized = 2.0 * Math.PI * timeIndex / minutesInDay;
                         
-                        features.Add((float)Math.Sin(timeNormalized)); // Sin time
-                        features.Add((float)Math.Cos(timeNormalized)); // Cos time
+                        features.Add((float)Math.Cos(timeNormalized)); // Cos time first to match Python
+                        features.Add((float)Math.Sin(timeNormalized)); // Sin time second to match Python
                         
                         // 10-11. Position direction and PnL
                         features.Add((float)data.PositionDirection);
