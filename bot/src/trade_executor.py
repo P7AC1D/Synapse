@@ -8,7 +8,8 @@ from config import MT5_COMMENT
 class TradeExecutor:
     """Class for executing trades based on model predictions."""
     
-    def __init__(self, mt5: MT5Connector, symbol: str, balance_per_lot: float = 1000.0, stop_loss_pips: float = 2500.0):
+    def __init__(self, mt5: MT5Connector, symbol: str, balance_per_lot: float = 1000.0, 
+                 stop_loss_pips: float = 2500.0, take_profit_pips: float = 2500.0):
         """
         Initialize the trade executor.
         
@@ -17,6 +18,7 @@ class TradeExecutor:
             symbol: Trading symbol to use for trade execution
             balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
             stop_loss_pips: Stop loss in pips for all trades (default: 2500.0)
+            take_profit_pips: Take profit in pips for all trades (default: 2500.0)
         """
         self.logger = logging.getLogger(__name__)
         self.mt5 = mt5
@@ -24,6 +26,7 @@ class TradeExecutor:
         self.balance_per_lot = balance_per_lot
         self.last_lot_size = None  # Track last used lot size for position info
         self.stop_loss_pips = stop_loss_pips
+        self.take_profit_pips = take_profit_pips
         
     def calculate_stop_loss(self, entry_price: float, trade_type: str, symbol: str) -> float:
         """
@@ -63,6 +66,45 @@ class TradeExecutor:
             
         except Exception as e:
             self.logger.error(f"Error calculating stop loss: {e}")
+            return 0.0  # Return 0 on error to indicate failure
+
+    def calculate_take_profit(self, entry_price: float, trade_type: str, symbol: str) -> float:
+        """
+        Calculate take profit price based on pips from entry price.
+        
+        Args:
+            entry_price: Entry price for the trade
+            trade_type: Either 'buy' or 'sell'
+            symbol: Trading symbol (e.g. XAUUSDm, USTECm)
+            
+        Returns:
+            float: Take profit price
+        """
+        try:
+            # Get symbol info from connector
+            _, _, _, _, point, digits = self.mt5.get_symbol_info(symbol)
+            
+            # Calculate take profit directly using points
+            tp_points = self.take_profit_pips * point
+            
+            # Calculate take profit price based on trade type (opposite direction from stop loss)
+            if trade_type == 'buy':
+                tp_price = entry_price + tp_points
+            else:  # sell
+                tp_price = entry_price - tp_points
+                
+            # Round to symbol digits
+            tp_price = round(tp_price, digits)
+            
+            self.logger.debug(
+                f"Take Profit calculation: Entry: {entry_price:.{digits}f} | "
+                f"Type: {trade_type} | TP: {tp_price:.{digits}f} | "
+                f"Distance: {self.take_profit_pips} points"
+            )
+            return tp_price
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating take profit: {e}")
             return 0.0  # Return 0 on error to indicate failure
 
     def calculate_position_size(self, account_balance: float) -> float:
@@ -163,31 +205,40 @@ class TradeExecutor:
                 'buy' if action == 1 else 'sell'
             )
             
-            # Calculate stop loss
+            # Calculate stop loss and take profit
             trade_type = 'buy' if action == 1 else 'sell'
             stop_loss = self.calculate_stop_loss(current_price, trade_type, self.symbol)
+            take_profit = self.calculate_take_profit(current_price, trade_type, self.symbol)
+            
             if stop_loss == 0.0:
                 self.logger.error("Failed to calculate stop loss")
                 return False
+                
+            if take_profit == 0.0:
+                self.logger.error("Failed to calculate take profit")
+                return False
 
-            # Execute the trade with stop loss
+            # Execute the trade with stop loss and take profit
             success = self.mt5.open_trade(
                 symbol=self.symbol,
                 lot=lot_size,
                 price=current_price,
                 order_type=trade_type,
                 filling_type=filling_type,
-                sl=stop_loss
+                sl=stop_loss,
+                tp=take_profit
             )
             
             if success:
                 self.last_lot_size = lot_size  # Store last used lot size
-                # Calculate stop loss distance in points
+                # Calculate stop loss and take profit distances in points
                 sl_points = abs(current_price - stop_loss)
+                tp_points = abs(current_price - take_profit)
                 self.logger.info(
                     f"Trade executed: {trade_type.upper()} "
                     f"{lot_size:.2f} lots @ {current_price:.5f} "
-                    f"(SL: {stop_loss:.5f}, {self.stop_loss_pips} points)"
+                    f"(SL: {stop_loss:.5f}, {self.stop_loss_pips} points | "
+                    f"TP: {take_profit:.5f}, {self.take_profit_pips} points)"
                 )
             else:
                 self.logger.error("Trade execution failed")

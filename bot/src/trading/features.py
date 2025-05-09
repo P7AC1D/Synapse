@@ -117,11 +117,24 @@ class FeatureProcessor:
             returns = np.zeros_like(close)
             returns[1:] = np.diff(close) / close[:-1]
             returns = np.clip(returns, -0.1, 0.1)
+            minutes_in_day = 24 * 60            # Explicitly use UTC to prevent timezone conversions
+            time_index = pd.to_datetime(data.index, utc=True).hour * 60 + pd.to_datetime(data.index, utc=True).minute
             
-            minutes_in_day = 24 * 60
-            time_index = pd.to_datetime(data.index).hour * 60 + pd.to_datetime(data.index).minute
-            sin_time = np.sin(2 * np.pi * time_index / minutes_in_day)
-            cos_time = np.cos(2 * np.pi * time_index / minutes_in_day)
+            # Calculate correct angle and trigonometric values
+            angle = 2 * np.pi * time_index / minutes_in_day
+            sin_time = np.sin(angle)
+            cos_time = np.cos(angle)
+              # Debug logging for the last time index
+            if len(time_index) > 0:
+                last_time = pd.to_datetime(data.index[-1], utc=True)
+                last_hour = last_time.hour
+                last_minute = last_time.minute
+                last_time_index = last_hour * 60 + last_minute
+                last_angle = 2 * np.pi * last_time_index / minutes_in_day
+                print(f"DEBUG: Last timestamp: {last_time}, Hours: {last_hour}, Minutes: {last_minute}")
+                print(f"DEBUG: Time index: {last_time_index} minutes, Angle: {last_angle} radians")
+                print(f"DEBUG: sin({last_angle}) = {np.sin(last_angle)}, cos({last_angle}) = {np.cos(last_angle)}")
+                print(f"DEBUG: Last index sin_time value: {sin_time[-1]}, cos_time value: {cos_time[-1]}")
             
             # Price action features
             body = close - opens
@@ -147,9 +160,10 @@ class FeatureProcessor:
                 out=np.zeros(len(volume)-1, dtype=np.float64),
                 where=volume[:-1] != 0
             )
-            volume_pct = np.clip(volume_pct, -1, 1)
-            
-            # Create features DataFrame
+            volume_pct = np.clip(volume_pct, -1, 1)            # Debug the last values of sin_time and cos_time
+            if len(time_index) > 0:
+                print(f"DEBUG: Last index sin_time value: {sin_time[-1]}, cos_time value: {cos_time[-1]}")
+              # Create features DataFrame
             features = {
                 'returns': returns,
                 'rsi': np.divide(rsi, 50, out=np.zeros_like(rsi), where=~np.isnan(rsi)) - 1,
@@ -157,8 +171,8 @@ class FeatureProcessor:
                 'volatility_breakout': volatility_breakout,
                 'trend_strength': trend_strength,
                 'candle_pattern': candle_pattern,
-                'sin_time': sin_time,
-                'cos_time': cos_time,
+                'cos_time': cos_time,  # Swapped order to match get_feature_names
+                'sin_time': sin_time,  # Swapped order to match get_feature_names
                 'volume_change': volume_pct
             }
             features_df = pd.DataFrame(features, index=data.index)
@@ -192,8 +206,8 @@ class FeatureProcessor:
             'volatility_breakout', # [0, 1] Trend with volatility context
             'trend_strength',   # [-1, 1] ADX-based trend quality
             'candle_pattern',   # [-1, 1] Combined price action signal
-            'sin_time',        # [-1, 1] Sine encoding of time
             'cos_time',        # [-1, 1] Cosine encoding of time
+            'sin_time',        # [-1, 1] Sine encoding of time
             'position_type',    # [-1, 0, 1] Current position
             'unrealized_pnl'   # [-1, 1] Current position P&L
         ]
