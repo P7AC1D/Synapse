@@ -226,46 +226,6 @@ namespace DRLTrader.Services
                         Description = "ERROR: Invalid market data, defaulting to Hold"
                     };
                 }
-
-                // Check that all collections have the same length
-                int referenceLength = data.Close.Count;
-                if (data.Open.Count != referenceLength || 
-                    data.High.Count != referenceLength || 
-                    data.Low.Count != referenceLength ||
-                    data.Volume.Count != referenceLength ||
-                    data.Timestamp.Count != referenceLength)
-                {
-                    _logger($"WARNING: Inconsistent data lengths - Close:{data.Close.Count}, Open:{data.Open.Count}, " +
-                           $"High:{data.High.Count}, Low:{data.Low.Count}, Volume:{data.Volume.Count}, Timestamp:{data.Timestamp.Count}");
-                    
-                    // Try to adjust the data to make it consistent
-                    int minLength = new[] { 
-                        data.Close.Count, data.Open.Count, data.High.Count, 
-                        data.Low.Count, data.Volume.Count, data.Timestamp.Count 
-                    }.Min();
-                    
-                    _logger($"Adjusting all data collections to minimum length: {minLength}");
-                    
-                    if (minLength == 0)
-                    {
-                        _logger("ERROR: Cannot process zero-length data");
-                        return new PredictionResponse
-                        {
-                            Action = "Hold",
-                            Confidence = 1.0f,
-                            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                            Description = "ERROR: Zero-length data, defaulting to Hold"
-                        };
-                    }
-
-                    // Truncate all collections to the minimum length
-                    while (data.Close.Count > minLength) data.Close.RemoveAt(data.Close.Count - 1);
-                    while (data.Open.Count > minLength) data.Open.RemoveAt(data.Open.Count - 1);
-                    while (data.High.Count > minLength) data.High.RemoveAt(data.High.Count - 1);
-                    while (data.Low.Count > minLength) data.Low.RemoveAt(data.Low.Count - 1);
-                    while (data.Volume.Count > minLength) data.Volume.RemoveAt(data.Volume.Count - 1);
-                    while (data.Timestamp.Count > minLength) data.Timestamp.RemoveAt(data.Timestamp.Count - 1);
-                }
                 
                 // Call the appropriate prediction method
                 if (_isRecurrentModel)
@@ -766,134 +726,121 @@ namespace DRLTrader.Services
                 }
                 
                 _logger($"Creating features following exact Python order for {data.Symbol}");
-                
-                // Convert to arrays for calculation
+                  // Convert to arrays for calculation
                 double[] close = data.Close.Select(d => (double)d).ToArray();
                 double[] open = data.Open.Select(d => (double)d).ToArray();
                 double[] high = data.High.Select(d => (double)d).ToArray();
                 double[] low = data.Low.Select(d => (double)d).ToArray();
                 double[] volume = data.Volume.Select(d => (double)d).ToArray();
-                
-                int lastIdx = data.Close.Count - 1;
+
+                int lastIdx = 0;
                 
                 // Create features in EXACT order from Python's get_feature_names():
                 // [returns, rsi, atr, volume_change, volatility_breakout, trend_strength, 
                 //  candle_pattern, sin_time, cos_time, position_type, unrealized_pnl]
                 List<float> features = new List<float>();
-                
-                // 1. returns: [-0.1, 0.1] Price momentum
+
+                  // 1. returns: [-0.1, 0.1] Price momentum
                 float returns = 0f;
-                if (lastIdx > 0 && close[lastIdx - 1] != 0)
+                if (data.Close.Count > 1 && close[1] != 0)
                 {
-                    returns = (float)((close[lastIdx] / close[lastIdx - 1]) - 1.0);
+                    // Calculate returns using most recent close (index 0) divided by previous close (index 1)
+                    returns = (float)((close[0] / close[1]) - 1.0);                    
                     returns = Math.Clamp(returns, -0.1f, 0.1f);
                 }
-                features.Add(returns);
-                
-                // 2. rsi: [-1, 1] Momentum oscillator
-                float rsi = 50f; // Default to neutral
-                if (lastIdx >= 14) // 14-period RSI
+                else
                 {
-                    double sumGain = 0;
-                    double sumLoss = 0;
-                    
-                    for (int i = lastIdx - 13; i <= lastIdx; i++)
-                    {
-                        double change = close[i] - close[i - 1];
-                        if (change > 0)
-                            sumGain += change;
-                        else
-                            sumLoss -= change;
-                    }
-                    
-                    double avgGain = sumGain / 14;
-                    double avgLoss = sumLoss / 14;
-                    
-                    if (avgLoss != 0)
-                    {
-                        double rs = avgGain / avgLoss;
-                        rsi = (float)(100.0 - (100.0 / (1.0 + rs)));
-                    }
-                    else if (avgGain != 0)
-                    {
-                        rsi = 100f;
-                    }
+                    _logger("Not enough bars to calculate returns, using default value 0");
                 }
+                features.Add(returns);
+
+                  // 2. rsi: [-1, 1] Momentum oscillator
+                // Use RSI value directly from MarketData instead of manual calculation
+                float rsi = 50f; // Default to neutral
+                if (data.RSI != null && data.RSI.Count > lastIdx)
+                {
+                    rsi = (float)data.RSI[lastIdx];
+                }
+                else
+                {
+                    _logger("Using default neutral RSI (50) as no valid RSI data available");
+                }
+
                 // Normalize RSI exactly like Python: (rsi/50)-1
                 float rsiNorm = rsi / 50f - 1f;
                 features.Add(rsiNorm);
-                
-                // 3. atr: [-1, 1] Volatility indicator
-                // Calculate basic ATR
+
+                  // 3. atr: [-1, 1] Volatility indicator
+                // Use ATR value directly from MarketData instead of manual calculation
                 float atr = 0f;
-                float[] trueRanges = new float[Math.Min(14, lastIdx + 1)];
+                float atrNorm = 0f;
                 
-                for (int i = 0; i < trueRanges.Length; i++)
+                if (data.ATR != null && data.ATR.Count > lastIdx)
                 {
-                    int idx = lastIdx - i;
-                    double tr1 = high[idx] - low[idx];
-                    double tr2 = idx > 0 ? Math.Abs(high[idx] - close[idx - 1]) : tr1;
-                    double tr3 = idx > 0 ? Math.Abs(low[idx] - close[idx - 1]) : tr1;
-                    trueRanges[i] = (float)Math.Max(Math.Max(tr1, tr2), tr3);
+                    atr = (float)data.ATR[lastIdx];
+                    
+                    // Apply the same normalization logic as before
+                    // For calculating normalized ATR, we need a moving average of the ATR
+                    float atrSma = 0f;
+                    int windowSize = Math.Min(20, data.ATR.Count);
+                    
+                    // Calculate SMA of the available ATR values
+                    if (windowSize > 0)
+                    {
+                        float sum = 0f;
+                        int count = 0;
+                        
+                        for (int i = 0; i < windowSize; i++)
+                        {
+                            if (lastIdx + i < data.ATR.Count)
+                            {
+                                sum += (float)data.ATR[lastIdx + i];
+                                count++;
+                            }
+                        }
+                        
+                        if (count > 0)
+                            atrSma = sum / count;
+                    }
+                    
+                    float atrRatio = atrSma != 0 ? atr / atrSma : 1f;
+                    float minExpectedRatio = 0.5f;
+                    float maxExpectedRatio = 2.0f;
+                    float expectedRange = maxExpectedRatio - minExpectedRatio;
+                    atrNorm = 2f * (atrRatio - minExpectedRatio) / expectedRange - 1f;
+                    atrNorm = Math.Clamp(atrNorm, -1f, 1f);
                 }
-                atr = trueRanges.Average();
-                
-                // Calculate ATR normalization
-                float[] windowTrueRanges = new float[Math.Min(20, lastIdx + 1)];
-                for (int i = 0; i < windowTrueRanges.Length; i++)
+                else
                 {
-                    int idx = lastIdx - i;
-                    double tr1 = high[idx] - low[idx];
-                    double tr2 = idx > 0 ? Math.Abs(high[idx] - close[idx - 1]) : tr1;
-                    double tr3 = idx > 0 ? Math.Abs(low[idx] - close[idx - 1]) : tr1;
-                    windowTrueRanges[i] = (float)Math.Max(Math.Max(tr1, tr2), tr3);
+                    _logger("Using default ATR normalization (0) as no valid ATR data available");
                 }
-                float atrSma = windowTrueRanges.Average();
                 
-                float atrRatio = atrSma != 0 ? atr / atrSma : 1f;
-                float minExpectedRatio = 0.5f;
-                float maxExpectedRatio = 2.0f;
-                float expectedRange = maxExpectedRatio - minExpectedRatio;
-                float atrNorm = 2f * (atrRatio - minExpectedRatio) / expectedRange - 1f;
-                atrNorm = Math.Clamp(atrNorm, -1f, 1f);
                 features.Add(atrNorm);
-                
-                // 4. volume_change: [-1, 1] Volume percentage change
+
+                  // 4. volume_change: [-1, 1] Volume percentage change
                 float volumeChange = 0f;
-                if (lastIdx > 0 && volume[lastIdx - 1] != 0)
+                if (data.Volume.Count > 1 && volume[1] != 0)
                 {
-                    volumeChange = (float)((volume[lastIdx] - volume[lastIdx - 1]) / volume[lastIdx - 1]);
+                    // Compare index 0 (most recent) with index 1 (second most recent)
+                    volumeChange = (float)((volume[0] - volume[1]) / volume[1]);
                     volumeChange = Math.Clamp(volumeChange, -1f, 1f);
                 }
-                features.Add(volumeChange);
-                  // 5. volatility_breakout: [0, 1] Trend with volatility context
+                features.Add(volumeChange);                // 5. volatility_breakout: [0, 1] Trend with volatility context
                 float volatilityBreakout = 0.5f; // Default to middle
-                // These variables are declared outside the conditional to make them available for logging
-                double sma = 0;
+                // These variables are declared outside the conditional for logging
                 double upperBand = 0;
                 double lowerBand = 0;
-                
-                if (lastIdx >= 20) // 20-period Bollinger Bands
+                double sma = 0;
+
+                // Use Bollinger Bands directly from MarketData if available
+                if (data.BollingerUpper != null && data.BollingerUpper.Count > lastIdx &&
+                    data.BollingerLower != null && data.BollingerLower.Count > lastIdx &&
+                    data.BollingerMiddle != null && data.BollingerMiddle.Count > lastIdx)
                 {
-                    // Calculate 20-period SMA
-                    double sum = 0;
-                    for (int i = 0; i < 20; i++)
-                    {
-                        sum += close[lastIdx - i];
-                    }
-                    sma = sum / 20;
-                    
-                    // Calculate standard deviation
-                    double sumSquares = 0;
-                    for (int i = 0; i < 20; i++)
-                    {
-                        sumSquares += Math.Pow(close[lastIdx - i] - sma, 2);
-                    }
-                    double stdDev = Math.Sqrt(sumSquares / 20);
-                    
-                    upperBand = sma + (2 * stdDev);
-                    lowerBand = sma - (2 * stdDev);
-                    
+                    upperBand = data.BollingerUpper[lastIdx];
+                    lowerBand = data.BollingerLower[lastIdx];
+                    sma = data.BollingerMiddle[lastIdx];
+
                     // Calculate position in band - EXACTLY as in Python
                     double bandRange = upperBand - lowerBand;
                     if (bandRange > 1e-8) // Avoid division by very small numbers
@@ -903,61 +850,123 @@ namespace DRLTrader.Services
                         volatilityBreakout = Math.Clamp(volatilityBreakout, 0f, 1f);
                     }
                 }
-                features.Add(volatilityBreakout);
-                
-                // 6. trend_strength: [-1, 1] ADX-based trend quality
-                float trendStrength = 0f; // Default to no trend
-                if (lastIdx >= 15) // Need at least 15 bars for meaningful ADX calculation
+                else
                 {
-                    double posDMSum = 0;
-                    double negDMSum = 0;
-                    double trSum = 0;
+                    _logger("MarketData Bollinger Bands not available, falling back to manual calculation");
                     
-                    for (int i = 1; i <= 14; i++)
+                    if (lastIdx >= 20) // Need at least 20 bars for Bollinger Bands
                     {
-                        int idx = lastIdx - 14 + i;
-                        int prevIdx = idx - 1;
-                        
-                        if (idx > 0 && prevIdx >= 0)
+                        // Calculate 20-period SMA
+                        double sum = 0;
+                        for (int i = 0; i < 20; i++)
                         {
-                            // Directional Movement
-                            double upMove = high[idx] - high[prevIdx];
-                            double downMove = low[prevIdx] - low[idx];
-                            
-                            // Positive DM
-                            if (upMove > 0 && upMove > downMove)
-                                posDMSum += upMove;
-                            
-                            // Negative DM
-                            if (downMove > 0 && downMove > upMove)
-                                negDMSum += downMove;
-                            
-                            // True Range for same period
-                            double tr1 = high[idx] - low[idx];
-                            double tr2 = Math.Abs(high[idx] - close[prevIdx]);
-                            double tr3 = Math.Abs(low[idx] - close[prevIdx]);
-                            trSum += Math.Max(Math.Max(tr1, tr2), tr3);
+                            sum += close[lastIdx - i];
+                        }
+                        sma = sum / 20;
+                        
+                        // Calculate standard deviation
+                        double sumSquares = 0;
+                        for (int i = 0; i < 20; i++)
+                        {
+                            sumSquares += Math.Pow(close[lastIdx - i] - sma, 2);
+                        }
+                        double stdDev = Math.Sqrt(sumSquares / 20);
+                        
+                        upperBand = sma + (2 * stdDev);
+                        lowerBand = sma - (2 * stdDev);
+                        
+                        // Calculate position in band - EXACTLY as in Python
+                        double bandRange = upperBand - lowerBand;
+                        if (bandRange > 1e-8) // Avoid division by very small numbers
+                        {
+                            double position = close[lastIdx] - lowerBand;
+                            volatilityBreakout = (float)(position / bandRange);
+                            volatilityBreakout = Math.Clamp(volatilityBreakout, 0f, 1f);
+                            _logger($"Volatility breakout calculated manually: {volatilityBreakout:F6}");
                         }
                     }
-                    
-                    // Calculate DI values
-                    if (trSum > 0)
+                    else
                     {
-                        double posDI = (posDMSum / trSum) * 100;
-                        double negDI = (negDMSum / trSum) * 100;
+                        _logger("Not enough bars for Bollinger Bands calculation, using default value 0.5");
+                    }
+                }
+                features.Add(volatilityBreakout);
+
+                  // 6. trend_strength: [-1, 1] ADX-based trend quality
+                float trendStrength = 0f; // Default to no trend
+                
+                // Use ADX value directly from MarketData if available
+                if (data.ADX != null && data.ADX.Count > lastIdx)
+                {
+                    float adx = (float)data.ADX[lastIdx];
+                    _logger($"Using ADX from MarketData: {adx:F2}");
+                    
+                    // Normalize exactly like Python code: (adx/25)-1
+                    trendStrength = (adx / 25.0f) - 1.0f;
+                    trendStrength = Math.Clamp(trendStrength, -1f, 1f);
+                }
+                else
+                {
+                    _logger("MarketData ADX not available, falling back to manual calculation");
+                    
+                    if (lastIdx >= 15) // Need at least 15 bars for meaningful ADX calculation
+                    {
+                        double posDMSum = 0;
+                        double negDMSum = 0;
+                        double trSum = 0;
                         
-                        if (posDI + negDI > 0)
+                        for (int i = 1; i <= 14; i++)
                         {
-                            // Calculate DX
-                            double dx = Math.Abs(posDI - negDI) / (posDI + negDI) * 100;
+                            int idx = lastIdx - 14 + i;
+                            int prevIdx = idx - 1;
                             
-                            // Normalize exactly like Python code: (dx/25)-1
-                            trendStrength = (float)(dx / 25.0 - 1.0);
-                            trendStrength = Math.Clamp(trendStrength, -1f, 1f);
+                            if (idx > 0 && prevIdx >= 0)
+                            {
+                                // Directional Movement
+                                double upMove = high[idx] - high[prevIdx];
+                                double downMove = low[prevIdx] - low[idx];
+                                
+                                // Positive DM
+                                if (upMove > 0 && upMove > downMove)
+                                    posDMSum += upMove;
+                                
+                                // Negative DM
+                                if (downMove > 0 && downMove > upMove)
+                                    negDMSum += downMove;
+                                
+                                // True Range for same period
+                                double tr1 = high[idx] - low[idx];
+                                double tr2 = Math.Abs(high[idx] - close[prevIdx]);
+                                double tr3 = Math.Abs(low[idx] - close[prevIdx]);
+                                trSum += Math.Max(Math.Max(tr1, tr2), tr3);
+                            }
                         }
+                        
+                        // Calculate DI values
+                        if (trSum > 0)
+                        {
+                            double posDI = (posDMSum / trSum) * 100;
+                            double negDI = (negDMSum / trSum) * 100;
+                            
+                            if (posDI + negDI > 0)
+                            {
+                                // Calculate DX
+                                double dx = Math.Abs(posDI - negDI) / (posDI + negDI) * 100;
+                                
+                                // Normalize exactly like Python code: (dx/25)-1
+                                trendStrength = (float)(dx / 25.0 - 1.0);
+                                trendStrength = Math.Clamp(trendStrength, -1f, 1f);
+                                _logger($"ADX (trend strength) calculated manually: {trendStrength:F6}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        _logger("Not enough bars for ADX calculation, using default value 0");
                     }
                 }
                 features.Add(trendStrength);
+
                   // 7. candle_pattern: [-1, 1] Combined price action signal
                 float body = (float)(close[lastIdx] - open[lastIdx]);
                 float upperWick = (float)(high[lastIdx] - Math.Max(close[lastIdx], open[lastIdx]));
@@ -995,17 +1004,27 @@ namespace DRLTrader.Services
                 double minutesInDay = 24.0 * 60.0; 
                 double timeIndex = barTime.Hour * 60.0 + barTime.Minute;
                 double timeNormalized = 2.0 * Math.PI * timeIndex / minutesInDay;
-                
-                features.Add((float)Math.Sin(timeNormalized));
-                features.Add((float)Math.Cos(timeNormalized));
+
+                // Debug output for verification
+                _logger($"Time: {barTime}, Hours: {barTime.Hour}, Minutes: {barTime.Minute}");
+                _logger($"Time index: {timeIndex} minutes, Angle: {timeNormalized} radians");
+
+                // Make sure these match the Python implementation order
+                float sinTime = (float)Math.Sin(timeNormalized);
+                float cosTime = (float)Math.Cos(timeNormalized);
+
+                // Debug the actual values
+                _logger($"sin_time: {sinTime}, cos_time: {cosTime}");
+
+                features.Add(sinTime);  // Add sin_time
+                features.Add(cosTime);  // Add cos_time
                 
                 // 10. position_type: [-1, 0, 1] Current position
                 features.Add((float)data.PositionDirection);
                 
                 // 11. unrealized_pnl: [-1, 1] Current position P&L
                 features.Add(float.IsNaN((float)data.PositionPnl) ? 0f : (float)data.PositionPnl);
-                  // Log normalized features similar to Python bot
-                _logger($"Created {features.Count} features in exact Python order");
+                  // Log normalized features similar to Python bot                _logger($"Created {features.Count} features in exact Python order");
                 _logger("Normalized features for prediction:");
                 _logger($"  returns: {features[0]:F6}");
                 _logger($"  rsi: {features[1]:F6}");
@@ -1017,19 +1036,70 @@ namespace DRLTrader.Services
                 _logger($"  sin_time: {features[7]:F6}");
                 _logger($"  cos_time: {features[8]:F6}");
                 _logger($"  position_type: {features[9]:F6}");
-                _logger($"  unrealized_pnl: {features[10]:F6}");
-                  // Log raw indicator values for the last bar
+                _logger($"  unrealized_pnl: {features[10]:F6}");                  
+                  // Log OHLCV data for the most recent bar (index 0)
+                _logger("Most recent bar OHLCV data (index 0):");
+                _logger($"Symbol: {data.Symbol}");
+                _logger($"Open: {open[0]:F6}");
+                _logger($"High: {high[0]:F6}");
+                _logger($"Close: {close[0]:F6}");
+                _logger($"Low: {low[0]:F6}");
+                _logger($"Volume: {volume[0]:F6}");
+                
+                // Also log previous bar if available (for comparison)
+                if (data.Close.Count > 1)
+                {
+                    _logger("Previous bar OHLCV data (index 1):");
+                    _logger($"Open: {open[1]:F6}");
+                    _logger($"High: {high[1]:F6}");
+                    _logger($"Close: {close[1]:F6}");
+                    _logger($"Low: {low[1]:F6}");
+                    _logger($"Volume: {volume[1]:F6}");
+                    
+                    // Format timestamp for previous bar
+                    string prevDateTimeStr = "Unknown";
+                    try
+                    {
+                        DateTimeOffset prevDto = DateTimeOffset.FromUnixTimeSeconds(data.Timestamp[1]);
+                        prevDateTimeStr = prevDto.ToString("yyyy-MM-dd HH:mm:ss");
+                        _logger($"Previous Timestamp: {data.Timestamp[1]} ({prevDateTimeStr})");
+                    }
+                    catch
+                    {
+                        _logger("WARNING: Could not format timestamp for previous bar");
+                    }
+                }
+                
+                // Format timestamp as a readable date/time for current bar
+                string dateTimeStr = "Unknown";
+                try
+                {
+                    DateTimeOffset dto = DateTimeOffset.FromUnixTimeSeconds(data.Timestamp[lastIdx]);
+                    dateTimeStr = dto.ToString("yyyy-MM-dd HH:mm:ss");
+                }
+                catch
+                {
+                    _logger("WARNING: Could not format timestamp");
+                }
+                _logger($"Current Timestamp: {data.Timestamp[lastIdx]} ({dateTimeStr})");
+                
+                // Log raw indicator values for the last bar
                 _logger("Raw feature values (last bar):");
                 _logger($"ATR: {atr:F6}");
                 _logger($"RSI: {rsi:F6}");
                 
-                // Log BB values if they were calculated
-                if (lastIdx >= 20)
-                {
-                    _logger($"BB Upper: {upperBand:F6}");
-                    _logger($"BB Lower: {lowerBand:F6}");
-                }
+                // Always log BB values 
+                _logger($"BB Upper: {upperBand:F6}");
+                _logger($"BB Middle: {sma:F6}");
+                _logger($"BB Lower: {lowerBand:F6}");
                 
+                // Get ADX raw value for logging
+                float rawAdx = 0f;
+                if (data.ADX != null && data.ADX.Count > lastIdx)
+                {
+                    rawAdx = (float)data.ADX[lastIdx];
+                }
+                _logger($"ADX: {rawAdx:F6}");
                 _logger($"Trend Strength: {trendStrength:F6}");
                 
                 // Final validation

@@ -117,9 +117,9 @@ class FeatureProcessor:
             returns = np.zeros_like(close)
             returns[1:] = np.diff(close) / close[:-1]
             returns = np.clip(returns, -0.1, 0.1)
-            
             minutes_in_day = 24 * 60
-            time_index = pd.to_datetime(data.index).hour * 60 + pd.to_datetime(data.index).minute
+            # Explicitly use UTC to prevent timezone conversions
+            time_index = pd.to_datetime(data.index, utc=True).hour * 60 + pd.to_datetime(data.index, utc=True).minute
             sin_time = np.sin(2 * np.pi * time_index / minutes_in_day)
             cos_time = np.cos(2 * np.pi * time_index / minutes_in_day)
             

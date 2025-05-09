@@ -351,20 +351,6 @@ namespace cAlgo.Robots
 
             try
             {
-                Print($"==== OnBar processing at {Time} ====");
-                
-                // Add new bar to queue
-                _bars.Enqueue(Bars.Last());
-                if (_bars.Count > MinimumBars)
-                    _bars.Dequeue();
-
-                // Only proceed if we have enough data
-                if (_bars.Count < MinimumBars)
-                {
-                    Print($"Waiting for more data: {_bars.Count}/{MinimumBars} bars");
-                    return;
-                }
-
                 Print("Getting current position info...");
                 // Get current position directly from the TradeManager
                 var position = Positions.FirstOrDefault(p => p.SymbolName == Symbol.Name && p.Label == POSITION_LABEL);
@@ -394,33 +380,21 @@ namespace cAlgo.Robots
                     Symbol = Symbol.Name,
                     PositionDirection = positionDirection,
                     PositionPnl = positionPnl
-                };
-
-                // Add historical data with optional small perturbation
-                Random rnd = new Random();
-                bool useRandomPerturbation = false; // Set to true to apply random noise to make predictions more diverse
-                double perturbationScale = 0.0001; // Small scale to avoid changing actual market structure
-                
-                // We need to convert our queue to a list to access by index
-                var barsList = _bars.ToList();
-                
-                for (int i = 0; i < barsList.Count; i++)
+                };                // Add historical data with optional small perturbation using Last() method                // Use MinimumBars for consistency with how we initially loaded historical data
+                for (int i = 1; i < MinimumBars; i++)
                 {
-                    var bar = barsList[i];
-                    
-                    // Apply small random perturbation to price data to get varied model responses
-                    double perturbation = useRandomPerturbation ? ((rnd.NextDouble() * 2 - 1) * perturbationScale) : 0;
+                    var bar = Bars.Last(i);
                     
                     marketData.Timestamp.Add(new DateTimeOffset(bar.OpenTime).ToUnixTimeSeconds());
-                    marketData.Open.Add(bar.Open * (1 + perturbation));
-                    marketData.High.Add(bar.High * (1 + perturbation));
-                    marketData.Low.Add(bar.Low * (1 + perturbation));
-                    marketData.Close.Add(bar.Close * (1 + perturbation));
+                    marketData.Open.Add(bar.Open);
+                    marketData.High.Add(bar.High);
+                    marketData.Low.Add(bar.Low);
+                    marketData.Close.Add(bar.Close);
                     marketData.Volume.Add(bar.TickVolume);
                     
-                    // Add technical indicators for this bar
-                    // Need to handle the lookback period where indicator values might be unavailable
-                    int index = Bars.Count - _bars.Count + i;
+                    // Current index for indicator access
+                    // Last(1) corresponds to Bars.Count - 2, Last(2) to Bars.Count - 3, etc.
+                    int index = Bars.Count - 2 - i;  // Adjust index calculation to match the Last(i+1) change
                     
                     // Get indicator values with null checks to avoid errors during warmup period
                     double atrValue = index >= AtrPeriod ? _atr.Result[index] : 0;
@@ -439,14 +413,7 @@ namespace cAlgo.Robots
                     marketData.BollingerLower.Add(bbLower);
                     marketData.ADX.Add(adxValue);
                 }
-                Print($"Market data prepared with {_bars.Count} bars and technical indicators");
-                
-                // Reset the LSTM state occasionally to avoid getting stuck in one state
-                if (IsRecurrentModel && rnd.NextDouble() < 0.05) // 5% chance to reset
-                {
-                    Print("Randomly resetting LSTM state to prevent getting stuck in predictions");
-                    _onnxPredictor.ResetLstmState();
-                }
+                Print($"Market data prepared with {MinimumBars} bars and technical indicators");
                 
                 PredictionResponse prediction;
                 try
