@@ -958,8 +958,7 @@ namespace DRLTrader.Services
                     }
                 }
                 features.Add(trendStrength);
-                
-                // 7. candle_pattern: [-1, 1] Combined price action signal
+                  // 7. candle_pattern: [-1, 1] Combined price action signal
                 float body = (float)(close[lastIdx] - open[lastIdx]);
                 float upperWick = (float)(high[lastIdx] - Math.Max(close[lastIdx], open[lastIdx]));
                 float lowerWick = (float)(Math.Min(close[lastIdx], open[lastIdx]) - low[lastIdx]);
@@ -1311,15 +1310,16 @@ namespace DRLTrader.Services
                             volumeChange = Math.Clamp(volumeChange, -1f, 1f);
                         }
                         features.Add(volumeChange);
-                        
-                        // 5. Volatility breakout (Bollinger Band position)
+                          // 5. Volatility breakout (Bollinger Band position)
                         float volatilityBreakout = 0.5f; // Default to middle
                         if (i >= bollPeriod - 1)
                         {
                             float bandRange = upperBand[i] - lowerBand[i];
-                            if (bandRange > 0)
+                            // Use exact same 1e-8 threshold as Python implementation
+                            if (bandRange > 1e-8)
                             {
-                                volatilityBreakout = (float)((close[i] - lowerBand[i]) / bandRange);
+                                double position = close[i] - lowerBand[i];
+                                volatilityBreakout = (float)(position / bandRange);
                                 volatilityBreakout = Math.Clamp(volatilityBreakout, 0f, 1f);
                             }
                         }
@@ -1363,16 +1363,16 @@ namespace DRLTrader.Services
                             }
                         }
                         features.Add(trendStrength);
-                        
-                        // 7. Calculate candle pattern
+                          // 7. Calculate candle pattern
                         float body = (float)(close[i] - open[i]);
                         float upperWick = (float)(high[i] - Math.Max(close[i], open[i]));
                         float lowerWick = (float)(Math.Min(close[i], open[i]) - low[i]);
                         float range = (float)(high[i] - low[i] + 1e-8);
                         
                         float candlePattern;
-                        if (upperWick + lowerWick > 0)
+                        if (upperWick + lowerWick > 1e-8) // Match Python's 1e-8 threshold
                         {
+                            // Exactly match Python formula
                             candlePattern = (body / range + (upperWick - lowerWick) / (upperWick + lowerWick)) / 2f;
                         }
                         else

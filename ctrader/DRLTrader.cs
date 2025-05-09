@@ -362,7 +362,7 @@ namespace cAlgo.Robots
 
                 // Add historical data with optional small perturbation
                 Random rnd = new Random();
-                bool useRandomPerturbation = true; // Set to true to apply random noise to make predictions more diverse
+                bool useRandomPerturbation = false; // Set to true to apply random noise to make predictions more diverse
                 double perturbationScale = 0.0001; // Small scale to avoid changing actual market structure
                 
                 foreach (var bar in _bars)
