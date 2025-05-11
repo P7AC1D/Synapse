@@ -1,14 +1,87 @@
 #!/usr/bin/env python3
 
 import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
+
 import argparse
 import numpy as np
 import torch
+import traceback
 from sb3_contrib import RecurrentPPO
 from stable_baselines3 import PPO
 import torch.nn as nn
 from stable_baselines3.common.preprocessing import preprocess_obs
 from collections import namedtuple
+
+def verify_onnx_model(model_path, is_recurrent=False, input_shape=(1, 11)):
+    """Verify ONNX model by running inference with random test data"""
+    print("\nVerifying ONNX model with random test data...")
+    import onnxruntime as ort
+    import numpy as np
+
+    try:
+        # Create random test data
+        test_obs = np.random.randn(*input_shape).astype(np.float32)
+        
+        # Create ONNX Runtime session
+        print(f"Loading ONNX model from {model_path}")
+        sess_options = ort.SessionOptions()
+        sess_options.log_severity_level = 0  # Suppress warnings
+        sess = ort.InferenceSession(model_path, sess_options)
+        
+        # Print input/output info
+        print("\nModel Input Details:")
+        for input in sess.get_inputs():
+            print(f"- Name: {input.name}")
+            print(f"  Shape: {input.shape}")
+            print(f"  Type: {input.type}")
+        
+        print("\nModel Output Details:")
+        for output in sess.get_outputs():
+            print(f"- Name: {output.name}")
+            print(f"  Shape: {output.shape}")
+            print(f"  Type: {output.type}")
+        
+        # Run inference
+        print("\nRunning test inference...")
+        if is_recurrent:
+            batch_size = input_shape[0]
+            hidden_size = 64  # Default LSTM hidden size
+            num_layers = 1    # Default number of LSTM layers
+            
+            # Create LSTM state inputs
+            lstm_h = np.zeros((num_layers, batch_size, hidden_size), dtype=np.float32)
+            lstm_c = np.zeros((num_layers, batch_size, hidden_size), dtype=np.float32)
+            
+            outputs = sess.run(
+                ['action_logits', 'new_lstm_h', 'new_lstm_c'],
+                {
+                    'observation': test_obs,
+                    'lstm_h': lstm_h,
+                    'lstm_c': lstm_c
+                }
+            )
+            
+            print("\nTest inference results:")
+            print(f"- Action logits shape: {outputs[0].shape}")
+            print(f"- Action logits range: [{outputs[0].min():.3f}, {outputs[0].max():.3f}]")
+            print(f"- LSTM hidden state shape: {outputs[1].shape}")
+            print(f"- LSTM cell state shape: {outputs[2].shape}")
+        else:
+            outputs = sess.run(['action_logits'], {'observation': test_obs})
+            
+            print("\nTest inference results:")
+            print(f"- Action logits shape: {outputs[0].shape}")
+            print(f"- Action logits range: [{outputs[0].min():.3f}, {outputs[0].max():.3f}]")
+            print(f"- Action distribution: {np.exp(outputs[0]) / np.exp(outputs[0]).sum()}")
+        
+        print("\nONNX model verification successful!")
+        return True
+        
+    except Exception as e:
+        print(f"\nONNX model verification failed: {str(e)}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        return False
 
 def export_ppo_to_onnx(model_path, output_path, input_shape=(1, 11), is_recurrent=False):
     """
@@ -67,13 +140,11 @@ def export_standard_ppo(model, output_path, input_shape=(1, 11)):
             # Pass through the policy network from MLP extractor
             policy_latent = self.mlp_extractor.policy_net(features)
             
-            # Get action logits
+            # Get raw logits without softmax
             action_logits = self.action_net(policy_latent)
             
-            # Apply softmax to get probabilities
-            action_probs = torch.softmax(action_logits, dim=-1)
-            
-            return action_probs
+            # Return raw logits for consistent action processing
+            return action_logits
     
     # Create the wrapper
     wrapper = SimplePPOWrapper(policy)
@@ -85,9 +156,9 @@ def export_standard_ppo(model, output_path, input_shape=(1, 11)):
     # Test the forward pass
     print("\nTesting wrapper forward pass...")
     try:
-        action_probs = wrapper(dummy_obs)
+        action_logits = wrapper(dummy_obs)
         print(f"Forward pass successful!")
-        print(f"Output shapes: action_probs={action_probs.shape}")
+        print(f"Output shapes: action_logits={action_logits.shape}")
     except Exception as e:
         print(f"Forward pass failed: {str(e)}")
         print(f"\nExtracting more detailed network information:")
@@ -110,10 +181,10 @@ def export_standard_ppo(model, output_path, input_shape=(1, 11)):
             opset_version=12,  # Using higher opset version for better compatibility
             do_constant_folding=True,
             input_names=['observation'],
-            output_names=['action_probs'],
+            output_names=['action_logits'],
             dynamic_axes={
                 'observation': {0: 'batch'},
-                'action_probs': {0: 'batch'},
+                'action_logits': {0: 'batch'},
             }
         )
         print("Model exported successfully!")
@@ -183,13 +254,11 @@ def export_recurrent_ppo(model, output_path, input_shape=(1, 500, 11)):
             # Pass through the policy network from MLP extractor
             policy_latent = self.mlp_extractor.policy_net(last_output)
             
-            # Get action logits
+            # Get raw action logits (no softmax)
             action_logits = self.action_net(policy_latent)
             
-            # Apply softmax to get probabilities
-            action_probs = torch.softmax(action_logits, dim=-1)
-            
-            return action_probs, h_n, c_n
+            # Return raw logits for consistent processing
+            return action_logits, h_n, c_n
     
     # Create the wrapper
     wrapper = SimpleRecurrentWrapper(policy)
@@ -203,9 +272,9 @@ def export_recurrent_ppo(model, output_path, input_shape=(1, 500, 11)):
     # Test the forward pass
     print("\nTesting wrapper forward pass...")
     try:
-        action_probs, new_h, new_c = wrapper(dummy_obs, lstm_h, lstm_c)
+        action_logits, new_h, new_c = wrapper(dummy_obs, lstm_h, lstm_c)
         print(f"Forward pass successful!")
-        print(f"Output shapes: action_probs={action_probs.shape}, new_h={new_h.shape}, new_c={new_c.shape}")
+        print(f"Output shapes: action_logits={action_logits.shape}, new_h={new_h.shape}, new_c={new_c.shape}")
     except Exception as e:
         print(f"Forward pass failed: {str(e)}")
         print(f"\nExtracting more detailed network information:")
@@ -230,19 +299,93 @@ def export_recurrent_ppo(model, output_path, input_shape=(1, 500, 11)):
             opset_version=12,  # Using higher opset version for better compatibility
             do_constant_folding=True,
             input_names=['observation', 'lstm_h', 'lstm_c'],
-            output_names=['action_probs', 'new_lstm_h', 'new_lstm_c'],
+            output_names=['action_logits', 'new_lstm_h', 'new_lstm_c'],
             dynamic_axes={
                 'observation': {0: 'batch', 1: 'sequence'},
                 'lstm_h': {1: 'batch'},
                 'lstm_c': {1: 'batch'},
-                'action_probs': {0: 'batch'},
+                'action_logits': {0: 'batch'},
                 'new_lstm_h': {1: 'batch'},
                 'new_lstm_c': {1: 'batch'},
             }
         )
         print("Model exported successfully!")
+        
+        # Validate the exported model
+        print("\nValidating exported ONNX model...")
+        import onnx
+        from onnx import checker, shape_inference
+        
+        # Load and check the model
+        model = onnx.load(output_path)
+        checker.check_model(model)
+        
+        # Print model information
+        print("\nModel Input Details:")
+        for input in model.graph.input:
+            print(f"- Name: {input.name}")
+            shape = [d.dim_value if d.dim_value > 0 else 'dynamic' for d in input.type.tensor_type.shape.dim]
+            print(f"  Shape: {shape}")
+        
+        print("\nModel Output Details:")
+        for output in model.graph.output:
+            print(f"- Name: {output.name}")
+            shape = [d.dim_value if d.dim_value > 0 else 'dynamic' for d in output.type.tensor_type.shape.dim]
+            print(f"  Shape: {shape}")
+        
+        print("\nModel validation successful!")
+        
+        # Compare PyTorch and ONNX outputs
+        print("\nComparing PyTorch and ONNX outputs...")
+        import onnxruntime as ort
+        
+        # Create ONNX inference session
+        sess = ort.InferenceSession(output_path)
+        
+        if is_recurrent:
+            # Run PyTorch model
+            with torch.no_grad():
+                torch_out = wrapper(dummy_obs, lstm_h, lstm_c)
+            
+            # Run ONNX model
+            onnx_out = sess.run(
+                ['action_logits', 'new_lstm_h', 'new_lstm_c'],
+                {
+                    'observation': dummy_obs.numpy(),
+                    'lstm_h': lstm_h.numpy(),
+                    'lstm_c': lstm_c.numpy()
+                }
+            )
+            
+            # Compare outputs
+            torch_logits = torch_out[0].numpy()
+            onnx_logits = onnx_out[0]
+            max_diff = np.abs(torch_logits - onnx_logits).max()
+            print(f"Max difference between PyTorch and ONNX logits: {max_diff}")
+            if max_diff > 1e-6:
+                print("WARNING: Large difference between PyTorch and ONNX outputs!")
+            else:
+                print("PyTorch and ONNX outputs match!")
+        else:
+            # Run PyTorch model
+            with torch.no_grad():
+                torch_out = wrapper(dummy_obs)
+            
+            # Run ONNX model
+            onnx_out = sess.run(['action_logits'], {'observation': dummy_obs.numpy()})
+            
+            # Compare outputs
+            torch_logits = torch_out.numpy()
+            onnx_logits = onnx_out[0]
+            max_diff = np.abs(torch_logits - onnx_logits).max()
+            print(f"Max difference between PyTorch and ONNX logits: {max_diff}")
+            if max_diff > 1e-6:
+                print("WARNING: Large difference between PyTorch and ONNX outputs!")
+            else:
+                print("PyTorch and ONNX outputs match!")
+        
     except Exception as e:
-        print(f"Export failed: {str(e)}")
+        print(f"Export/validation failed: {str(e)}")
         raise
 
 if __name__ == "__main__":
@@ -258,17 +401,31 @@ if __name__ == "__main__":
     # Ensure output directory exists
     os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
     
-    if args.is_recurrent:
-        export_ppo_to_onnx(
-            args.model_path, 
-            args.output_path,
-            input_shape=(1, args.seq_length, args.features),
-            is_recurrent=True
-        )
-    else:
-        export_ppo_to_onnx(
-            args.model_path, 
-            args.output_path,
-            input_shape=(1, args.features),
-            is_recurrent=False
-        )
+    try:
+        if args.is_recurrent:
+            export_ppo_to_onnx(
+                args.model_path, 
+                args.output_path,
+                input_shape=(1, args.seq_length, args.features),
+                is_recurrent=True
+            )
+            input_shape = (1, args.seq_length, args.features)
+        else:
+            export_ppo_to_onnx(
+                args.model_path, 
+                args.output_path,
+                input_shape=(1, args.features),
+                is_recurrent=False
+            )
+            input_shape = (1, args.features)
+
+        # Verify the exported model
+        print("\nRunning standalone model verification...")
+        if verify_onnx_model(args.output_path, args.is_recurrent, input_shape):
+            print("\nModel export and verification completed successfully!")
+        else:
+            print("\nWARNING: Model verification failed!")
+    except Exception as e:
+        print(f"\nERROR during export/verification: {str(e)}")
+        print(f"Stack trace:\n{traceback.format_exc()}")
+        raise

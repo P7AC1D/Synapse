@@ -312,7 +312,7 @@ namespace DRLTrader.Services
                     };
                 }
                 
-                // Get the output tensor (action probabilities)
+                // Get the output tensor (action logits)
                 _logger("Processing output...");
                 
                 // Check if we have any results
@@ -388,21 +388,24 @@ namespace DRLTrader.Services
                     };
                 }
                 
-                // Log all action probabilities for debugging
-                _logger("Raw action probabilities:");
+                // Log all raw logits for debugging
+                _logger("Raw action logits:");
                 try {
+                    bool is2DTensor = outputTensor.Dimensions.Length == 2 && outputTensor.Dimensions[0] == 1;
+                    
                     for (int i = 0; i < Math.Min(outputTensor.Length, 4); i++) // Safety: limit to 4 elements max (our action space)
                     {
                         TradingAction actionType = MapIndexToAction(i);
-                        _logger($"  - {actionType}: {outputTensor[i]:P2}");
+                        float value = is2DTensor ? outputTensor[0, i] : outputTensor[i];
+                        _logger($"  - {actionType}: {value:P2}");
                     }
                 }
                 catch (Exception ex) {
-                    _logger($"ERROR logging action probabilities: {ex.Message}");
+                    _logger($"ERROR logging action logits: {ex.Message}");
                 }
 
-                // Get the action with highest probability (same as argmax in Python)
-                int actionIndex = GetMaxProbabilityIndex(outputTensor);
+                // Get the action with highest logit value (same as argmax in Python)
+                int actionIndex = GetMaxLogitIndex(outputTensor);
                 TradingAction selectedAction = MapIndexToAction(actionIndex);
                 
                 // Safely get confidence
@@ -545,24 +548,24 @@ namespace DRLTrader.Services
                     _logger($"  - {r.Name}");
                 }
                 
-                // Get action probabilities with error handling
+                // Get action logits with error handling
                 _logger("Processing outputs...");
                 Tensor<float> outputTensor;
                 try
                 {
-                    var actionProbs = results.FirstOrDefault(x => x.Name == "action_probs");
-                    if (actionProbs == null)
+                    var actionLogits = results.FirstOrDefault(x => x.Name == "action_logits");
+                    if (actionLogits == null)
                     {
-                        _logger("ERROR: 'action_probs' output not found in model results");
+                        _logger("ERROR: 'action_logits' output not found in model results");
                         // Try to use first output as fallback
-                        actionProbs = results.First();
-                        _logger($"Using fallback output: {actionProbs.Name}");
+                        actionLogits = results.First();
+                        _logger($"Using fallback output: {actionLogits.Name}");
                     }
                     
-                    outputTensor = actionProbs.AsTensor<float>();
-                    _logger($"Action probs tensor retrieved successfully");
-                    _logger($"Action probs tensor shape: [{string.Join(", ", outputTensor.Dimensions.ToArray())}]");
-                    _logger($"Action probs tensor length: {outputTensor.Length}");
+                    outputTensor = actionLogits.AsTensor<float>();
+                    _logger($"Action logits tensor retrieved successfully");
+                    _logger($"Action logits tensor shape: [{string.Join(", ", outputTensor.Dimensions.ToArray())}]");
+                    _logger($"Action logits tensor length: {outputTensor.Length}");
                     
                     // Check if tensor has elements before accessing them
                     if (outputTensor.Length == 0)
@@ -579,29 +582,32 @@ namespace DRLTrader.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger($"ERROR getting action probabilities: {ex.Message}");
+                    _logger($"ERROR getting action logits: {ex.Message}");
                     return new PredictionResponse
                     {
                         Action = "Hold",
                         Confidence = 1.0f,
                         Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                        Description = $"ERROR getting action probabilities: {ex.Message}, defaulting to Hold"
+                        Description = $"ERROR getting action logits: {ex.Message}, defaulting to Hold"
                     };
                 }
                 
-                // Log all probabilities for debugging
-                _logger("Raw action probabilities:");
+                // Log all logits for debugging
+                _logger("Raw action logits:");
                 try
                 {
+                    bool is2DTensor = outputTensor.Dimensions.Length == 2 && outputTensor.Dimensions[0] == 1;
+                    
                     for (int i = 0; i < Math.Min(outputTensor.Length, 4); i++) // Safety: limit to 4 elements max
                     {
                         TradingAction actionType = MapIndexToAction(i);
-                        _logger($"  - {actionType}: {outputTensor[i]:P2}");
+                        float value = is2DTensor ? outputTensor[0, i] : outputTensor[i];
+                        _logger($"  - {actionType}: {value:P2}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger($"ERROR logging action probabilities: {ex.Message}");
+                    _logger($"ERROR logging action logits: {ex.Message}");
                 }
                 
                 // Get updated LSTM states with error handling
@@ -632,15 +638,17 @@ namespace DRLTrader.Services
                     // Continue processing without updating states
                 }
                 
-                // Process the output - simply take the highest probability action
-                int actionIndex = GetMaxProbabilityIndex(outputTensor);
+                // Process logits - take action with highest logit value (argmax)
+                int actionIndex = GetMaxLogitIndex(outputTensor);
                 TradingAction selectedAction = MapIndexToAction(actionIndex);
                 
                 // Safely get confidence
                 float confidence;
                 try
                 {
-                    confidence = outputTensor[actionIndex];
+                    bool is2DTensor = outputTensor.Dimensions.Length == 2 && outputTensor.Dimensions[0] == 1;
+                    confidence = is2DTensor ? outputTensor[0, actionIndex] : outputTensor[actionIndex];
+                    _logger($"Confidence value retrieved successfully: {confidence:F6} ({confidence:P2})");
                 }
                 catch (Exception ex)
                 {
@@ -779,7 +787,7 @@ namespace DRLTrader.Services
                 {
                     atr = (float)data.ATR[lastIdx];
                     
-                    // Apply ATR normalization to match Python's implementation
+                    // Apply ATR normalization exactly like Python
                     float[] atrWindow = data.ATR.Take(Math.Min(20, data.ATR.Count))
                                           .Select(x => (float)x)
                                           .ToArray();
@@ -791,11 +799,18 @@ namespace DRLTrader.Services
                     // Calculate SMA like Python's rolling(window_size).mean()
                     float atrSma = atrWindow.Average();
                     float atrRatio = atrSma != 0 ? atr / atrSma : 1f;
+                    
+                    // Debug ATR calculations
+                    _logger($"ATR Debug - Raw: {atr:F6}, SMA: {atrSma:F6}, Ratio: {atrRatio:F6}");
+                    
+                    // Normalize exactly like Python
                     float minExpectedRatio = 0.5f;
                     float maxExpectedRatio = 2.0f;
                     float expectedRange = maxExpectedRatio - minExpectedRatio;
                     atrNorm = 2f * (atrRatio - minExpectedRatio) / expectedRange - 1f;
                     atrNorm = Math.Clamp(atrNorm, -1f, 1f);
+                    
+                    _logger($"ATR Norm: {atrNorm:F6}");
                 }
                 else
                 {
@@ -1003,8 +1018,8 @@ namespace DRLTrader.Services
                 // Debug the actual values
                 _logger($"sin_time: {sinTime}, cos_time: {cosTime}");
 
-                features.Add(cosTime);  // Add cos_time first to match Python
-                features.Add(sinTime);  // Add sin_time second to match Python
+                features.Add(cosTime);
+                features.Add(sinTime);
                 
                 // 10. position_type: [-1, 0, 1] Current position
                 features.Add((float)data.PositionDirection);
@@ -1020,8 +1035,8 @@ namespace DRLTrader.Services
                 _logger($"  volatility_breakout: {features[4]:F6}");
                 _logger($"  trend_strength: {features[5]:F6}");
                 _logger($"  candle_pattern: {features[6]:F6}");
-                _logger($"  sin_time: {features[7]:F6}");
-                _logger($"  cos_time: {features[8]:F6}");
+                _logger($"  cos_time: {features[7]:F6}");
+                _logger($"  sin_time: {features[8]:F6}");
                 _logger($"  position_type: {features[9]:F6}");
                 _logger($"  unrealized_pnl: {features[10]:F6}");                  
                   // Log OHLCV data for the most recent bar (index 0)
@@ -1455,8 +1470,8 @@ namespace DRLTrader.Services
                         double timeIndex = barTime.Hour * 60.0 + barTime.Minute;
                         double timeNormalized = 2.0 * Math.PI * timeIndex / minutesInDay;
                         
-                        features.Add((float)Math.Cos(timeNormalized)); // Cos time first to match Python
-                        features.Add((float)Math.Sin(timeNormalized)); // Sin time second to match Python
+                        features.Add((float)Math.Sin(timeNormalized)); // Sin time first to match Python
+                        features.Add((float)Math.Cos(timeNormalized)); // Cos time second to match Python
                         
                         // 10-11. Position direction and PnL
                         features.Add((float)data.PositionDirection);
@@ -1553,60 +1568,62 @@ namespace DRLTrader.Services
         }
 
         /// <summary>
-        /// Get the index with the highest probability
+        /// Get the index with the highest logit value
         /// </summary>
-        private int GetMaxProbabilityIndex(Tensor<float> tensor)
+        private int GetMaxLogitIndex(Tensor<float> logits)
         {
             try
             {
-                if (tensor == null)
+                if (logits == null)
                 {
-                    _logger("WARNING: Received null tensor in GetMaxProbabilityIndex");
+                    _logger("WARNING: Received null logits in GetMaxLogitIndex");
                     return 0; // Default to Hold action
                 }
                 
-                if (tensor.Length == 0)
+                if (logits.Length == 0)
                 {
-                    _logger("WARNING: Received empty tensor in GetMaxProbabilityIndex");
+                    _logger("WARNING: Received empty tensor in GetMaxLogitIndex");
                     return 0; // Default to Hold action
                 }
                 
-                _logger($"Finding max probability among {tensor.Length} values with tensor shape [{string.Join(", ", tensor.Dimensions.ToArray())}]");
+                _logger($"Finding max logit among {logits.Length} values with tensor shape [{string.Join(", ", logits.Dimensions.ToArray())}]");
                 
                 // Handle tensor shape properly. If it's a 2D tensor with shape [1, N], we need to access elements differently
-                bool is2DTensor = tensor.Dimensions.Length == 2 && tensor.Dimensions[0] == 1;
+                bool is2DTensor = logits.Dimensions.Length == 2 && logits.Dimensions[0] == 1;
                 
-                // Detailed logging of all probabilities
-                _logger("DETAILED ACTION PROBABILITIES:");
-                for (int i = 0; i < Math.Min(tensor.Length, 4); i++) // Limit to 4 actions max
+                // Detailed logging of all action logits
+                _logger("DETAILED ACTION LOGITS:");
+                for (int i = 0; i < Math.Min(logits.Length, 4); i++) // Limit to 4 actions max
                 {
                     TradingAction actionType = MapIndexToAction(i);
-                    float value = is2DTensor ? tensor[0, i] : tensor[i]; // Access correctly based on shape
+                    float value = is2DTensor ? logits[0, i] : logits[i]; // Access correctly based on shape
                     _logger($"  - Index {i} ({actionType}): {value:F6} ({value:P2})");
                 }
                 
-                // Find the actual max value
-                int maxIndex = 0;
-                float maxValue = is2DTensor ? tensor[0, 0] : tensor[0];
-                
-                for (int i = 1; i < Math.Min(tensor.Length, 4); i++) // Limit to 4 actions max
+                // Find argmax directly without any transformation
+                float[] logitValues = new float[4];
+                for (int i = 0; i < 4; i++)
                 {
-                    float value = is2DTensor ? tensor[0, i] : tensor[i];
-                    if (value > maxValue)
-                    {
-                        maxValue = value;
-                        maxIndex = i;
-                    }
+                    logitValues[i] = is2DTensor ? logits[0, i] : logits[i];
                 }
                 
+                _logger("Raw action logits to be used for argmax selection:");
+                for (int i = 0; i < logitValues.Length; i++)
+                {
+                    _logger($"  Index {i}: {logitValues[i]:F6}");
+                }
+
+                int maxIndex = Array.IndexOf(logitValues, logitValues.Max());
+                
+                float maxValue = logitValues[maxIndex];
                 TradingAction selectedAction = MapIndexToAction(maxIndex);
-                _logger($"Max probability found: index={maxIndex}, action={selectedAction}, value={maxValue:F6} ({maxValue:P2})");
+                _logger($"Max logit found: index={maxIndex}, action={selectedAction}, value={maxValue:F6}");
                 
                 return maxIndex;
             }
             catch (Exception ex)
             {
-                _logger($"ERROR in GetMaxProbabilityIndex: {ex.Message}");
+                _logger($"ERROR in GetMaxLogitIndex: {ex.Message}");
                 _logger($"Stack trace: {ex.StackTrace}");
                 return 0; // Default to Hold action in case of error
             }
@@ -1627,6 +1644,8 @@ namespace DRLTrader.Services
             }
             
             // This mapping should match your model's training setup
+            // Match Python's exact action mapping:
+            // [0: Hold, 1: Buy, 2: Sell, 3: Close]
             switch (index)
             {
                 case 0:

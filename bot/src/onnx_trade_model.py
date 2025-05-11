@@ -1,0 +1,551 @@
+"""ONNX model support for trading prediction."""
+
+import logging
+import numpy as np
+import pandas as pd
+import onnxruntime as ort
+from pathlib import Path
+from typing import Dict, List, Optional, Union, Any, Tuple
+
+from trading.environment import TradingEnv
+from trading.actions import Action
+
+class OnnxTradeModel:
+    """Class for loading and making predictions with an ONNX model."""
+
+    def __init__(self, model_path: str, is_recurrent: bool = False, hidden_size: int = 64, 
+                 num_layers: int = 1, balance_per_lot: float = 1000.0, initial_balance: float = 10000.0,
+                 point_value: float = 0.01, min_lots: float = 0.01, max_lots: float = 200.0,
+                 contract_size: float = 100.0):
+        """
+        Initialize the ONNX trade model.
+        
+        Args:
+            model_path: Path to the ONNX model file
+            is_recurrent: Whether the model is recurrent (LSTM)
+            hidden_size: LSTM hidden size (only used if is_recurrent=True)
+            num_layers: Number of LSTM layers (only used if is_recurrent=True)
+            balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
+            initial_balance: Starting account balance (default: 10000.0)
+            point_value: Value of one price point movement (default: 0.01)
+            min_lots: Minimum lot size (default: 0.01)
+            max_lots: Maximum lot size (default: 200.0)
+            contract_size: Standard contract size (default: 100.0)
+        """
+        self.logger = logging.getLogger(__name__)
+        self.model_path = Path(model_path)
+        self.is_recurrent = is_recurrent
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.session = None
+        self.balance_per_lot = balance_per_lot
+        self.initial_balance = initial_balance
+        self.point_value = point_value
+        self.min_lots = min_lots
+        self.max_lots = max_lots
+        self.contract_size = contract_size
+        
+        # For recurrent models, store LSTM states
+        self.lstm_hidden = None
+        self.lstm_cell = None
+        
+        self.required_columns = [
+            'open',   # Required for price action features
+            'close',  # Price data
+            'high',   # Price data
+            'low',    # Price data
+            'spread'  # Price data
+        ]
+        
+        # Load the model
+        self.load_model()
+    
+    def load_model(self) -> bool:
+        """Load the ONNX model.
+        
+        Returns:
+            bool: True if model loaded successfully, False otherwise
+        """
+        try:
+            # Create ONNX Runtime session
+            sess_options = ort.SessionOptions()
+            sess_options.log_severity_level = 0  # Suppress warnings
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            
+            # Load the model with optimizations
+            self.session = ort.InferenceSession(str(self.model_path), sess_options)
+            
+            # Print model information for debugging
+            self.logger.info(f"ONNX model successfully loaded from {self.model_path}")
+            self.logger.info("Model inputs:")
+            for input in self.session.get_inputs():
+                self.logger.info(f"- {input.name}: shape={input.shape}, type={input.type}")
+            
+            self.logger.info("Model outputs:")
+            for output in self.session.get_outputs():
+                self.logger.info(f"- {output.name}: shape={output.shape}, type={output.type}")
+            
+            # Initialize LSTM states if needed
+            if self.is_recurrent:
+                self.reset_lstm_states(batch_size=1)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error loading ONNX model: {e}")
+            return False
+    
+    def reset_lstm_states(self, batch_size: int = 1):
+        """Reset LSTM states to zeros.
+        
+        Args:
+            batch_size: Batch size for the LSTM states
+        """
+        if self.is_recurrent:
+            self.lstm_hidden = np.zeros((self.num_layers, batch_size, self.hidden_size), dtype=np.float32)
+            self.lstm_cell = np.zeros((self.num_layers, batch_size, self.hidden_size), dtype=np.float32)
+            self.logger.debug("LSTM states reset to zeros")
+    
+    def prepare_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Prepare data for the model by validating required columns.
+        
+        Args:
+            data: DataFrame with market data
+            
+        Returns:
+            DataFrame with all necessary columns for the model
+        
+        Raises:
+            ValueError: If data is missing required columns
+        """
+        # Check if all required columns are present
+        missing_columns = [col for col in self.required_columns if col not in data.columns]
+        
+        if missing_columns:
+            error_msg = f"Data is missing required columns: {missing_columns}"
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        # Make sure we're not passing an empty dataset
+        if len(data) < 2:
+            raise ValueError(f"Data must contain at least 2 rows, got {len(data)}")
+            
+        return data
+    
+    def _generate_prediction_description(self, action: int, position_type: int) -> str:
+        """Generate a human-readable description of the prediction.
+        
+        Args:
+            action: The predicted action (0=hold, 1=buy, 2=sell, 3=close)
+            position_type: Current position type (0=none, 1=long, -1=short)
+            
+        Returns:
+            str: Description of the prediction
+        """
+        action_map = {0: 'hold', 1: 'buy', 2: 'sell', 3: 'close'}
+        position_map = {0: 'no position', 1: 'long', -1: 'short'}
+        
+        base_desc = f"Model predicts {action_map[action]}"
+        
+        if action == 0:  # Hold
+            if position_type != 0:
+                return f"{base_desc} current {position_map[position_type]} position"
+            return f"{base_desc} - stay out of market"
+            
+        elif action in [1, 2]:  # Buy or Sell
+            if position_type != 0:
+                return f"{base_desc} but rejected - {position_map[position_type]} position exists"
+            return f"{base_desc} - open new {'long' if action == 1 else 'short'} position"
+            
+        else:  # Close
+            if position_type != 0:
+                return f"{base_desc} current {position_map[position_type]} position"
+            return f"{base_desc} but rejected - no position exists"
+    
+    def predict(self, observation: np.ndarray) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Make a prediction using the ONNX model.
+        
+        Args:
+            observation: Observation from the environment
+            
+        Returns:
+            Tuple[np.ndarray, Dict]: (Action, Info dictionary)
+        """
+        if self.session is None:
+            raise ValueError("ONNX model not loaded. Call load_model() first.")
+        
+        if observation.ndim == 1:
+            # Add batch dimension if not present
+            observation = observation.reshape(1, -1).astype(np.float32)
+            
+        try:
+            if self.is_recurrent:
+                # Add sequence dimension for recurrent model if needed
+                if observation.ndim == 2:
+                    observation = observation.reshape(1, 1, -1).astype(np.float32)
+                
+                # Run inference
+                outputs = self.session.run(
+                    ['action_logits', 'new_lstm_h', 'new_lstm_c'],
+                    {
+                        'observation': observation,
+                        'lstm_h': self.lstm_hidden,
+                        'lstm_c': self.lstm_cell
+                    }
+                )
+                
+                # Update LSTM states
+                self.lstm_hidden = outputs[1]
+                self.lstm_cell = outputs[2]
+                
+                # Extract action logits
+                action_logits = outputs[0]
+            else:
+                # Run inference for standard model
+                outputs = self.session.run(['action_logits'], {'observation': observation})
+                action_logits = outputs[0]
+            
+            # Add debug info
+            if self.logger.level <= logging.DEBUG:
+                argmax_action = np.argmax(action_logits, axis=-1)[0]
+                self.logger.debug(f"Raw logits: {action_logits[0]}")
+                self.logger.debug(f"Selected action (argmax): {argmax_action}")
+                
+            # Return raw logits for consistent action processing
+            return action_logits, {"action_logits": action_logits}
+            
+        except Exception as e:
+            self.logger.error(f"Error during ONNX prediction: {e}")
+            # Return a safe default action
+            return np.array([0]), {"error": str(e)}
+        
+    def _softmax(self, x: np.ndarray) -> np.ndarray:
+        """Calculate softmax probabilities for action logits."""
+        e_x = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return e_x / e_x.sum(axis=1, keepdims=True)
+    
+    def evaluate(self, data: pd.DataFrame, initial_balance: float = 10000.0, 
+                 balance_per_lot: Optional[float] = None,
+                 spread_variation: float = 0.0, slippage_range: float = 0.0) -> Dict[str, Any]:
+        """
+        Evaluate model performance without verbose logging.
+        
+        Args:
+            data: DataFrame with market data
+            initial_balance: Starting account balance
+            balance_per_lot: Account balance required per 0.01 lot (if None, uses instance default)
+            spread_variation: Random spread variation range (default: 0.0)
+            slippage_range: Maximum price slippage range in points (default: 0.0)
+                
+        Returns:
+            Dictionary with backtest metrics and trade summary
+        """
+        if self.session is None:
+            raise ValueError("ONNX model not loaded. Call load_model() first.")
+        
+        # Use provided balance_per_lot or fall back to instance default
+        balance_per_lot = balance_per_lot if balance_per_lot is not None else self.balance_per_lot
+        
+        # Prepare data
+        data = self.prepare_data(data)
+        
+        # Create environment for evaluation
+        env = TradingEnv(
+            data=data,
+            initial_balance=initial_balance,
+            balance_per_lot=balance_per_lot,
+            random_start=False,
+            point_value=self.point_value,
+            min_lots=self.min_lots,
+            max_lots=self.max_lots,
+            contract_size=self.contract_size,
+            spread_variation=spread_variation,
+            slippage_range=slippage_range
+        )
+        
+        # Initialize environment
+        obs, _ = env.reset()
+        
+        # Reset LSTM states
+        if self.is_recurrent:
+            self.reset_lstm_states()
+        
+        done = False
+        step = 0
+        total_reward = 0.0
+        
+        while not done:
+            # Make prediction using ONNX model
+            raw_action, _ = self.predict(obs)
+            
+            # Get action from logits using argmax
+            try:
+                action_value = int(np.argmax(raw_action, axis=-1)[0])
+                discrete_action = action_value % 4
+                
+                # Add explicit position check and force close if needed
+                if env.current_position is not None and discrete_action in [Action.BUY, Action.SELL]:
+                    discrete_action = Action.HOLD 
+            except (ValueError, TypeError):
+                discrete_action = 0
+            
+            # Execute step
+            obs, reward, done, _, _ = env.step(discrete_action)
+            total_reward += reward
+            step += 1
+          # Calculate metrics with our own implementation
+        return self._calculate_backtest_metrics(env, step, total_reward)
+
+    def predict_single(self, data: pd.DataFrame, env: Optional[TradingEnv] = None) -> Dict[str, Any]:
+        """
+        Make a single prediction at the last data point.
+        
+        Args:
+            data: DataFrame with market data
+            env: Optional existing TradingEnv instance with position info
+            
+        Returns:
+            Dictionary with prediction details
+        """
+        if self.session is None:
+            raise ValueError("ONNX model not loaded. Call load_model() first.")
+            
+        # Prepare data
+        data = self.prepare_data(data)
+        
+        # Use existing environment if provided, otherwise create a new one
+        if env is None:
+            env = TradingEnv(
+                data=data,
+                initial_balance=self.initial_balance,
+                balance_per_lot=self.balance_per_lot,
+                random_start=False,
+                predict_mode=True,
+                point_value=self.point_value,
+                min_lots=self.min_lots,
+                max_lots=self.max_lots,
+                contract_size=self.contract_size
+            )
+            # Initialize environment
+            obs, _ = env.reset()
+            
+        # Get observation (will include position info if env has it)
+        obs = env.get_observation()
+        
+        # Make prediction
+        action, info = self.predict(obs)
+        
+        # Get action from logits (use argmax since we're in deterministic mode)
+        action_value = int(np.argmax(action, axis=-1)[0])
+        discrete_action = action_value % 4
+            
+        # Get current position type for context
+        current_position_type = 0
+        if env.current_position:
+            current_position_type = env.current_position['direction']
+            
+        # Generate human readable description
+        description = self._generate_prediction_description(discrete_action, current_position_type)
+        
+        # Action mask (whether action is valid)
+        valid_action = True
+        
+        # Check if action is valid (can't open a position if one exists, can't close without a position)
+        if (current_position_type != 0 and discrete_action in [1, 2]) or (current_position_type == 0 and discrete_action == 3):
+            valid_action = False
+            
+        # Return prediction details
+        prediction = {
+            'action': discrete_action,
+            'action_raw': action_value,
+            'description': description,
+            'valid_action': valid_action,
+            'position_type': current_position_type,
+            'timestamp': data.index[-1] if isinstance(data.index, pd.DatetimeIndex) else None
+        }
+
+        # Add action probabilities if available
+        if 'action_probs' in info:
+            prediction['action_probs'] = info['action_probs'].tolist()
+            
+        return prediction
+
+    def _calculate_backtest_metrics(self, env: TradingEnv, total_steps: int, total_reward: float) -> Dict[str, Any]:
+        """
+        Calculate metrics from backtest results.
+        
+        Args:
+            env: Trading environment after backtest completion
+            total_steps: Number of steps taken in backtest
+            total_reward: Total cumulative reward from backtest
+            
+        Returns:
+            Dictionary with performance metrics
+        """
+        metrics = {
+            'final_balance': float(env.balance),
+            'initial_balance': float(env.initial_balance),
+            'return_pct': ((env.balance / env.initial_balance) - 1) * 100,
+            'total_trades': len(env.trades),
+            'win_count': env.win_count,
+            'loss_count': env.loss_count,
+            'win_rate': 0.0,  # Will be updated if trades exist
+            'total_steps': total_steps,
+            'total_reward': total_reward,
+            'active_positions': 1 if env.current_position is not None else 0,
+        }
+        
+        # Add position details if there's an open position
+        if env.current_position:
+            unrealized_pnl, profit_points = env.action_handler.manage_position()
+            metrics['position'] = {
+                'direction': env.current_position['direction'],
+                'entry_price': env.current_position['entry_price'],
+                'lot_size': env.current_position['lot_size'],
+                'hold_time': env.current_step - env.current_position['entry_step'],
+                'unrealized_pnl': unrealized_pnl,
+                'profit_points': profit_points
+            }
+        
+        # Safely add win rate
+        if metrics['total_trades'] > 0:
+            metrics['win_rate'] = (env.win_count / metrics['total_trades'] * 100)
+        
+        # Initialize optional metrics with default values
+        metrics.update({
+            'long_trades': 0,
+            'short_trades': 0,
+            'long_win_rate': 0.0,
+            'short_win_rate': 0.0,
+            'total_profit': 0.0,
+            'total_loss': 0.0,
+            'profit_factor': 0.0,
+            'expected_value': 0.0,
+            'max_drawdown_pct': 0.0,
+            'sharpe_ratio': 0.0,
+            'avg_hold_time': 0.0,
+            'win_hold_time': 0.0,
+            'loss_hold_time': 0.0,
+            'avg_win_points': 0.0,
+            'avg_loss_points': 0.0,
+            'median_win_points': 0.0,
+            'median_loss_points': 0.0,
+        })
+        
+        # Only calculate detailed metrics if trades exist
+        if env.trades:
+            trades_df = pd.DataFrame(env.trades)
+            
+            # Split trades by direction
+            long_trades = trades_df[trades_df['direction'] == 1]
+            short_trades = trades_df[trades_df['direction'] == -1]
+            
+            # Calculate directional metrics - safely handle empty cases
+            metrics['long_trades'] = len(long_trades)
+            metrics['short_trades'] = len(short_trades)
+            
+            if len(long_trades) > 0:
+                long_wins = long_trades[long_trades['pnl'].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
+                metrics['long_win_rate'] = (len(long_wins) / len(long_trades) * 100)
+            
+            if len(short_trades) > 0:
+                short_wins = short_trades[short_trades['pnl'].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
+                metrics['short_win_rate'] = (len(short_wins) / len(short_trades) * 100)
+            
+            # Overall win/loss metrics with proper PnL thresholds
+            winning_trades = trades_df[trades_df['pnl'].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
+            losing_trades = trades_df[trades_df['pnl'].apply(lambda x: x <= 0 or abs(x) < 1e-8)]
+            
+            # Calculate PnL metrics
+            metrics['total_profit'] = float(winning_trades['pnl'].sum()) if not winning_trades.empty else 0.0
+            metrics['total_loss'] = float(abs(losing_trades['pnl'].sum())) if not losing_trades.empty else 0.0
+            
+            # Safe profit factor calculation
+            if metrics['total_loss'] > 0:
+                metrics['profit_factor'] = metrics['total_profit'] / metrics['total_loss']
+            else:
+                metrics['profit_factor'] = float('inf') if metrics['total_profit'] > 0 else 0.0
+                
+            # Expected value
+            if not trades_df.empty:
+                metrics['expected_value'] = float(trades_df['pnl'].mean())
+            
+            # Calculate drawdowns using MetricsTracker's methods
+            metrics['max_drawdown_pct'] = float(env.metrics.get_drawdown() * 100)  # Balance-based drawdown
+            metrics['max_equity_drawdown_pct'] = float(env.metrics.get_max_equity_drawdown() * 100)  # Equity-based drawdown
+            metrics['current_drawdown_pct'] = float(env.metrics.get_balance_drawdown() * 100)  # Current balance drawdown
+            metrics['current_equity_drawdown_pct'] = float(env.metrics.get_equity_drawdown() * 100)  # Current equity drawdown (realized only)
+
+            # Calculate current drawdown (realized only)
+            if env.metrics.max_balance > 0:
+                current_drawdown = (env.metrics.max_balance - env.balance) / env.metrics.max_balance
+            else:
+                current_drawdown = 0.0
+            metrics['current_drawdown_pct'] = float(current_drawdown * 100)
+            
+            # For historical reference
+            metrics['historical_max_drawdown_pct'] = float(metrics['max_equity_drawdown_pct'])
+            
+            # Calculate Sharpe ratio safely
+            returns = pd.Series(trades_df['pnl']) / env.initial_balance
+            if len(returns) > 1 and returns.std() > 0:
+                metrics['sharpe_ratio'] = float((returns.mean() / returns.std()) * np.sqrt(252))
+            
+            # Hold time analysis with medians and 90th percentiles
+            if 'hold_time' in trades_df.columns:
+                metrics.update({
+                    'avg_hold_time': float(trades_df['hold_time'].mean()),
+                    'median_hold_time': float(trades_df['hold_time'].median()),
+                })
+                
+                if not winning_trades.empty and 'hold_time' in winning_trades.columns:
+                    metrics.update({
+                        'win_hold_time': float(winning_trades['hold_time'].mean()),
+                        'win_hold_time_0th': float(winning_trades['hold_time'].min()),
+                        'win_hold_time_1st': float(winning_trades['hold_time'].quantile(0.01)),
+                        'win_hold_time_10th': float(winning_trades['hold_time'].quantile(0.1)),
+                        'win_hold_time_20th': float(winning_trades['hold_time'].quantile(0.2)),
+                        'win_hold_time_median': float(winning_trades['hold_time'].median()),
+                        'win_hold_time_80th': float(winning_trades['hold_time'].quantile(0.8)),
+                        'win_hold_time_90th': float(winning_trades['hold_time'].quantile(0.9)),
+                        'win_hold_time_99th': float(winning_trades['hold_time'].quantile(0.99)),
+                        'win_hold_time_100th': float(winning_trades['hold_time'].max())
+                    })
+                    
+                if not losing_trades.empty and 'hold_time' in losing_trades.columns:
+                    metrics.update({
+                        'loss_hold_time': float(losing_trades['hold_time'].mean()),
+                        'loss_hold_time_0th': float(losing_trades['hold_time'].min()),
+                        'loss_hold_time_1st': float(losing_trades['hold_time'].quantile(0.01)),
+                        'loss_hold_time_10th': float(losing_trades['hold_time'].quantile(0.1)),
+                        'loss_hold_time_20th': float(losing_trades['hold_time'].quantile(0.2)),
+                        'loss_hold_time_median': float(losing_trades['hold_time'].median()),
+                        'loss_hold_time_80th': float(losing_trades['hold_time'].quantile(0.8)),
+                        'loss_hold_time_90th': float(losing_trades['hold_time'].quantile(0.9)),
+                        'loss_hold_time_99th': float(losing_trades['hold_time'].quantile(0.99)),
+                        'loss_hold_time_100th': float(losing_trades['hold_time'].max())
+                    })
+            
+            # Add points-based analysis for win/loss trades
+            if 'profit_points' in trades_df.columns:
+                if not winning_trades.empty and 'profit_points' in winning_trades.columns:
+                    win_points = winning_trades['profit_points']
+                    metrics.update({
+                        'avg_win_points': float(win_points.mean()),
+                        'median_win_points': float(win_points.median()),
+                        'win_points_10th': float(win_points.quantile(0.1)),
+                        'win_points_90th': float(win_points.quantile(0.9))
+                    })
+                    
+                if not losing_trades.empty and 'profit_points' in losing_trades.columns:
+                    loss_points = abs(losing_trades['profit_points'])
+                    metrics.update({
+                        'avg_loss_points': float(loss_points.mean()),
+                        'median_loss_points': float(loss_points.median()),
+                        'loss_points_10th': float(loss_points.quantile(0.1)),
+                        'loss_points_90th': float(loss_points.quantile(0.9))
+                    })
+        
+        return metrics

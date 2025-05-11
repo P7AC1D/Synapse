@@ -149,14 +149,12 @@ class FeatureProcessor:
                 out=np.zeros(len(volume)-1, dtype=np.float64),
                 where=volume[:-1] != 0
             )
-            volume_pct = np.clip(volume_pct, -1, 1)            # Debug the last values of sin_time and cos_time
-            if len(time_index) > 0:
-                print(f"DEBUG: Last index sin_time value: {sin_time[-1]}, cos_time value: {cos_time[-1]}")              # Create features DataFrame with exact ordering to match get_feature_names
+            volume_pct = np.clip(volume_pct, -1, 1)            # Create features DataFrame with exact ordering to match get_feature_names
             features = {
                 'returns': returns,
                 'rsi': np.divide(rsi, 50, out=np.zeros_like(rsi), where=~np.isnan(rsi)) - 1,
                 'atr': atr_norm,
-                'volume_change': volume_pct,  # Moved to match get_feature_names order
+                'volume_change': volume_pct,
                 'volatility_breakout': volatility_breakout,
                 'trend_strength': trend_strength,
                 'candle_pattern': candle_pattern,

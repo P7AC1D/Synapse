@@ -9,8 +9,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib import gridspec
-from typing import Dict, Any
+from typing import Dict, Any, Union, List, Optional, Tuple
+from pathlib import Path
 from trade_model import TradeModel
+from onnx_trade_model import OnnxTradeModel
 from trading.environment import TradingEnv
 from trading.trade_tracker import TradeTracker
 import time
@@ -210,18 +212,27 @@ def print_metrics(results: dict):
 
 def plot_results(results: dict, save_path: str = None):
     """Plot backtest results and performance metrics."""
+    trades = results.get('trades', [])
+    if not trades:
+        print("No trades to plot. Saving empty plot if path provided.")
+        if save_path:
+            fig = plt.figure(figsize=(20, 16))
+            plt.text(0.5, 0.5, 'No trades to plot', ha='center', va='center')
+            plt.savefig(save_path, bbox_inches='tight')
+            plt.close()
+        return
+
     fig = plt.figure(figsize=(20, 16))  # Adjusted height for four plots
     gs = gridspec.GridSpec(3, 2, height_ratios=[2, 1, 1])
     
     # Convert trades to DataFrame for plotting
-    trades = results.get('trades', [])
-    
-    # Handle empty trades case gracefully
-    if not trades:
-        print("No trades to plot. Skipping visualization.")
-        return
-        
     trades_df = pd.DataFrame(trades)
+    trades_df = trades_df.copy()  # Create explicit copy to avoid warnings
+    
+    # Debug info
+    print(f"\nPlotting {len(trades)} trades")
+    if not trades_df.empty:
+        print(f"DataFrame columns: {trades_df.columns.tolist()}")
     
     # Extract equity history from trades and track streaks (including unrealized PnL)
     equity_history = []
@@ -241,57 +252,85 @@ def plot_results(results: dict, save_path: str = None):
         current_equity = current_balance + unrealized_pnl
         equity_history.append(current_equity)
     
-    # Plot balance curve with drawdown overlay (spans both columns)
+    # Plot balance curve with drawdown overlay
     ax1 = plt.subplot(gs[0, :])
+    
+    # Convert to pandas Series for calculations
     equity_series = pd.Series(equity_history)
+    x_range = range(len(equity_series))
+    initial_balance = [results.get('initial_balance', 0.0)] * len(x_range)
+    
+    # Calculate drawdown
     rolling_max = equity_series.expanding().max()
     drawdowns = ((equity_series - rolling_max) / rolling_max) * 100
     
-    ax1 = plt.gca()
-    ax2 = ax1.twinx()
+    # Configure main balance axis with improved formatting
+    ax1.fill_between(x_range, initial_balance, equity_series, alpha=0.3, color='lightblue')
+    ax1.plot(x_range, equity_series, 'b-', label='Balance', linewidth=2)
+    ax1.axhline(y=results.get('initial_balance', 0.0), color='gray', linestyle='--', alpha=0.5, label='Initial Balance')
+    # Common style settings for subplots
+    subplot_style = {
+        'grid': {'alpha': 0.3, 'linestyle': '--'},
+        'title_size': 12,
+        'label_size': 10,
+        'hist_alpha': 0.7,
+        'legend_loc': 'upper right',
+        'bins': 30
+    }
     
-    # Plot equity
-    ax1.plot(equity_series, 'b-', label='Balance')
-    ax1.set_ylabel('Balance ($)', color='b')
+    ax1.set_ylabel('Balance ($)', color='b', fontsize=subplot_style['label_size'])
     ax1.tick_params(axis='y', labelcolor='b')
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
+    
+    # Format x-axis to show trade numbers
+    ax1.set_xlabel('Trade Number', fontsize=subplot_style['label_size'])
+    ax1.set_xlim(0, len(equity_series))
+    ax1.grid(True, **subplot_style['grid'])
+    
+    # Configure drawdown axis with improved visibility
+    ax2 = ax1.twinx()
+    ax2.set_ylim(bottom=min(drawdowns)*1.1, top=0)  # Invert and add 10% padding
     
     # Plot drawdown
     ax2.fill_between(range(len(drawdowns)), 0, drawdowns, color='r', alpha=0.3, label='Drawdown')
-    ax2.set_ylabel('Drawdown %', color='r')
+    ax2.set_ylabel('Drawdown %', color='r', fontsize=subplot_style['label_size'])
     ax2.tick_params(axis='y', labelcolor='r')
     
     # Combine legends
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-    plt.title('Equity and Drawdown')
-    plt.grid(True)
-    
+    plt.title('Equity and Drawdown', fontsize=subplot_style['title_size'])
+
     # Plot trade size distribution (left column)
-    plt.subplot(gs[1, 0])
+    ax_lots = plt.subplot(gs[1, 0])
     if not trades_df.empty and 'lot_size' in trades_df.columns:
-        plt.hist(trades_df['lot_size'], bins=30, alpha=0.7, color='b', label='Lots')
+        plt.hist(trades_df['lot_size'], bins=subplot_style['bins'], alpha=subplot_style['hist_alpha'], 
+                color='b', label='Lots')
         mean_lots = trades_df['lot_size'].mean()
         median_lots = trades_df['lot_size'].median()
         plt.axvline(mean_lots, color='b', linestyle='--', label=f'Mean: {mean_lots:.2f}')
         plt.axvline(median_lots, color='b', linestyle=':', label=f'Median: {median_lots:.2f}')
-        plt.title('Trade Size Distribution')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.grid(True)
+        plt.title('Trade Size Distribution', fontsize=subplot_style['title_size'])
+        plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
+        plt.xlabel('Lots', fontsize=subplot_style['label_size'])
+        plt.grid(**subplot_style['grid'])
+        plt.legend(loc=subplot_style['legend_loc'])
     
     # Plot hold time distribution (right column)
-    plt.subplot(gs[1, 1])
+    ax_hold = plt.subplot(gs[1, 1])
     if not trades_df.empty and 'hold_time' in trades_df.columns:
-        plt.hist(trades_df['hold_time'], bins=30, alpha=0.7, color='purple', label='Bars')
+        plt.hist(trades_df['hold_time'], bins=subplot_style['bins'], alpha=subplot_style['hist_alpha'], 
+                color='purple', label='Bars')
         mean_hold = trades_df['hold_time'].mean()
         median_hold = trades_df['hold_time'].median()
         plt.axvline(mean_hold, color='purple', linestyle='--', label=f'Mean: {mean_hold:.1f}')
         plt.axvline(median_hold, color='purple', linestyle=':', label=f'Median: {median_hold:.1f}')
-        plt.title('Hold Time Distribution')
-        plt.ylabel('Frequency')
-        plt.legend()
-        plt.grid(True)
+        plt.title('Hold Time Distribution', fontsize=subplot_style['title_size'])
+        plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
+        plt.xlabel('Price Bars', fontsize=subplot_style['label_size'])
+        plt.grid(**subplot_style['grid'])
+        plt.legend(loc=subplot_style['legend_loc'])
     
     # Create side-by-side plots for profit and loss points (third row, split into columns)
     if not trades_df.empty and 'profit_points' in trades_df.columns:
@@ -301,29 +340,33 @@ def plot_results(results: dict, save_path: str = None):
         # Plot winning trades (profit points) - left column
         ax_profit = plt.subplot(gs[2, 0])
         if not winning_trades.empty:
-            plt.hist(winning_trades['profit_points'], bins=30, alpha=0.7, color='g', label='Profit Points')
+            plt.hist(winning_trades['profit_points'], bins=subplot_style['bins'], 
+                    alpha=subplot_style['hist_alpha'], color='g', label='Profit Points')
             mean_profit = winning_trades['profit_points'].mean()
             median_profit = winning_trades['profit_points'].median()
             plt.axvline(mean_profit, color='g', linestyle='--', label=f'Mean: {mean_profit:.1f}')
             plt.axvline(median_profit, color='g', linestyle=':', label=f'Median: {median_profit:.1f}')
-            plt.title('Profit Distribution')
-            plt.ylabel('Frequency')
-            plt.legend()
-            plt.grid(True)
+            plt.title('Profit Points Distribution', fontsize=subplot_style['title_size'])
+            plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
+            plt.xlabel('Points', fontsize=subplot_style['label_size'])
+            plt.grid(**subplot_style['grid'])
+            plt.legend(loc=subplot_style['legend_loc'])
         
         # Plot losing trades (absolute loss points) - right column
         ax_loss = plt.subplot(gs[2, 1])
         if not losing_trades.empty:
             abs_loss_points = abs(losing_trades['profit_points'])
-            plt.hist(abs_loss_points, bins=30, alpha=0.7, color='r', label='Loss Points')
+            plt.hist(abs_loss_points, bins=subplot_style['bins'], 
+                    alpha=subplot_style['hist_alpha'], color='r', label='Loss Points')
             mean_loss = abs_loss_points.mean()
             median_loss = abs_loss_points.median()
             plt.axvline(mean_loss, color='r', linestyle='--', label=f'Mean: {mean_loss:.1f}')
             plt.axvline(median_loss, color='r', linestyle=':', label=f'Median: {median_loss:.1f}')
-            plt.title('Loss Distribution')
-            plt.ylabel('Frequency')
-            plt.legend()
-            plt.grid(True)
+            plt.title('Loss Points Distribution', fontsize=subplot_style['title_size'])
+            plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
+            plt.xlabel('Points', fontsize=subplot_style['label_size'])
+            plt.grid(**subplot_style['grid'])
+            plt.legend(loc=subplot_style['legend_loc'])
 
     # Adjust layout with padding
     plt.tight_layout(pad=1.0, h_pad=2.0, w_pad=2.0)
@@ -339,16 +382,17 @@ def show_progress(message="Running backtest"):
         sys.stdout.flush()
         time.sleep(0.1)
 
-def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_balance: float = 10000.0, 
-                            balance_per_lot: float = 1000.0, verbose: bool = False,
-                            trades_log_path: str = None,
+def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd.DataFrame, args,
+                            initial_balance: float = 10000.0, balance_per_lot: float = 1000.0, 
+                            verbose: bool = False, trades_log_path: str = None,
                             point_value: float = 0.01,
                             min_lots: float = 0.01, max_lots: float = 200.0,
                             contract_size: float = 100.0,
                             currency_conversion: float = None,
                             spread_variation: float = 0.0,
                             slippage_range: float = 0.0,
-                            balance_recheck_bars: int = 0) -> Dict[str, Any]:
+                            balance_recheck_bars: int = 0,
+                            reset_states_on_gap: bool = False) -> Dict[str, Any]:
     """Run a backtest using the predict_single method to simulate the live trading process."""
     
     # Create a trading environment for tracking trades and metrics
@@ -416,6 +460,20 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                 current_spread = data['spread'].iloc[total_steps]
                 variation = np.random.uniform(-spread_variation, spread_variation)
                 data.at[data.index[total_steps], 'spread'] = max(0, current_spread + variation)
+              # Check for market gaps and reset LSTM states if needed
+            if reset_states_on_gap and hasattr(model, 'is_recurrent') and model.is_recurrent:
+                # Get current and previous timestamp
+                if total_steps > 0:
+                    current_time = data.index[total_steps]
+                    prev_time = data.index[total_steps-1]
+                    time_diff = (current_time - prev_time).total_seconds() / 60
+                    expected_diff = 15  # For 15-minute data
+                    
+                    # Reset LSTM states if gap is significantly larger than expected
+                    if time_diff > expected_diff * 2:  # Gap is more than double the expected timeframe
+                        if verbose:
+                            print(f"Market gap detected: {time_diff/60:.2f}h - Resetting LSTM states")
+                        model.reset_lstm_states()
             
             # Create normalized feature dictionary for tracking
             feature_dict = {}
@@ -427,35 +485,48 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                     if verbose:
                         print(f"  {feature_name}: {feat:.6f}")
 
-            # Get prediction from model using standard PPO (no LSTM states)
-            action, _ = model.model.predict(
-                obs,
-                deterministic=True
-            )
+            # Get prediction from model - handle both standard PPO and ONNX models
+            if hasattr(model, 'model') and model.model is not None:
+                # Standard PPO model
+                action, _ = model.model.predict(
+                    obs,
+                    deterministic=True
+                )
+                # Convert action to discrete value
+                action_value = int(action.item()) if isinstance(action, np.ndarray) else int(action)
+            else:
+                # ONNX model - get logits and add debug info
+                logits, info = model.predict(obs)
+                action_value = int(np.argmax(logits, axis=-1)[0])
+                
+                if args.verbose_features:
+                    print(f"\nAction selection step {total_steps}:")
+                    print(f"Raw logits: {logits[0]}")
+                    print(f"Selected action: {action_value}")
             
             try:
-                # Convert action to discrete value and handle position checks
-                if isinstance(action, np.ndarray):
-                    action_value = int(action.item())
-                else:
-                    action_value = int(action)
                 discrete_action = action_value % 4
                 
                 # Force HOLD if trying to open new position while one exists
                 if env.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
                     discrete_action = 0  # Force HOLD
                 
-                # Execute step
+                # Execute step and update stats
                 obs, reward, done, truncated, info = env.step(discrete_action)
                 total_reward += reward
                 total_steps += 1
-                
-                # Track trade events if enabled
-                if trade_tracker:
-                    # Get current timestamp from the data index
-                    current_timestamp = data.index[total_steps]
-                    
-                    if env.current_position and not current_position:  # New position opened
+
+                # Track trade events
+                # Get current timestamp from the data index
+                current_timestamp = data.index[total_steps] if total_steps < len(data) else data.index[-1]
+
+                # Check for position changes
+                if env.current_position and not current_position:  # New position opened
+                    if verbose:
+                        print(f"\nOpening {current_timestamp}: {'Long' if discrete_action == 1 else 'Short'} "
+                              f"{env.current_position['lot_size']:.2f} lots at {env.current_position['entry_price']:.5f}")
+                    # Track in optional trade log
+                    if trade_tracker:
                         trade_tracker.log_trade_entry(
                             'buy' if discrete_action == 1 else 'sell',
                             feature_dict,
@@ -463,22 +534,30 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                             env.current_position['lot_size'],
                             timestamp=current_timestamp
                         )
-                    elif not env.current_position and current_position:  # Position closed
+
+                elif not env.current_position and current_position:  # Position closed
+                    close_price = info.get('close_price', data['close'].iloc[min(total_steps, len(data)-1)])
+                    pnl = info.get('pnl', 0.0)
+                    if verbose:
+                        print(f"\nClosing {current_timestamp}: PnL={pnl:+.2f} at {close_price:.5f}")
+                    # Track in optional trade log
+                    if trade_tracker:
                         trade_tracker.log_trade_exit(
                             'model_close',
-                            info.get('close_price', data['close'].iloc[total_steps]),
-                            info.get('pnl', 0.0),
+                            close_price,
+                            pnl,
                             feature_dict,
                             timestamp=current_timestamp
                         )
-                    elif env.current_position:  # Position update
-                        trade_tracker.log_trade_update(
-                            feature_dict,
-                            data['close'].iloc[total_steps],
-                            env.metrics.current_unrealized_pnl,
-                            timestamp=current_timestamp
-                        )
-                
+                        
+                elif env.current_position and trade_tracker:  # Position update (optional)
+                    trade_tracker.log_trade_update(
+                        feature_dict,
+                        data['close'].iloc[min(total_steps, len(data)-1)],
+                        env.metrics.current_unrealized_pnl,
+                        timestamp=current_timestamp
+                    )
+                    
                 # Update position tracking
                 current_position = env.current_position.copy() if env.current_position else None
                 
@@ -514,8 +593,13 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             env.metrics.add_trade(trade_info)
             env.metrics.update_balance(pnl)
     
-    # Return metrics using same method as evaluate
-    return model._calculate_backtest_metrics(env, total_steps, total_reward)
+    # Calculate metrics and ensure trades are included
+    metrics = model._calculate_backtest_metrics(env, total_steps, total_reward)
+    
+    # Add trades list to results
+    metrics['trades'] = env.trades
+    
+    return metrics
 
 def main():
     parser = argparse.ArgumentParser(description='Backtest trained trading model')
@@ -525,9 +609,8 @@ def main():
     default_balance_per_lot = 1000.0 * 19   # 1,000 USD per lot in ZAR
     
     # Trading environment settings
-    
     parser.add_argument('--model_path', type=str, required=True,
-                     help='Path to the model file to backtest')
+                     help='Path to the model file to backtest (.zip for PPO or .onnx for ONNX models)')
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the test data CSV file')
     parser.add_argument('--initial_balance', type=float, default=default_initial_balance,
@@ -536,6 +619,13 @@ def main():
                       help='Account balance required per 0.01 lot in account currency (default: 19,000 ZAR)')
     parser.add_argument('--currency_conversion', type=float, default=19.0,
                       help='Conversion rate from USD to account currency (default: 19.0 ZAR/USD)')
+                        # ONNX model settings (only needed if auto-detection fails)
+    parser.add_argument('--is_recurrent', action='store_true',
+                      help='Force ONNX model to be treated as recurrent/LSTM-based (auto-detected by default)')
+    parser.add_argument('--hidden_size', type=int, default=64,
+                      help='LSTM hidden size for recurrent ONNX models (default: 64)')
+    parser.add_argument('--num_layers', type=int, default=1,
+                      help='Number of LSTM layers for recurrent ONNX models (default: 1)')
                       
     # Market simulation settings
     parser.add_argument('--reset_states_on_gap', action='store_true',
@@ -595,32 +685,66 @@ def main():
             raise ValueError("No data available for specified date range")
         
         print(f"Loaded {len(df):,d} bars from {df.index[0]} to {df.index[-1]}")
-        
-        # Validate data
+          # Validate data
         missing_columns = [col for col in ['open', 'close', 'high', 'low', 'spread'] 
                           if col not in df.columns]
         if missing_columns:
             print(f"WARNING: Dataset missing columns: {missing_columns}")
-            print("These columns are required for backtesting. Will attempt to continue.")
+            print("These columns are required for backtesting. Will attempt to continue.")        # Auto-detect model type based on file extension
+        use_onnx = args.model_path.lower().endswith('.onnx')
         
         # Initialize model
         print(f"\nInitializing model from: {args.model_path}")
-        model = TradeModel(
-            model_path=args.model_path,
-            balance_per_lot=args.balance_per_lot,  # Pass the parameter consistently
-            point_value=args.point_value,
-            min_lots=args.min_lots,
-            max_lots=args.max_lots,
-            contract_size=args.contract_size
-        )
         
-        # Run backtest based on selected method
+        if use_onnx:
+            print("Using ONNX model integration")
+            
+            # Attempt to auto-detect if the ONNX model is recurrent by checking for LSTM inputs
+            is_recurrent = args.is_recurrent
+            if not args.is_recurrent:
+                try:
+                    import onnx
+                    onnx_model = onnx.load(args.model_path)
+                    input_names = [input.name for input in onnx_model.graph.input]
+                    is_recurrent = any(name in ['lstm_h', 'lstm_c'] for name in input_names)
+                    if is_recurrent:
+                        print("Auto-detected recurrent ONNX model (found LSTM inputs)")
+                except Exception as e:
+                    print(f"Error during ONNX model inspection: {e}")
+                    print("Continuing with user-specified settings")
+            
+            print(f"LSTM recurrent model: {'Yes' if is_recurrent else 'No'}")
+            
+            model = OnnxTradeModel(
+                model_path=args.model_path,
+                is_recurrent=is_recurrent,
+                hidden_size=args.hidden_size,
+                num_layers=args.num_layers,
+                balance_per_lot=args.balance_per_lot,
+                initial_balance=args.initial_balance,
+                point_value=args.point_value,
+                min_lots=args.min_lots,
+                max_lots=args.max_lots,
+                contract_size=args.contract_size
+            )
+        else:
+            print("Using standard PPO model")
+            model = TradeModel(
+                model_path=args.model_path,
+                balance_per_lot=args.balance_per_lot,
+                point_value=args.point_value,
+                min_lots=args.min_lots,
+                max_lots=args.max_lots,
+                contract_size=args.contract_size
+            )
+          # Run backtest based on selected method
         if args.method == 'predict_single':
             # Use the method that simulates live trading
             print("\nRunning prediction backtest (simulates live trading)...")
             results = backtest_with_predictions(
                 model=model,
                 data=df,
+                args=args,
                 initial_balance=args.initial_balance,
                 balance_per_lot=args.balance_per_lot,
                 verbose=args.verbose_features,
@@ -632,7 +756,8 @@ def main():
                 spread_variation=args.spread_variation,
                 slippage_range=args.slippage_range,
                 balance_recheck_bars=args.balance_recheck_bars,
-                trades_log_path=args.trades_log_path
+                trades_log_path=args.trades_log_path,
+                reset_states_on_gap=args.reset_states_on_gap
             )
         else:  # method == 'evaluate' or args.quiet
             print("\nRunning quiet backtest with evaluate method...")
