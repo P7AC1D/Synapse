@@ -6,11 +6,82 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
 import argparse
 import numpy as np
 import torch
+import traceback
 from sb3_contrib import RecurrentPPO
 from stable_baselines3 import PPO
 import torch.nn as nn
 from stable_baselines3.common.preprocessing import preprocess_obs
 from collections import namedtuple
+
+def verify_onnx_model(model_path, is_recurrent=False, input_shape=(1, 11)):
+    """Verify ONNX model by running inference with random test data"""
+    print("\nVerifying ONNX model with random test data...")
+    import onnxruntime as ort
+    import numpy as np
+
+    try:
+        # Create random test data
+        test_obs = np.random.randn(*input_shape).astype(np.float32)
+        
+        # Create ONNX Runtime session
+        print(f"Loading ONNX model from {model_path}")
+        sess_options = ort.SessionOptions()
+        sess_options.log_severity_level = 0  # Suppress warnings
+        sess = ort.InferenceSession(model_path, sess_options)
+        
+        # Print input/output info
+        print("\nModel Input Details:")
+        for input in sess.get_inputs():
+            print(f"- Name: {input.name}")
+            print(f"  Shape: {input.shape}")
+            print(f"  Type: {input.type}")
+        
+        print("\nModel Output Details:")
+        for output in sess.get_outputs():
+            print(f"- Name: {output.name}")
+            print(f"  Shape: {output.shape}")
+            print(f"  Type: {output.type}")
+        
+        # Run inference
+        print("\nRunning test inference...")
+        if is_recurrent:
+            batch_size = input_shape[0]
+            hidden_size = 64  # Default LSTM hidden size
+            num_layers = 1    # Default number of LSTM layers
+            
+            # Create LSTM state inputs
+            lstm_h = np.zeros((num_layers, batch_size, hidden_size), dtype=np.float32)
+            lstm_c = np.zeros((num_layers, batch_size, hidden_size), dtype=np.float32)
+            
+            outputs = sess.run(
+                ['action_logits', 'new_lstm_h', 'new_lstm_c'],
+                {
+                    'observation': test_obs,
+                    'lstm_h': lstm_h,
+                    'lstm_c': lstm_c
+                }
+            )
+            
+            print("\nTest inference results:")
+            print(f"- Action logits shape: {outputs[0].shape}")
+            print(f"- Action logits range: [{outputs[0].min():.3f}, {outputs[0].max():.3f}]")
+            print(f"- LSTM hidden state shape: {outputs[1].shape}")
+            print(f"- LSTM cell state shape: {outputs[2].shape}")
+        else:
+            outputs = sess.run(['action_logits'], {'observation': test_obs})
+            
+            print("\nTest inference results:")
+            print(f"- Action logits shape: {outputs[0].shape}")
+            print(f"- Action logits range: [{outputs[0].min():.3f}, {outputs[0].max():.3f}]")
+            print(f"- Action distribution: {np.exp(outputs[0]) / np.exp(outputs[0]).sum()}")
+        
+        print("\nONNX model verification successful!")
+        return True
+        
+    except Exception as e:
+        print(f"\nONNX model verification failed: {str(e)}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        return False
 
 def export_ppo_to_onnx(model_path, output_path, input_shape=(1, 11), is_recurrent=False):
     """
@@ -330,17 +401,31 @@ if __name__ == "__main__":
     # Ensure output directory exists
     os.makedirs(os.path.dirname(args.output_path), exist_ok=True)
     
-    if args.is_recurrent:
-        export_ppo_to_onnx(
-            args.model_path, 
-            args.output_path,
-            input_shape=(1, args.seq_length, args.features),
-            is_recurrent=True
-        )
-    else:
-        export_ppo_to_onnx(
-            args.model_path, 
-            args.output_path,
-            input_shape=(1, args.features),
-            is_recurrent=False
-        )
+    try:
+        if args.is_recurrent:
+            export_ppo_to_onnx(
+                args.model_path, 
+                args.output_path,
+                input_shape=(1, args.seq_length, args.features),
+                is_recurrent=True
+            )
+            input_shape = (1, args.seq_length, args.features)
+        else:
+            export_ppo_to_onnx(
+                args.model_path, 
+                args.output_path,
+                input_shape=(1, args.features),
+                is_recurrent=False
+            )
+            input_shape = (1, args.features)
+
+        # Verify the exported model
+        print("\nRunning standalone model verification...")
+        if verify_onnx_model(args.output_path, args.is_recurrent, input_shape):
+            print("\nModel export and verification completed successfully!")
+        else:
+            print("\nWARNING: Model verification failed!")
+    except Exception as e:
+        print(f"\nERROR during export/verification: {str(e)}")
+        print(f"Stack trace:\n{traceback.format_exc()}")
+        raise

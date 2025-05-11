@@ -205,7 +205,7 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Calculate terminal conditions
         end_of_data = self.current_step >= self.data_length - 1
-        max_drawdown = self.metrics.get_drawdown()
+        max_drawdown = self.metrics.get_equity_drawdown()
         done = end_of_data or self.metrics.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
         
         # Auto-close position at end of episode and handle terminal rewards

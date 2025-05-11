@@ -131,11 +131,7 @@ class FeatureProcessor:
                 last_minute = last_time.minute
                 last_time_index = last_hour * 60 + last_minute
                 last_angle = 2 * np.pi * last_time_index / minutes_in_day
-                print(f"DEBUG: Last timestamp: {last_time}, Hours: {last_hour}, Minutes: {last_minute}")
-                print(f"DEBUG: Time index: {last_time_index} minutes, Angle: {last_angle} radians")
-                print(f"DEBUG: sin({last_angle}) = {np.sin(last_angle)}, cos({last_angle}) = {np.cos(last_angle)}")
-                print(f"DEBUG: Last index sin_time value: {sin_time[-1]}, cos_time value: {cos_time[-1]}")
-            
+
             # Price action features
             body = close - opens
             upper_wick = high - np.maximum(close, opens)
@@ -160,14 +156,12 @@ class FeatureProcessor:
                 out=np.zeros(len(volume)-1, dtype=np.float64),
                 where=volume[:-1] != 0
             )
-            volume_pct = np.clip(volume_pct, -1, 1)            # Debug the last values of sin_time and cos_time
-            if len(time_index) > 0:
-                print(f"DEBUG: Last index sin_time value: {sin_time[-1]}, cos_time value: {cos_time[-1]}")              # Create features DataFrame with exact ordering to match get_feature_names
+            volume_pct = np.clip(volume_pct, -1, 1)            # Create features DataFrame with exact ordering to match get_feature_names
             features = {
                 'returns': returns,
                 'rsi': rsi / 50 - 1,
                 'atr': atr_norm,
-                'volume_change': volume_pct,  # Moved to match get_feature_names order
+                'volume_change': volume_pct,
                 'volatility_breakout': volatility_breakout,
                 'trend_strength': trend_strength,
                 'candle_pattern': candle_pattern,
@@ -206,14 +200,9 @@ class FeatureProcessor:
                 if col in ['volatility_breakout']:
                     if (values < 0).any() or (values > 1).any():
                         raise ValueError(f"Feature {col} contains values outside [0, 1] range")
-                elif col not in ['returns']:
+                elif col not in ['returns']:                    
                     if (values < -1).any() or (values > 1).any():
                         raise ValueError(f"Feature {col} contains values outside [-1, 1] range")
-            
-            # Verify the last values of sin_time and cos_time in the final DataFrame
-            if len(features_df) > 0:
-                print(f"DEBUG: Last index sin_time value in final DF: {features_df['sin_time'].iloc[-1]}, cos_time value: {features_df['cos_time'].iloc[-1]}")
-            
             return features_df, atr_aligned    
         
     def get_feature_names(self) -> list:

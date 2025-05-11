@@ -400,13 +400,8 @@ namespace cAlgo.Robots
                     PositionDirection = positionDirection,
                     PositionPnl = positionPnl
                 };                // Add historical data with optional small perturbation using Last() method                // Use MinimumBars for consistency with how we initially loaded historical data
-                // Get historical bars in chronological order
-                var historicalBars = new List<Bar>();
-                for (int i = MinimumBars - 1; i >= 0; i--)
-                {
-                    var bar = Bars.Last(i);
-                    historicalBars.Add(bar);
-                }
+                // Get historical bars in chronological order using TakeLast
+                var historicalBars = Bars.TakeLast(MinimumBars).ToList();
 
                 // Process bars in chronological order (oldest to newest)
                 foreach (var bar in historicalBars)
@@ -435,12 +430,12 @@ namespace cAlgo.Robots
                         // Only use indicators after warmup period
                         if (currentIndex >= Math.Max(Math.Max(AtrPeriod, RsiPeriod), Math.Max(BollingerPeriod, AdxPeriod)))
                         {
-                            atrValue = _atr.Result.Last(MinimumBars - 1 - currentIndex);
-                            rsiValue = _rsi.Result.Last(MinimumBars - 1 - currentIndex);
-                            bbUpper = _bollingerBands.Top.Last(MinimumBars - 1 - currentIndex);
-                            bbMiddle = _bollingerBands.Main.Last(MinimumBars - 1 - currentIndex);
-                            bbLower = _bollingerBands.Bottom.Last(MinimumBars - 1 - currentIndex);
-                            adxValue = _adx.ADX.Last(MinimumBars - 1 - currentIndex);
+                            atrValue = _atr.Result[currentIndex];
+                            rsiValue = _rsi.Result[currentIndex];
+                            bbUpper = _bollingerBands.Top[currentIndex];
+                            bbMiddle = _bollingerBands.Main[currentIndex];
+                            bbLower = _bollingerBands.Bottom[currentIndex];
+                            adxValue = _adx.ADX[currentIndex];
                         }
                         
                         if (currentIndex == historicalBars.Count - 1) // Most recent bar
@@ -702,8 +697,8 @@ namespace cAlgo.Robots
 
         private void LoadHistoricalData()
         {
-            // Load initial historical bars
-            var historicalBars = Bars.Take(MinimumBars).ToList();
+            // Load initial historical bars from most recent
+            var historicalBars = Bars.TakeLast(MinimumBars).ToList();
             foreach (var bar in historicalBars)
             {
                 _bars.Enqueue(bar);

@@ -1018,8 +1018,8 @@ namespace DRLTrader.Services
                 // Debug the actual values
                 _logger($"sin_time: {sinTime}, cos_time: {cosTime}");
 
-                features.Add(cosTime);  // Add cos_time first to match Python
-                features.Add(sinTime);  // Add sin_time second to match Python
+                features.Add(cosTime);
+                features.Add(sinTime);
                 
                 // 10. position_type: [-1, 0, 1] Current position
                 features.Add((float)data.PositionDirection);
@@ -1470,8 +1470,8 @@ namespace DRLTrader.Services
                         double timeIndex = barTime.Hour * 60.0 + barTime.Minute;
                         double timeNormalized = 2.0 * Math.PI * timeIndex / minutesInDay;
                         
-                        features.Add((float)Math.Cos(timeNormalized)); // Cos time first to match Python
-                        features.Add((float)Math.Sin(timeNormalized)); // Sin time second to match Python
+                        features.Add((float)Math.Sin(timeNormalized)); // Sin time first to match Python
+                        features.Add((float)Math.Cos(timeNormalized)); // Cos time second to match Python
                         
                         // 10-11. Position direction and PnL
                         features.Add((float)data.PositionDirection);
@@ -1600,22 +1600,24 @@ namespace DRLTrader.Services
                     _logger($"  - Index {i} ({actionType}): {value:F6} ({value:P2})");
                 }
                 
-                // Find the actual max value
-                int maxIndex = 0;
-                float maxValue = is2DTensor ? logits[0, 0] : logits[0];
-                
-                for (int i = 1; i < Math.Min(logits.Length, 4); i++) // Limit to 4 actions max
+                // Find argmax directly without any transformation
+                float[] logitValues = new float[4];
+                for (int i = 0; i < 4; i++)
                 {
-                    float value = is2DTensor ? logits[0, i] : logits[i];
-                    if (value > maxValue)
-                    {
-                        maxValue = value;
-                        maxIndex = i;
-                    }
+                    logitValues[i] = is2DTensor ? logits[0, i] : logits[i];
                 }
                 
+                _logger("Raw action logits to be used for argmax selection:");
+                for (int i = 0; i < logitValues.Length; i++)
+                {
+                    _logger($"  Index {i}: {logitValues[i]:F6}");
+                }
+
+                int maxIndex = Array.IndexOf(logitValues, logitValues.Max());
+                
+                float maxValue = logitValues[maxIndex];
                 TradingAction selectedAction = MapIndexToAction(maxIndex);
-                _logger($"Max logit found: index={maxIndex}, action={selectedAction}, value={maxValue:F6} ({maxValue:P2})");
+                _logger($"Max logit found: index={maxIndex}, action={selectedAction}, value={maxValue:F6}");
                 
                 return maxIndex;
             }
@@ -1642,6 +1644,8 @@ namespace DRLTrader.Services
             }
             
             // This mapping should match your model's training setup
+            // Match Python's exact action mapping:
+            // [0: Hold, 1: Buy, 2: Sell, 3: Close]
             switch (index)
             {
                 case 0:
