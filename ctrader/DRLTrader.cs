@@ -32,12 +32,21 @@ namespace cAlgo.Robots
         [Parameter("Stop Loss Pips", DefaultValue = 2500.0, Group = "Risk")]
         public double StopLossPips { get; set; }
 
-        [Parameter("Minimum Bars", DefaultValue = 100, Group = "Data")]
+        [Parameter("Minimum Bars", DefaultValue = 10025, Group = "Data")]
         public int MinimumBars { get; set; }
 
         // Technical indicator parameters
         [Parameter("ATR Period", DefaultValue = 14, Group = "Indicators")]
         public int AtrPeriod { get; set; }
+
+        [Parameter("ATR SMA Window", DefaultValue = 20, Group = "Indicators")]
+        public int AtrSmaWindow { get; set; }
+
+        [Parameter("ATR Min Ratio", DefaultValue = 0.5, Group = "Indicators")]
+        public double AtrMinRatio { get; set; }
+
+        [Parameter("ATR Max Ratio", DefaultValue = 2.0, Group = "Indicators")]
+        public double AtrMaxRatio { get; set; }
         
         [Parameter("RSI Period", DefaultValue = 14, Group = "Indicators")]
         public int RsiPeriod { get; set; }
@@ -296,7 +305,12 @@ namespace cAlgo.Robots
             try
             {
                 Print($"Initializing Risk Manager with BalancePerLot: {BalancePerLot}, StopLossPips: {StopLossPips}");
-                _riskManager = new RiskManager(BalancePerLot, StopLossPips, Symbol);
+                _riskManager = new RiskManager(
+                    balancePerLot: BalancePerLot,
+                    stopLossPips: StopLossPips,
+                    symbol: Symbol,
+                    logger: Print
+                );
                 Print("Risk Manager initialized successfully");
             }
             catch (Exception ex)
@@ -366,7 +380,12 @@ namespace cAlgo.Robots
                     
                     // Get PnL from the current position and normalize to [-1, 1] range
                     // Use account balance for normalization instead of fixed value
-                    positionPnl = Math.Clamp(position.NetProfit / Account.Balance, -1.0, 1.0);
+                    // Normalize PnL using position value as denominator, exactly like Python
+                    double positionValue = position.EntryPrice * position.VolumeInUnits;
+                    positionPnl = positionValue != 0 ? 
+                        Math.Clamp(position.NetProfit / Math.Abs(positionValue), -1.0, 1.0) : 0.0;
+                    
+                    Print($"PnL Debug - Raw: {position.NetProfit}, Position Value: {positionValue}, Normalized: {positionPnl}");
                     
                     Print($"Current position: Direction={positionDirection}, PnL={positionPnl}, ID={position.Id}, Raw PnL={position.NetProfit}, Balance={Account.Balance}");
                 }
@@ -381,9 +400,17 @@ namespace cAlgo.Robots
                     PositionDirection = positionDirection,
                     PositionPnl = positionPnl
                 };                // Add historical data with optional small perturbation using Last() method                // Use MinimumBars for consistency with how we initially loaded historical data
-                for (int i = 1; i < MinimumBars; i++)
+                // Get historical bars in chronological order
+                var historicalBars = new List<Bar>();
+                for (int i = MinimumBars - 1; i >= 0; i--)
                 {
                     var bar = Bars.Last(i);
+                    historicalBars.Add(bar);
+                }
+
+                // Process bars in chronological order (oldest to newest)
+                foreach (var bar in historicalBars)
+                {
                     
                     marketData.Timestamp.Add(new DateTimeOffset(bar.OpenTime).ToUnixTimeSeconds());
                     marketData.Open.Add(bar.Open);
@@ -392,19 +419,42 @@ namespace cAlgo.Robots
                     marketData.Close.Add(bar.Close);
                     marketData.Volume.Add(bar.TickVolume);
                     
-                    // Current index for indicator access
-                    // Last(1) corresponds to Bars.Count - 2, Last(2) to Bars.Count - 3, etc.
-                    int index = Bars.Count - 2 - i;  // Adjust index calculation to match the Last(i+1) change
+                    // Get the current index in chronological order
+                    int currentIndex = historicalBars.IndexOf(bar);
                     
-                    // Get indicator values with null checks to avoid errors during warmup period
-                    double atrValue = index >= AtrPeriod ? _atr.Result[index] : 0;
-                    double rsiValue = index >= RsiPeriod ? _rsi.Result[index] : 50; // Default to neutral RSI
+                    // Calculate indicator values with safety checks
+                    double atrValue = 0.0;
+                    double rsiValue = 50.0; // Default to neutral RSI
+                    double bbUpper = bar.High;
+                    double bbMiddle = bar.Close;
+                    double bbLower = bar.Low;
+                    double adxValue = 0.0;
                     
-                    double bbUpper = index >= BollingerPeriod ? _bollingerBands.Top[index] : bar.High;
-                    double bbMiddle = index >= BollingerPeriod ? _bollingerBands.Main[index] : bar.Close;
-                    double bbLower = index >= BollingerPeriod ? _bollingerBands.Bottom[index] : bar.Low;
-                    
-                    double adxValue = index >= AdxPeriod ? _adx.ADX[index] : 0;
+                    try
+                    {
+                        // Only use indicators after warmup period
+                        if (currentIndex >= Math.Max(Math.Max(AtrPeriod, RsiPeriod), Math.Max(BollingerPeriod, AdxPeriod)))
+                        {
+                            atrValue = _atr.Result.Last(MinimumBars - 1 - currentIndex);
+                            rsiValue = _rsi.Result.Last(MinimumBars - 1 - currentIndex);
+                            bbUpper = _bollingerBands.Top.Last(MinimumBars - 1 - currentIndex);
+                            bbMiddle = _bollingerBands.Main.Last(MinimumBars - 1 - currentIndex);
+                            bbLower = _bollingerBands.Bottom.Last(MinimumBars - 1 - currentIndex);
+                            adxValue = _adx.ADX.Last(MinimumBars - 1 - currentIndex);
+                        }
+                        
+                        if (currentIndex == historicalBars.Count - 1) // Most recent bar
+                        {
+                            Print($"Indicator values for latest bar:");
+                            Print($"ATR: {atrValue:F6}, RSI: {rsiValue:F6}");
+                            Print($"BB: Upper={bbUpper:F6}, Middle={bbMiddle:F6}, Lower={bbLower:F6}");
+                            Print($"ADX: {adxValue:F6}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Print($"Warning: Error getting indicator values at index {currentIndex}: {ex.Message}");
+                    }
                     
                     marketData.ATR.Add(atrValue);
                     marketData.RSI.Add(rsiValue);
@@ -414,6 +464,23 @@ namespace cAlgo.Robots
                     marketData.ADX.Add(adxValue);
                 }
                 Print($"Market data prepared with {MinimumBars} bars and technical indicators");
+                
+                // Debug log latest bar data for verification
+                var latestBar = historicalBars.Last();
+                Print("\n==== Latest Bar Data ====");
+                Print($"Time: {latestBar.OpenTime} UTC");
+                Print($"OHLCV: O={latestBar.Open:F2}, H={latestBar.High:F2}, L={latestBar.Low:F2}, C={latestBar.Close:F2}, V={latestBar.TickVolume}");
+                Print($"Position: Direction={marketData.PositionDirection}, PnL={marketData.PositionPnl:F6}");
+                
+                // Log the most recent feature values
+                var lastIndex = marketData.Close.Count - 1;
+                Print("\n==== Latest Feature Values ====");
+                Print($"ATR: {marketData.ATR[lastIndex]:F6}");
+                Print($"RSI: {marketData.RSI[lastIndex]:F6}");
+                Print($"Bollinger Bands: Upper={marketData.BollingerUpper[lastIndex]:F2}, Middle={marketData.BollingerMiddle[lastIndex]:F2}, Lower={marketData.BollingerLower[lastIndex]:F2}");
+                Print($"ADX: {marketData.ADX[lastIndex]:F6}");
+                Print($"Timestamps: {marketData.Timestamp[lastIndex]} -> {DateTimeOffset.FromUnixTimeSeconds(marketData.Timestamp[lastIndex]):u}");
+                Print("============================\n");
                 
                 PredictionResponse prediction;
                 try
