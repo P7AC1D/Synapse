@@ -391,10 +391,13 @@ namespace DRLTrader.Services
                 // Log all action probabilities for debugging
                 _logger("Raw action probabilities:");
                 try {
+                    bool is2DTensor = outputTensor.Dimensions.Length == 2 && outputTensor.Dimensions[0] == 1;
+                    
                     for (int i = 0; i < Math.Min(outputTensor.Length, 4); i++) // Safety: limit to 4 elements max (our action space)
                     {
                         TradingAction actionType = MapIndexToAction(i);
-                        _logger($"  - {actionType}: {outputTensor[i]:P2}");
+                        float value = is2DTensor ? outputTensor[0, i] : outputTensor[i];
+                        _logger($"  - {actionType}: {value:P2}");
                     }
                 }
                 catch (Exception ex) {
@@ -593,10 +596,13 @@ namespace DRLTrader.Services
                 _logger("Raw action probabilities:");
                 try
                 {
+                    bool is2DTensor = outputTensor.Dimensions.Length == 2 && outputTensor.Dimensions[0] == 1;
+                    
                     for (int i = 0; i < Math.Min(outputTensor.Length, 4); i++) // Safety: limit to 4 elements max
                     {
                         TradingAction actionType = MapIndexToAction(i);
-                        _logger($"  - {actionType}: {outputTensor[i]:P2}");
+                        float value = is2DTensor ? outputTensor[0, i] : outputTensor[i];
+                        _logger($"  - {actionType}: {value:P2}");
                     }
                 }
                 catch (Exception ex)
@@ -640,7 +646,9 @@ namespace DRLTrader.Services
                 float confidence;
                 try
                 {
-                    confidence = outputTensor[actionIndex];
+                    bool is2DTensor = outputTensor.Dimensions.Length == 2 && outputTensor.Dimensions[0] == 1;
+                    confidence = is2DTensor ? outputTensor[0, actionIndex] : outputTensor[actionIndex];
+                    _logger($"Confidence value retrieved successfully: {confidence:F6} ({confidence:P2})");
                 }
                 catch (Exception ex)
                 {
@@ -1020,8 +1028,8 @@ namespace DRLTrader.Services
                 _logger($"  volatility_breakout: {features[4]:F6}");
                 _logger($"  trend_strength: {features[5]:F6}");
                 _logger($"  candle_pattern: {features[6]:F6}");
-                _logger($"  sin_time: {features[7]:F6}");
-                _logger($"  cos_time: {features[8]:F6}");
+                _logger($"  cos_time: {features[7]:F6}");
+                _logger($"  sin_time: {features[8]:F6}");
                 _logger($"  position_type: {features[9]:F6}");
                 _logger($"  unrealized_pnl: {features[10]:F6}");                  
                   // Log OHLCV data for the most recent bar (index 0)
