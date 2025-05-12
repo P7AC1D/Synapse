@@ -421,36 +421,36 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
         os.makedirs(trades_log_path, exist_ok=True)
         trade_tracker = TradeTracker(trades_log_path)
     
-    # Progress tracking
-    progress_steps = max(1, len(data) // 100)  # Update every 1%
+    # Progress tracking (using aligned data length)
+    progress_steps = max(1, env.data_length // 100)  # Update every 1%
     
-    # Ensure we have enough data
-    if len(data) < 100:  # Minimum data requirement
-        raise ValueError(f"Insufficient data: need at least 100 bars, got {len(data)}")
+    # Ensure we have enough data after preprocessing
+    if env.data_length < 100:  # Minimum data requirement
+        raise ValueError(f"Insufficient data after preprocessing: need at least 100 bars, got {env.data_length}")
     
     # Main prediction loop
     while True:
         try:
             if total_steps % progress_steps == 0:
-                progress = (total_steps / len(data)) * 100
-                print(f"\rProgress: {progress:.1f}% (step {total_steps}/{len(data)})", end="")
-                
-                # Log raw features periodically if verbose
-                if verbose:
-                    current_index = env.original_index[total_steps]  # Use aligned index
-                    current_data = data.loc[:current_index]
-                    feature_processor = env.feature_processor
-                    atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
-                        current_data['high'].values,
-                        current_data['low'].values,
-                        current_data['close'].values
-                    )
-                    print(f"\nRaw features at step {total_steps}:")
-                    print(f"ATR: {atr[-1]:.6f}")
-                    print(f"RSI: {rsi[-1]:.6f}")
-                    print(f"BB Upper: {upper_band[-1]:.6f}")
-                    print(f"BB Lower: {lower_band[-1]:.6f}")
-                    print(f"Trend Strength: {trend_strength[-1]:.6f}")
+                progress = (total_steps / env.data_length) * 100
+                print(f"\rProgress: {progress:.1f}% (step {total_steps}/{env.data_length})", end="")
+            
+            # Log raw features periodically if verbose
+            if verbose:
+                current_index = env.original_index[total_steps]  # Use aligned index
+                current_data = data.loc[:current_index]
+                feature_processor = env.feature_processor
+                atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
+                    current_data['high'].values,
+                    current_data['low'].values,
+                    current_data['close'].values
+                )
+                print(f"\nRaw features at step {total_steps}:")
+                print(f"ATR: {atr[-1]:.6f}")
+                print(f"RSI: {rsi[-1]:.6f}")
+                print(f"BB Upper: {upper_band[-1]:.6f}")
+                print(f"BB Lower: {lower_band[-1]:.6f}")
+                print(f"Trend Strength: {trend_strength[-1]:.6f}")
             
             # Recheck balance if configured
             if balance_recheck_bars > 0 and total_steps % balance_recheck_bars == 0:
@@ -462,7 +462,8 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                 current_spread = env.prices['spread'][total_steps]
                 variation = np.random.uniform(-spread_variation, spread_variation)
                 env.prices['spread'][total_steps] = max(0, current_spread + variation)
-              # Check for market gaps and reset LSTM states if needed
+            
+            # Check for market gaps and reset LSTM states if needed
             if reset_states_on_gap and hasattr(model, 'is_recurrent') and model.is_recurrent:
                 # Get current and previous timestamp
                 if total_steps > 0:
@@ -588,7 +589,7 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
     
     # Handle any open position at the end
     if env.current_position:
-        env.current_step = len(data) - 1
+        env.current_step = env.data_length - 1
         pnl, trade_info = action_handler.close_position()
         if pnl != 0:
             env.trades.append(trade_info)
