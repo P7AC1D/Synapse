@@ -77,7 +77,7 @@ class FeatureProcessor:
         
         return atr, rsi, (upper, lower), trend_strength
 
-    def preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray]:
+    def preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray, pd.Index]:
         """Preprocess market data and calculate features.
         
         Args:
@@ -203,7 +203,7 @@ class FeatureProcessor:
                 elif col not in ['returns']:                    
                     if (values < -1).any() or (values > 1).any():
                         raise ValueError(f"Feature {col} contains values outside [-1, 1] range")
-            return features_df, atr_aligned    
+            return features_df, atr_aligned, features_df.index
         
     def get_feature_names(self) -> list:
         """Get list of feature names."""

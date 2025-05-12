@@ -437,7 +437,8 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                 
                 # Log raw features periodically if verbose
                 if verbose:
-                    current_data = data.iloc[:total_steps+1]
+                    current_index = env.original_index[total_steps]  # Use aligned index
+                    current_data = data.loc[:current_index]
                     feature_processor = env.feature_processor
                     atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
                         current_data['high'].values,
@@ -457,15 +458,16 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
             
             # Add random spread variation if configured
             if spread_variation > 0:
-                current_spread = data['spread'].iloc[total_steps]
+                # Apply spread variation using environment's aligned data
+                current_spread = env.prices['spread'][total_steps]
                 variation = np.random.uniform(-spread_variation, spread_variation)
-                data.at[data.index[total_steps], 'spread'] = max(0, current_spread + variation)
+                env.prices['spread'][total_steps] = max(0, current_spread + variation)
               # Check for market gaps and reset LSTM states if needed
             if reset_states_on_gap and hasattr(model, 'is_recurrent') and model.is_recurrent:
                 # Get current and previous timestamp
                 if total_steps > 0:
-                    current_time = data.index[total_steps]
-                    prev_time = data.index[total_steps-1]
+                    current_time = env.original_index[total_steps]
+                    prev_time = env.original_index[total_steps-1]
                     time_diff = (current_time - prev_time).total_seconds() / 60
                     expected_diff = 15  # For 15-minute data
                     
@@ -518,7 +520,7 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
 
                 # Track trade events
                 # Get current timestamp from the data index
-                current_timestamp = data.index[total_steps] if total_steps < len(data) else data.index[-1]
+                current_timestamp = env.original_index[total_steps] if total_steps < env.data_length else env.original_index[-1]
 
                 # Check for position changes
                 if env.current_position and not current_position:  # New position opened
@@ -536,7 +538,7 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                         )
 
                 elif not env.current_position and current_position:  # Position closed
-                    close_price = info.get('close_price', data['close'].iloc[min(total_steps, len(data)-1)])
+                    close_price = info.get('close_price', env.prices['close'][min(total_steps, env.data_length-1)])
                     pnl = info.get('pnl', 0.0)
                     if verbose:
                         print(f"\nClosing {current_timestamp}: PnL={pnl:+.2f} at {close_price:.5f}")
@@ -553,7 +555,7 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                 elif env.current_position and trade_tracker:  # Position update (optional)
                     trade_tracker.log_trade_update(
                         feature_dict,
-                        data['close'].iloc[min(total_steps, len(data)-1)],
+                        env.prices['close'][min(total_steps, env.data_length-1)],
                         env.metrics.current_unrealized_pnl,
                         timestamp=current_timestamp
                     )

@@ -95,22 +95,26 @@ class TradingEnv(gym.Env, EzPickle):
             data['volume'] = np.ones(len(data))
             
         # Process data and setup spaces
-        self.raw_data, self.atr_values = self.feature_processor.preprocess_data(data)
+        self.raw_data, self.atr_values, aligned_index = self.feature_processor.preprocess_data(data)
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.feature_processor.setup_observation_space()
         
-        # Save datetime index and data length
-        self.original_index = data.index
+        # Save aligned datetime index and data length
+        self.original_index = aligned_index
         self.data_length = len(self.raw_data)
         
-        # Store price data
+        # Store aligned price data
         self.prices = {
-            'close': data.loc[self.original_index, 'close'].values,
-            'high': data.loc[self.original_index, 'high'].values,
-            'low': data.loc[self.original_index, 'low'].values,
-            'spread': data.loc[self.original_index, 'spread'].values,
+            'close': data.loc[aligned_index, 'close'].values,
+            'high': data.loc[aligned_index, 'high'].values,
+            'low': data.loc[aligned_index, 'low'].values,
+            'spread': data.loc[aligned_index, 'spread'].values,
             'atr': self.atr_values
         }
+        
+        # Add validation check for alignment
+        if any(len(price_data) != self.data_length for price_data in self.prices.values()):
+            raise ValueError("Price data arrays must have same length as feature data")
         
         # State variables
         self.initial_balance = initial_balance
