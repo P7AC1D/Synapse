@@ -149,7 +149,9 @@ class FeatureProcessor:
                 out=np.zeros(len(volume)-1, dtype=np.float64),
                 where=volume[:-1] != 0
             )
-            volume_pct = np.clip(volume_pct, -1, 1)            # Create features DataFrame with exact ordering to match get_feature_names
+            volume_pct = np.clip(volume_pct, -1, 1)
+            
+            # Create features DataFrame with exact ordering to match get_feature_names
             features = {
                 'returns': returns,
                 'rsi': np.divide(rsi, 50, out=np.zeros_like(rsi), where=~np.isnan(rsi)) - 1,
@@ -164,22 +166,23 @@ class FeatureProcessor:
             }
             features_df = pd.DataFrame(features, index=data.index)
             
-            # Clean up NaN values - this will primarily drop rows at the beginning 
-            # where technical indicators don't have enough data points
-            features_df = features_df.dropna()
+            # Instead of dropping NaN values which causes index misalignment, replace NaNs with zeros
+            # This maintains the original data structure and prevents index out-of-bounds errors
+            nan_rows = features_df.isna().any(axis=1).sum()
+            features_df = features_df.fillna(0)
             
-            # Log dropped data information
-            rows_dropped = original_length - len(features_df)
-            percentage_dropped = (rows_dropped / original_length) * 100
-            print(f"Data preprocessing: Dropped {rows_dropped} rows out of {original_length} " 
-                  f"({percentage_dropped:.2f}%) due to NaN values")
+            # Log NaN handling information
+            if nan_rows > 0:
+                percentage_nans = (nan_rows / original_length) * 100
+                print(f"Data preprocessing: Replaced NaNs with zeros in {nan_rows} rows out of {original_length} " 
+                      f"({percentage_nans:.2f}%) - typically from indicator warmup period")
             
             # Keep the original ATR values (not normalized) for potential position sizing
-            atr_aligned = atr_series.loc[features_df.index].values
+            atr_aligned = atr_series.fillna(0).values
             
             # Validation
             if len(features_df) < 100:
-                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")            
+                raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
             
             return features_df, atr_aligned
 
