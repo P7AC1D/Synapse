@@ -196,13 +196,12 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             last_balance = env.balance
 
             while not done:
-                current_step_in_eval_data = env.current_step
-                # Ensure current_step_in_eval_data is a valid index for env.raw_data
-                # env.raw_data is the slice of data passed to this specific TradingEnv instance for evaluation
-                if current_step_in_eval_data < len(env.raw_data):
-                    trend_range_val = env.raw_data['trend_range_regime'].iloc[current_step_in_eval_data]
-                else: # Should not happen if env is running correctly
-                    trend_range_val = 0
+                # Get trend strength and volatility breakout from observation
+                trend_strength = obs[5]  # Index 5 is trend_strength in features
+                volatility_breakout = obs[4]  # Index 4 is volatility_breakout in features
+                
+                # Define trending vs ranging based on both ADX (trend_strength) and volatility_breakout
+                is_trending = trend_strength > 0.3 and volatility_breakout > 0.7
 
                 action, _ = model.predict(
                     obs,
@@ -215,10 +214,10 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
                 step_pnl = env.balance - last_balance
                 last_balance = env.balance
 
-                if -0.2 <= trend_range_val <= 0.2:
-                    regime_pnl['ranging'].append(step_pnl)
-                else: # trend_range_val > 0.2 or trend_range_val < -0.2
+                if is_trending:
                     regime_pnl['trending'].append(step_pnl)
+                else:
+                    regime_pnl['ranging'].append(step_pnl)
 
             # Get performance metrics
             performance = env.metrics.get_performance_summary()
