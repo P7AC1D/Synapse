@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Union, Any, Tuple
 
 import numpy as np
 import pandas as pd
-from stable_baselines3 import PPO
+from sb3_contrib.ppo_recurrent import RecurrentPPO
 
 from trading.environment import TradingEnv
 from trading.actions import Action
@@ -39,6 +39,10 @@ class TradeModel:
         self.min_lots = min_lots
         self.max_lots = max_lots
         self.contract_size = contract_size
+        # LSTM state management
+        self.lstm_states = None
+        self.is_recurrent = True  # Flag to indicate this is a recurrent model
+        
         self.required_columns = [
             'open',   # Required for price action features
             'close',  # Price data
@@ -51,18 +55,20 @@ class TradeModel:
         self.load_model()
         
     def load_model(self) -> bool:
-        """Load the pre-trained PPO model.
+        """Load the pre-trained PPO-LSTM model.
         
         Returns:
             bool: True if model loaded successfully, False otherwise
         """
         try:
-            # Load the PPO model with saved hyperparameters
-            self.model = PPO.load(
+            # Load the PPO-LSTM model with saved hyperparameters
+            self.model = RecurrentPPO.load(
                 self.model_path,
                 print_system_info=False,
                 device='cpu'
             )
+            # Initialize LSTM states to None
+            self.lstm_states = None
             self.logger.info(f"Model successfully loaded from {self.model_path}")
             return True
             
@@ -369,6 +375,12 @@ class TradeModel:
         # Prepare data
         data = self.prepare_data(data)
         
+        # Perform LSTM warmup if model supports it
+        if self.is_lstm_model():
+            warmup_window = min(100, len(data) // 10)  # Use 100 bars or 10% of data
+            self.warmup_lstm_state(data.iloc[:-warmup_window], warmup_window)
+            print(f"\nWarmed up LSTM states using {warmup_window} bars")
+        
         # Create environment for evaluation
         env = TradingEnv(
             data=data,
@@ -391,9 +403,10 @@ class TradeModel:
         total_reward = 0.0
         
         while not done:
-            # Make prediction (without LSTM states)
-            raw_action, _ = self.model.predict(
+            # Make prediction with LSTM states
+            raw_action, self.lstm_states = self.model.predict(
                 obs,
+                state=self.lstm_states,
                 deterministic=True
             )
             
@@ -455,9 +468,10 @@ class TradeModel:
         # Get observation (will include position info if env has it)
         obs = env.get_observation()
         
-        # Make prediction
-        action, _ = self.model.predict(
-            obs, 
+        # Make prediction with LSTM states
+        action, self.lstm_states = self.model.predict(
+            obs,
+            state=self.lstm_states,
             deterministic=True
         )
         
@@ -494,3 +508,60 @@ class TradeModel:
         }
             
         return prediction
+
+    def reset_lstm_states(self) -> None:
+        """Reset LSTM states to None. Should be called when market gaps are detected or starting new sequences."""
+        self.lstm_states = None
+        self.logger.debug("LSTM states reset")
+        
+    def warmup_lstm_state(self, data: pd.DataFrame, warmup_window: int = 100) -> None:
+        """Warm up LSTM states using historical data.
+        
+        Args:
+            data: DataFrame with market data
+            warmup_window: Number of observations to use for warm-up (default: 100)
+        """
+        if not self.is_lstm_model():
+            return
+            
+        if len(data) < warmup_window:
+            self.logger.warning(f"Not enough data for warm-up. Need {warmup_window} bars, got {len(data)}")
+            warmup_window = len(data)
+            
+        # Create environment for warm-up
+        env = TradingEnv(
+            data=data.iloc[-warmup_window:],
+            initial_balance=self.initial_balance,
+            balance_per_lot=self.balance_per_lot,
+            random_start=False,
+            predict_mode=True,
+            point_value=self.point_value,
+            min_lots=self.min_lots,
+            max_lots=self.max_lots,
+            contract_size=self.contract_size
+        )
+        
+        # Initialize environment
+        obs, _ = env.reset()
+        
+        # Run warm-up sequence
+        self.lstm_states = None  # Start fresh
+        for _ in range(warmup_window):
+            _, self.lstm_states = self.model.predict(
+                obs,
+                state=self.lstm_states,
+                deterministic=True
+            )
+            obs, _, done, _, _ = env.step(0)  # Use HOLD action during warm-up
+            if done:
+                break
+                
+        self.logger.debug(f"LSTM states warmed up using {warmup_window} observations")
+
+    def is_lstm_model(self) -> bool:
+        """Check if this is a recurrent LSTM model.
+        
+        Returns:
+            bool: True if model is recurrent LSTM, False otherwise
+        """
+        return self.is_recurrent and hasattr(self.model, 'lstm_hidden_size')

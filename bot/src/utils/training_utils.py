@@ -1,7 +1,7 @@
 """
-Training utilities for PPO model with walk-forward optimization.
+Training utilities for PPO-LSTM model with walk-forward optimization.
 
-This module provides functions and configurations for training a PPO model
+This module provides functions and configurations for training a PPO-LSTM model
 using walk-forward optimization. It includes:
 - Model architecture and hyperparameter configurations
 - Training state management
@@ -22,7 +22,7 @@ from utils.progress import show_progress_continuous, stop_progress_indicator
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.utils import get_linear_fn
-from stable_baselines3 import PPO
+from sb3_contrib.ppo_recurrent import RecurrentPPO
 from trading.environment import TradingEnv
 import torch as th
 
@@ -31,14 +31,19 @@ from callbacks.eval_callback import UnifiedEvalCallback
 
 # Model architecture configuration
 POLICY_KWARGS = {
+    "optimizer_class": th.optim.AdamW,
+    "lstm_hidden_size": 256,          # Larger LSTM for more temporal context
+    "n_lstm_layers": 2,               # Keep 2 layers
+    "shared_lstm": False,             # Separate LSTM architectures
+    "enable_critic_lstm": True,       # Enable LSTM for value estimation
     "net_arch": {
-        "pi": [512, 256, 128],  # Deeper network
-        "vf": [512, 256, 128]   # Matching value network
+        "pi": [128, 64],              # Policy network
+        "vf": [128, 64]               # Value network
     },
-    "activation_fn": th.nn.GELU,  # Better gradient flow
+    "activation_fn": th.nn.Mish,      # Better activation function
     "optimizer_kwargs": {
-        "eps": 1e-6,
-        "weight_decay": 3e-5
+        "eps": 1e-5,
+        "weight_decay": 1e-6          # Slightly reduced regularization
     }
 }
 
@@ -50,7 +55,7 @@ ADAPTATION_TIMESTEPS = 50000      # Reduced timesteps for adaptation phases
 # Initial training hyperparameters
 INITIAL_MODEL_KWARGS = {
     "learning_rate": 5e-4,        # Standard learning rate for initial training
-    "n_steps": 2048,              # Increased from 512 to capture more temporal patterns without LSTM
+    "n_steps": 512,              # Shorter sequences with LSTM
     "batch_size": 256,            # Larger batch for stable sparse reward learning
     "gamma": 0.99,                # High gamma for sparse rewards
     "gae_lambda": 0.98,           # Higher lambda for better advantage estimation
@@ -163,8 +168,8 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         return None
         
     try:
-        from stable_baselines3 import PPO
-        model = PPO.load(model_path, device=args.device)
+        from sb3_contrib.ppo_recurrent import RecurrentPPO
+        model = RecurrentPPO.load(model_path, device=args.device)
         
         # Create evaluation environment
         env = TradingEnv(
@@ -203,8 +208,9 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
                 # Define trending vs ranging based on both ADX (trend_strength) and volatility_breakout
                 is_trending = trend_strength > 0.3 and volatility_breakout > 0.7
 
-                action, _ = model.predict(
+                action, lstm_states = model.predict(
                     obs,
+                    state=lstm_states if 'lstm_states' in locals() else None,
                     deterministic=True
                 )
                 obs, reward, terminated, truncated, info = env.step(action)
@@ -368,7 +374,7 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     except (FileNotFoundError, json.JSONDecodeError):
         return 0, None, {}
 
-def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> PPO:
+def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
     Train a model using walk-forward optimization.
     
@@ -386,7 +392,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         args: Training arguments including hyperparameters
         
     Returns:
-        PPO: Final trained model or last checkpoint if interrupted
+        RecurrentPPO: Final trained model or last checkpoint if interrupted
         
     Notes:
         - Uses 'validation_size' from args to split training/validation
@@ -416,13 +422,13 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         last_iter_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{training_start // step_size -1}.zip")
         if os.path.exists(last_iter_checkpoint_path):
             print(f"Resuming: Loading model from last iteration checkpoint: {last_iter_checkpoint_path}")
-            model = PPO.load(last_iter_checkpoint_path, device=args.device)
+            model = RecurrentPPO.load(last_iter_checkpoint_path, device=args.device)
         elif initial_model_path_from_state and os.path.exists(initial_model_path_from_state): # Fallback to model_path from state (overall_best_model_path)
             print(f"Resuming: Loading model from state file (overall best): {initial_model_path_from_state}")
-            model = PPO.load(initial_model_path_from_state, device=args.device)
+            model = RecurrentPPO.load(initial_model_path_from_state, device=args.device)
         elif os.path.exists(overall_best_model_path): # Fallback to current overall_best_model_path
             print(f"Resuming: Loading model from existing overall best model: {overall_best_model_path}")
-            model = PPO.load(overall_best_model_path, device=args.device)
+            model = RecurrentPPO.load(overall_best_model_path, device=args.device)
         else:
             print(f"Resuming: No suitable model found to load for iteration {training_start // step_size}. Will create a new one.")
             training_start = 0 # Effectively start fresh if no model can be loaded
@@ -502,8 +508,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 print("\nPerforming initial training...")
                 
                 # Initialize new model with optimized hyperparameters for trading
-                model = PPO(
-                    "MlpPolicy",
+                model = RecurrentPPO(
+                    "MlpLstmPolicy",
                     train_env,
                     policy_kwargs=POLICY_KWARGS,
                     verbose=0,
@@ -609,7 +615,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     # Copy curr_best_candidate_path to overall_best_model_path
                     # Note: This does NOT change the 'model' variable which continues to evolve.
                     # We load and save to ensure it's a clean copy.
-                    temp_best_model = PPO.load(curr_best_candidate_path, device=args.device)
+                    temp_best_model = RecurrentPPO.load(curr_best_candidate_path, device=args.device)
                     temp_best_model.save(overall_best_model_path)
                     print(f"\nOverall best model updated: {overall_best_model_path}")
 
@@ -651,7 +657,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     if os.path.exists(overall_best_model_path):
         print(f"Overall best performing model on full dataset saved at: {overall_best_model_path}")
         # Optionally, load and return the overall_best_model_path if that's preferred as the final output
-        # model = PPO.load(overall_best_model_path, device=args.device)
+        # model = RecurrentPPO.load(overall_best_model_path, device=args.device)
 
     # Save the final state of the continuously evolved model
     final_evolving_model_path = os.path.join(f"../results/{args.seed}", "model_final_evolved.zip")

@@ -471,6 +471,12 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                             reset_states_on_gap: bool = False) -> Dict[str, Any]:
     """Run a backtest using the predict_single method to simulate the live trading process."""
     
+    # Perform LSTM warmup if model supports it
+    if isinstance(model, TradeModel) and model.is_lstm_model():
+        warmup_window = min(100, len(data) // 10)  # Use 100 bars or 10% of data
+        model.warmup_lstm_state(data.iloc[:-warmup_window], warmup_window)
+        print(f"\nWarmed up LSTM states using {warmup_window} bars")
+        
     # Create a trading environment for tracking trades and metrics
     env = TradingEnv(
         data=data,
@@ -579,9 +585,10 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
             try:
                 if hasattr(model, 'model') and model.model is not None:
                     try:
-                        # Standard PPO model
-                        action, _ = model.model.predict(
+                        # Standard PPO/PPO-LSTM model
+                        action, lstm_states = model.model.predict(
                             obs,
+                            state=lstm_states if 'lstm_states' in locals() else None,
                             deterministic=True
                         )
                         # Convert action to discrete value
