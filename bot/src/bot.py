@@ -218,6 +218,12 @@ class TradingBot:
             self.full_historical_data = initial_data.copy()
             self.logger.info(f"Initialized full historical data with {len(self.full_historical_data)} bars")
 
+            # Perform LSTM warmup if model supports it
+            if self.model.is_lstm_model():
+                warmup_window = min(100, len(initial_data) // 10)  # Use 100 bars or 10% of data
+                self.model.warmup_lstm_state(initial_data.iloc[:-warmup_window], warmup_window)
+                self.logger.info(f"Warmed up LSTM states using {warmup_window} bars")
+
             # Get initial bar data
             current_bar = self.data_fetcher.fetch_current_bar()
             if current_bar is None or len(current_bar.index) == 0:
@@ -289,6 +295,16 @@ class TradingBot:
                 time.sleep(1)  # Avoid excessive CPU usage
                 return
                 
+            # Check for market gaps and reset LSTM states if needed
+            if self.last_bar_index is not None:
+                time_diff = (current_time - self.last_bar_index).total_seconds() / 60
+                expected_diff = MT5_TIMEFRAME_MINUTES  # Expected time between bars
+                
+                if time_diff > expected_diff * 2:  # Gap is more than double the expected timeframe
+                    self.logger.warning(f"Market gap detected: {time_diff/60:.2f}h - Resetting LSTM states")
+                    if self.model.is_lstm_model():
+                        self.model.reset_lstm_states()
+            
             self.logger.info(f"New bar detected at {current_time}")
             self.last_bar_index = current_time
             
@@ -361,33 +377,17 @@ class TradingBot:
             # Get observation with updated position metrics - predict_mode=True automatically uses the last data point
             obs = env.get_observation()
             
-            # Use the model's predict method directly with the observation from our environment
-            action, _ = self.model.model.predict(obs, deterministic=True)
-            
-            # Convert to discrete action
-            if isinstance(action, np.ndarray):
-                action_value = int(action.item())
-            else:
-                action_value = int(action)
-            discrete_action = action_value % 4
-            
-            # Get current position type for context
-            current_position_type = 0
-            if env.current_position:
-                current_position_type = env.current_position['direction']
-                
-            # Generate human readable description
-            description = self.model._generate_prediction_description(discrete_action, current_position_type)
-            
-            # Create the prediction dictionary similar to what predict_single would return
-            prediction = {
-                'action': discrete_action,
-                'action_raw': action_value,
-                'description': description,
-                'valid_action': True,  # We'll handle validity check in trade execution
-                'position_type': current_position_type,
-                'timestamp': data_for_prediction.index[-1]
-            }
+            # Use predict_single to get prediction including LSTM state management
+            prediction = self.model.predict_single(data_for_prediction, env)
+            if prediction is None:
+                self.logger.error("Failed to get prediction from model")
+                return
+
+            # Log prediction details
+            self.logger.info(
+                f"Model prediction: Action={prediction['action']} | "
+                f"Description={prediction['description']}"
+            )
             
             # Extract current price for trade logging
             current_price = data_for_prediction['close'].iloc[-1]
