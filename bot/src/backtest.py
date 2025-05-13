@@ -234,145 +234,221 @@ def plot_results(results: dict, save_path: str = None):
     if not trades_df.empty:
         print(f"DataFrame columns: {trades_df.columns.tolist()}")
     
-    # Extract equity history from trades and track streaks (including unrealized PnL)
-    equity_history = []
-    current_balance = results.get('initial_balance', 0.0)
-    current_equity = current_balance
-    equity_history.append(current_equity)
-    
-    unrealized_pnl = 0.0  # Track unrealized PnL
-    for i, trade in enumerate(trades):
-        pnl = trade.get('pnl', 0)
-        current_balance += pnl
-        
-        # For the last trade, include unrealized PnL if it's active
-        if i == len(trades) - 1 and results.get('active_positions', 0) > 0:
-            unrealized_pnl = trade.get('unrealized_pnl', 0)
-        
-        current_equity = current_balance + unrealized_pnl
+    try:
+        # Extract equity history from trades and track streaks (including unrealized PnL)
+        equity_history = []
+        current_balance = results.get('initial_balance', 0.0)
+        current_equity = current_balance
         equity_history.append(current_equity)
-    
-    # Plot balance curve with drawdown overlay
-    ax1 = plt.subplot(gs[0, :])
-    
-    # Convert to pandas Series for calculations
-    equity_series = pd.Series(equity_history)
-    x_range = range(len(equity_series))
-    initial_balance = [results.get('initial_balance', 0.0)] * len(x_range)
-    
-    # Calculate drawdown
-    rolling_max = equity_series.expanding().max()
-    drawdowns = ((equity_series - rolling_max) / rolling_max) * 100
-    
-    # Configure main balance axis with improved formatting
-    ax1.fill_between(x_range, initial_balance, equity_series, alpha=0.3, color='lightblue')
-    ax1.plot(x_range, equity_series, 'b-', label='Balance', linewidth=2)
-    ax1.axhline(y=results.get('initial_balance', 0.0), color='gray', linestyle='--', alpha=0.5, label='Initial Balance')
-    # Common style settings for subplots
-    subplot_style = {
-        'grid': {'alpha': 0.3, 'linestyle': '--'},
-        'title_size': 12,
-        'label_size': 10,
-        'hist_alpha': 0.7,
-        'legend_loc': 'upper right',
-        'bins': 30
-    }
-    
-    ax1.set_ylabel('Balance ($)', color='b', fontsize=subplot_style['label_size'])
-    ax1.tick_params(axis='y', labelcolor='b')
-    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
-    
-    # Format x-axis to show trade numbers
-    ax1.set_xlabel('Trade Number', fontsize=subplot_style['label_size'])
-    ax1.set_xlim(0, len(equity_series))
-    ax1.grid(True, **subplot_style['grid'])
-    
-    # Configure drawdown axis with improved visibility
-    ax2 = ax1.twinx()
-    ax2.set_ylim(bottom=min(drawdowns)*1.1, top=0)  # Invert and add 10% padding
-    
-    # Plot drawdown
-    ax2.fill_between(range(len(drawdowns)), 0, drawdowns, color='r', alpha=0.3, label='Drawdown')
-    ax2.set_ylabel('Drawdown %', color='r', fontsize=subplot_style['label_size'])
-    ax2.tick_params(axis='y', labelcolor='r')
-    
-    # Combine legends
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-    plt.title('Equity and Drawdown', fontsize=subplot_style['title_size'])
-
-    # Plot trade size distribution (left column)
-    ax_lots = plt.subplot(gs[1, 0])
-    if not trades_df.empty and 'lot_size' in trades_df.columns:
-        plt.hist(trades_df['lot_size'], bins=subplot_style['bins'], alpha=subplot_style['hist_alpha'], 
-                color='b', label='Lots')
-        mean_lots = trades_df['lot_size'].mean()
-        median_lots = trades_df['lot_size'].median()
-        plt.axvline(mean_lots, color='b', linestyle='--', label=f'Mean: {mean_lots:.2f}')
-        plt.axvline(median_lots, color='b', linestyle=':', label=f'Median: {median_lots:.2f}')
-        plt.title('Trade Size Distribution', fontsize=subplot_style['title_size'])
-        plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
-        plt.xlabel('Lots', fontsize=subplot_style['label_size'])
-        plt.grid(**subplot_style['grid'])
-        plt.legend(loc=subplot_style['legend_loc'])
-    
-    # Plot hold time distribution (right column)
-    ax_hold = plt.subplot(gs[1, 1])
-    if not trades_df.empty and 'hold_time' in trades_df.columns:
-        plt.hist(trades_df['hold_time'], bins=subplot_style['bins'], alpha=subplot_style['hist_alpha'], 
-                color='purple', label='Bars')
-        mean_hold = trades_df['hold_time'].mean()
-        median_hold = trades_df['hold_time'].median()
-        plt.axvline(mean_hold, color='purple', linestyle='--', label=f'Mean: {mean_hold:.1f}')
-        plt.axvline(median_hold, color='purple', linestyle=':', label=f'Median: {median_hold:.1f}')
-        plt.title('Hold Time Distribution', fontsize=subplot_style['title_size'])
-        plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
-        plt.xlabel('Price Bars', fontsize=subplot_style['label_size'])
-        plt.grid(**subplot_style['grid'])
-        plt.legend(loc=subplot_style['legend_loc'])
-    
-    # Create side-by-side plots for profit and loss points (third row, split into columns)
-    if not trades_df.empty and 'profit_points' in trades_df.columns:
-        winning_trades = trades_df[trades_df['profit_points'] > 0]
-        losing_trades = trades_df[trades_df['profit_points'] <= 0]
         
-        # Plot winning trades (profit points) - left column
+        unrealized_pnl = 0.0  # Track unrealized PnL
+        for i, trade in enumerate(trades):
+            try:
+                pnl = trade.get('pnl', 0)
+                current_balance += pnl
+                
+                # For the last trade, include unrealized PnL if it's active
+                if i == len(trades) - 1 and results.get('active_positions', 0) > 0:
+                    unrealized_pnl = trade.get('unrealized_pnl', 0)
+                
+                current_equity = current_balance + unrealized_pnl
+                equity_history.append(current_equity)
+            except (KeyError, TypeError) as e:
+                logging.error(f"Error processing trade {i} for equity calculation: {str(e)}")
+                logging.error(f"Trade data: {trade}")
+            except Exception as e:
+                logging.error(f"Unexpected error in equity calculation for trade {i}: {str(e)}")
+                continue
+    except Exception as e:
+        logging.error(f"Error calculating equity history: {str(e)}")
+        # Provide fallback equity history if calculation fails
+        equity_history = [results.get('initial_balance', 0.0)] * (len(trades) + 1)
+    
+    # Plot balance curve and performance metrics with error handling
+    try:
+        # Plot balance curve with drawdown overlay
+        ax1 = plt.subplot(gs[0, :])
+        
+        # Convert to pandas Series for calculations
+        try:
+            equity_series = pd.Series(equity_history)
+            x_range = range(len(equity_series))
+            initial_balance = [results.get('initial_balance', 0.0)] * len(x_range)
+            
+            # Calculate drawdown with error handling
+            try:
+                rolling_max = equity_series.expanding().max()
+                if (rolling_max == 0).any():
+                    logging.error("Zero values found in rolling max calculation")
+                    drawdowns = pd.Series([0.0] * len(equity_series))
+                else:
+                    drawdowns = ((equity_series - rolling_max) / rolling_max) * 100
+            except Exception as e:
+                logging.error(f"Error calculating drawdowns: {str(e)}")
+                drawdowns = pd.Series([0.0] * len(equity_series))
+                
+            # Configure main balance axis with improved formatting
+            ax1.fill_between(x_range, initial_balance, equity_series, alpha=0.3, color='lightblue')
+            ax1.plot(x_range, equity_series, 'b-', label='Balance', linewidth=2)
+            ax1.axhline(y=results.get('initial_balance', 0.0), color='gray', linestyle='--', alpha=0.5, label='Initial Balance')
+            
+            # Common style settings for subplots
+            subplot_style = {
+                'grid': {'alpha': 0.3, 'linestyle': '--'},
+                'title_size': 12,
+                'label_size': 10,
+                'hist_alpha': 0.7,
+                'legend_loc': 'upper right',
+                'bins': 30
+            }
+            
+            ax1.set_ylabel('Balance ($)', color='b', fontsize=subplot_style['label_size'])
+            ax1.tick_params(axis='y', labelcolor='b')
+            ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:,.0f}'))
+            
+            # Format x-axis to show trade numbers
+            ax1.set_xlabel('Trade Number', fontsize=subplot_style['label_size'])
+            ax1.set_xlim(0, len(equity_series))
+            ax1.grid(True, **subplot_style['grid'])
+            
+            # Configure drawdown axis with improved visibility
+            ax2 = ax1.twinx()
+            ax2.set_ylim(bottom=min(drawdowns)*1.1, top=0)  # Invert and add 10% padding
+            
+            # Plot drawdown
+            ax2.fill_between(range(len(drawdowns)), 0, drawdowns, color='r', alpha=0.3, label='Drawdown')
+            ax2.set_ylabel('Drawdown %', color='r', fontsize=subplot_style['label_size'])
+            ax2.tick_params(axis='y', labelcolor='r')
+            
+            # Combine legends
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+            plt.title('Equity and Drawdown', fontsize=subplot_style['title_size'])
+            
+        except Exception as e:
+            logging.error(f"Error plotting equity curve: {str(e)}")
+            plt.text(0.5, 0.5, 'Error plotting equity curve', ha='center', va='center')
+            
+    except Exception as e:
+        logging.error(f"Error in plot setup: {str(e)}")
+    
+    # Plot trade size distribution (left column) with error handling
+    try:
+        ax_lots = plt.subplot(gs[1, 0])
+        if not trades_df.empty and 'lot_size' in trades_df.columns:
+            try:
+                plt.hist(trades_df['lot_size'], bins=subplot_style['bins'], alpha=subplot_style['hist_alpha'], 
+                        color='b', label='Lots')
+                mean_lots = trades_df['lot_size'].mean()
+                median_lots = trades_df['lot_size'].median()
+                plt.axvline(mean_lots, color='b', linestyle='--', label=f'Mean: {mean_lots:.2f}')
+                plt.axvline(median_lots, color='b', linestyle=':', label=f'Median: {median_lots:.2f}')
+                plt.title('Trade Size Distribution', fontsize=subplot_style['title_size'])
+                plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
+                plt.xlabel('Lots', fontsize=subplot_style['label_size'])
+                plt.grid(**subplot_style['grid'])
+                plt.legend(loc=subplot_style['legend_loc'])
+            except Exception as e:
+                logging.error(f"Error plotting lot size distribution: {str(e)}")
+                plt.text(0.5, 0.5, 'Error plotting lot sizes', ha='center', va='center')
+                plt.title('Trade Size Distribution (Error)', fontsize=subplot_style['title_size'])
+    except Exception as e:
+        logging.error(f"Error setting up lot size plot: {str(e)}")
+    
+    # Plot hold time distribution (right column) with error handling
+    try:
+        ax_hold = plt.subplot(gs[1, 1])
+        if not trades_df.empty and 'hold_time' in trades_df.columns:
+            try:
+                plt.hist(trades_df['hold_time'], bins=subplot_style['bins'], alpha=subplot_style['hist_alpha'], 
+                        color='purple', label='Bars')
+                mean_hold = trades_df['hold_time'].mean()
+                median_hold = trades_df['hold_time'].median()
+                plt.axvline(mean_hold, color='purple', linestyle='--', label=f'Mean: {mean_hold:.1f}')
+                plt.axvline(median_hold, color='purple', linestyle=':', label=f'Median: {median_hold:.1f}')
+                plt.title('Hold Time Distribution', fontsize=subplot_style['title_size'])
+                plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
+                plt.xlabel('Price Bars', fontsize=subplot_style['label_size'])
+                plt.grid(**subplot_style['grid'])
+                plt.legend(loc=subplot_style['legend_loc'])
+            except Exception as e:
+                logging.error(f"Error plotting hold time distribution: {str(e)}")
+                plt.text(0.5, 0.5, 'Error plotting hold times', ha='center', va='center')
+    except Exception as e:
+        logging.error(f"Error setting up hold time plot: {str(e)}")
+    
+    # Create side-by-side plots for profit and loss points (third row, split into columns) with error handling
+    try:
+        if not trades_df.empty and 'profit_points' in trades_df.columns:
+            try:
+                winning_trades = trades_df[trades_df['profit_points'] > 0]
+                losing_trades = trades_df[trades_df['profit_points'] <= 0]
+                
+                # Plot winning trades (profit points) - left column
+                ax_profit = plt.subplot(gs[2, 0])
+                if not winning_trades.empty:
+                    try:
+                        plt.hist(winning_trades['profit_points'], bins=subplot_style['bins'], 
+                                alpha=subplot_style['hist_alpha'], color='g', label='Profit Points')
+                        mean_profit = winning_trades['profit_points'].mean()
+                        median_profit = winning_trades['profit_points'].median()
+                        plt.axvline(mean_profit, color='g', linestyle='--', label=f'Mean: {mean_profit:.1f}')
+                        plt.axvline(median_profit, color='g', linestyle=':', label=f'Median: {median_profit:.1f}')
+                        plt.title('Profit Points Distribution', fontsize=subplot_style['title_size'])
+                        plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
+                        plt.xlabel('Points', fontsize=subplot_style['label_size'])
+                        plt.grid(**subplot_style['grid'])
+                        plt.legend(loc=subplot_style['legend_loc'])
+                    except Exception as e:
+                        logging.error(f"Error plotting winning trades distribution: {str(e)}")
+                        plt.text(0.5, 0.5, 'Error plotting winning trades', ha='center', va='center')
+                
+                # Plot losing trades (absolute loss points) - right column
+                ax_loss = plt.subplot(gs[2, 1])
+                if not losing_trades.empty:
+                    try:
+                        abs_loss_points = abs(losing_trades['profit_points'])
+                        plt.hist(abs_loss_points, bins=subplot_style['bins'], 
+                                alpha=subplot_style['hist_alpha'], color='r', label='Loss Points')
+                        mean_loss = abs_loss_points.mean()
+                        median_loss = abs_loss_points.median()
+                        plt.axvline(mean_loss, color='r', linestyle='--', label=f'Mean: {mean_loss:.1f}')
+                        plt.axvline(median_loss, color='r', linestyle=':', label=f'Median: {median_loss:.1f}')
+                        plt.title('Loss Points Distribution', fontsize=subplot_style['title_size'])
+                        plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
+                        plt.xlabel('Points', fontsize=subplot_style['label_size'])
+                        plt.grid(**subplot_style['grid'])
+                        plt.legend(loc=subplot_style['legend_loc'])
+                    except Exception as e:
+                        logging.error(f"Error plotting losing trades distribution: {str(e)}")
+                        plt.text(0.5, 0.5, 'Error plotting losing trades', ha='center', va='center')
+            except Exception as e:
+                logging.error(f"Error processing trades for profit/loss plots: {str(e)}")
+                plt.text(0.5, 0.5, 'Error processing trade data', ha='center', va='center')
+    except Exception as e:
+        logging.error(f"Error in profit/loss plot setup: {str(e)}")
+        # Create empty subplots with error messages if plotting fails
         ax_profit = plt.subplot(gs[2, 0])
-        if not winning_trades.empty:
-            plt.hist(winning_trades['profit_points'], bins=subplot_style['bins'], 
-                    alpha=subplot_style['hist_alpha'], color='g', label='Profit Points')
-            mean_profit = winning_trades['profit_points'].mean()
-            median_profit = winning_trades['profit_points'].median()
-            plt.axvline(mean_profit, color='g', linestyle='--', label=f'Mean: {mean_profit:.1f}')
-            plt.axvline(median_profit, color='g', linestyle=':', label=f'Median: {median_profit:.1f}')
-            plt.title('Profit Points Distribution', fontsize=subplot_style['title_size'])
-            plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
-            plt.xlabel('Points', fontsize=subplot_style['label_size'])
-            plt.grid(**subplot_style['grid'])
-            plt.legend(loc=subplot_style['legend_loc'])
+        ax_profit.text(0.5, 0.5, 'Error plotting profit distribution', ha='center', va='center')
+        ax_profit.set_title('Profit Points Distribution (Error)', fontsize=subplot_style['title_size'])
         
-        # Plot losing trades (absolute loss points) - right column
         ax_loss = plt.subplot(gs[2, 1])
-        if not losing_trades.empty:
-            abs_loss_points = abs(losing_trades['profit_points'])
-            plt.hist(abs_loss_points, bins=subplot_style['bins'], 
-                    alpha=subplot_style['hist_alpha'], color='r', label='Loss Points')
-            mean_loss = abs_loss_points.mean()
-            median_loss = abs_loss_points.median()
-            plt.axvline(mean_loss, color='r', linestyle='--', label=f'Mean: {mean_loss:.1f}')
-            plt.axvline(median_loss, color='r', linestyle=':', label=f'Median: {median_loss:.1f}')
-            plt.title('Loss Points Distribution', fontsize=subplot_style['title_size'])
-            plt.ylabel('Frequency', fontsize=subplot_style['label_size'])
-            plt.xlabel('Points', fontsize=subplot_style['label_size'])
-            plt.grid(**subplot_style['grid'])
-            plt.legend(loc=subplot_style['legend_loc'])
+        ax_loss.text(0.5, 0.5, 'Error plotting loss distribution', ha='center', va='center')
+        ax_loss.set_title('Loss Points Distribution (Error)', fontsize=subplot_style['title_size'])
 
-    # Adjust layout with padding
-    plt.tight_layout(pad=1.0, h_pad=2.0, w_pad=2.0)
-    if save_path:
-        plt.savefig(save_path, bbox_inches='tight')
-    plt.show()
+    # Adjust layout with padding and save/show with error handling
+    try:
+        plt.tight_layout(pad=1.0, h_pad=2.0, w_pad=2.0)
+        if save_path:
+            try:
+                plt.savefig(save_path, bbox_inches='tight')
+                logging.info(f"Plot saved to {save_path}")
+            except Exception as e:
+                logging.error(f"Error saving plot to {save_path}: {str(e)}")
+        plt.show()
+    except Exception as e:
+        logging.error(f"Error in final plot rendering: {str(e)}")
 
 def show_progress(message="Running backtest"):
     """Simple progress indicator for long-running processes."""
@@ -480,32 +556,57 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
             
             # Create normalized feature dictionary for tracking
             feature_dict = {}
-            if obs is not None and isinstance(obs, np.ndarray):
-                feature_names = env.feature_processor.get_feature_names()
-                for i, feat in enumerate(obs):
-                    feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
-                    feature_dict[feature_name] = float(feat)
-                    if verbose:
-                        print(f"  {feature_name}: {feat:.6f}")
+            try:
+                if obs is not None and isinstance(obs, np.ndarray):
+                    feature_names = env.feature_processor.get_feature_names()
+                    for i, feat in enumerate(obs):
+                        try:
+                            feature_name = feature_names[i] if i < len(feature_names) else f"feature_{i}"
+                            feature_dict[feature_name] = float(feat)
+                            if verbose:
+                                print(f"  {feature_name}: {feat:.6f}")
+                        except IndexError as e:
+                            logging.error(f"Feature index error at step {total_steps}: {str(e)}")
+                            logging.error(f"Feature array length: {len(obs)}, Feature names length: {len(feature_names)}")
+                        except ValueError as e:
+                            logging.error(f"Feature value error at step {total_steps}: {str(e)}")
+                        except Exception as e:
+                            logging.error(f"Error processing feature at step {total_steps}: {str(e)}")
+            except Exception as e:
+                logging.error(f"Error creating feature dictionary at step {total_steps}: {str(e)}")
 
             # Get prediction from model - handle both standard PPO and ONNX models
-            if hasattr(model, 'model') and model.model is not None:
-                # Standard PPO model
-                action, _ = model.model.predict(
-                    obs,
-                    deterministic=True
-                )
-                # Convert action to discrete value
-                action_value = int(action.item()) if isinstance(action, np.ndarray) else int(action)
-            else:
-                # ONNX model - get logits and add debug info
-                logits, info = model.predict(obs)
-                action_value = int(np.argmax(logits, axis=-1)[0])
-                
-                if args.verbose_features:
-                    print(f"\nAction selection step {total_steps}:")
-                    print(f"Raw logits: {logits[0]}")
-                    print(f"Selected action: {action_value}")
+            try:
+                if hasattr(model, 'model') and model.model is not None:
+                    try:
+                        # Standard PPO model
+                        action, _ = model.model.predict(
+                            obs,
+                            deterministic=True
+                        )
+                        # Convert action to discrete value
+                        action_value = int(action.item()) if isinstance(action, np.ndarray) else int(action)
+                    except (ValueError, IndexError, AttributeError) as e:
+                        logging.error(f"Error in PPO model prediction at step {total_steps}: {str(e)}")
+                        logging.error(f"Observation shape: {obs.shape if isinstance(obs, np.ndarray) else 'not numpy array'}")
+                        action_value = 0  # Default to HOLD on error
+                else:
+                    try:
+                        # ONNX model - get logits and add debug info
+                        logits, info = model.predict(obs)
+                        action_value = int(np.argmax(logits, axis=-1)[0])
+                        
+                        if args.verbose_features:
+                            print(f"\nAction selection step {total_steps}:")
+                            print(f"Raw logits: {logits[0]}")
+                            print(f"Selected action: {action_value}")
+                    except (IndexError, ValueError, AttributeError) as e:
+                        logging.error(f"Error in ONNX model prediction at step {total_steps}: {str(e)}")
+                        logging.error(f"Observation shape: {obs.shape if isinstance(obs, np.ndarray) else 'not numpy array'}")
+                        action_value = 0  # Default to HOLD on error
+            except Exception as e:
+                logging.error(f"Unexpected error during model prediction at step {total_steps}: {str(e)}")
+                action_value = 0  # Default to HOLD on error
             
             try:
                 discrete_action = action_value % 4
@@ -520,46 +621,68 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                 total_steps += 1
 
                 # Track trade events
-                # Get current timestamp from the data index
-                current_timestamp = env.original_index[total_steps] if total_steps < env.data_length else env.original_index[-1]
+                try:
+                    # Get current timestamp from the data index
+                    current_timestamp = env.original_index[total_steps] if total_steps < env.data_length else env.original_index[-1]
 
-                # Check for position changes
-                if env.current_position and not current_position:  # New position opened
-                    if verbose:
-                        print(f"\nOpening {current_timestamp}: {'Long' if discrete_action == 1 else 'Short'} "
-                              f"{env.current_position['lot_size']:.2f} lots at {env.current_position['entry_price']:.5f}")
-                    # Track in optional trade log
-                    if trade_tracker:
-                        trade_tracker.log_trade_entry(
-                            'buy' if discrete_action == 1 else 'sell',
-                            feature_dict,
-                            env.current_position['entry_price'],
-                            env.current_position['lot_size'],
-                            timestamp=current_timestamp
-                        )
+                    # Check for position changes
+                    if env.current_position and not current_position:  # New position opened
+                        try:
+                            if verbose:
+                                print(f"\nOpening {current_timestamp}: {'Long' if discrete_action == 1 else 'Short'} "
+                                    f"{env.current_position['lot_size']:.2f} lots at {env.current_position['entry_price']:.5f}")
+                            # Track in optional trade log
+                            if trade_tracker:
+                                try:
+                                    trade_tracker.log_trade_entry(
+                                        'buy' if discrete_action == 1 else 'sell',
+                                        feature_dict,
+                                        env.current_position['entry_price'],
+                                        env.current_position['lot_size'],
+                                        timestamp=current_timestamp
+                                    )
+                                except Exception as e:
+                                    logging.error(f"Error logging trade entry at step {total_steps}: {str(e)}")
+                        except (KeyError, TypeError) as e:
+                            logging.error(f"Error processing new position data at step {total_steps}: {str(e)}")
+                        except Exception as e:
+                            logging.error(f"Unexpected error handling new position at step {total_steps}: {str(e)}")
 
-                elif not env.current_position and current_position:  # Position closed
-                    close_price = info.get('close_price', env.prices['close'][min(total_steps, env.data_length-1)])
-                    pnl = info.get('pnl', 0.0)
-                    if verbose:
-                        print(f"\nClosing {current_timestamp}: PnL={pnl:+.2f} at {close_price:.5f}")
-                    # Track in optional trade log
-                    if trade_tracker:
-                        trade_tracker.log_trade_exit(
-                            'model_close',
-                            close_price,
-                            pnl,
-                            feature_dict,
-                            timestamp=current_timestamp
-                        )
-                        
-                elif env.current_position and trade_tracker:  # Position update (optional)
-                    trade_tracker.log_trade_update(
-                        feature_dict,
-                        env.prices['close'][min(total_steps, env.data_length-1)],
-                        env.metrics.current_unrealized_pnl,
-                        timestamp=current_timestamp
-                    )
+                    elif not env.current_position and current_position:  # Position closed
+                        try:
+                            close_price = info.get('close_price', env.prices['close'][min(total_steps, env.data_length-1)])
+                            pnl = info.get('pnl', 0.0)
+                            if verbose:
+                                print(f"\nClosing {current_timestamp}: PnL={pnl:+.2f} at {close_price:.5f}")
+                            # Track in optional trade log
+                            if trade_tracker:
+                                try:
+                                    trade_tracker.log_trade_exit(
+                                        'model_close',
+                                        close_price,
+                                        pnl,
+                                        feature_dict,
+                                        timestamp=current_timestamp
+                                    )
+                                except Exception as e:
+                                    logging.error(f"Error logging trade exit at step {total_steps}: {str(e)}")
+                        except (KeyError, IndexError) as e:
+                            logging.error(f"Error processing closed position data at step {total_steps}: {str(e)}")
+                        except Exception as e:
+                            logging.error(f"Unexpected error handling closed position at step {total_steps}: {str(e)}")
+                            
+                    elif env.current_position and trade_tracker:  # Position update (optional)
+                        try:
+                            trade_tracker.log_trade_update(
+                                feature_dict,
+                                env.prices['close'][min(total_steps, env.data_length-1)],
+                                env.metrics.current_unrealized_pnl,
+                                timestamp=current_timestamp
+                            )
+                        except Exception as e:
+                            logging.error(f"Error logging trade update at step {total_steps}: {str(e)}")
+                except Exception as e:
+                    logging.error(f"Error in trade tracking at step {total_steps}: {str(e)}")
                     
                 # Update position tracking
                 current_position = env.current_position.copy() if env.current_position else None

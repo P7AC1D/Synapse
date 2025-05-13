@@ -177,12 +177,6 @@ class FeatureProcessor:
             }
             features_df = pd.DataFrame(features, index=aligned_index)
             
-            # Apply lookback and ensure alignment
-            if len(features_df) > self.lookback:
-                features_df = features_df.iloc[self.lookback:]
-                rows_after_lookback = len(features_df)
-                print(f"After lookback period: {rows_after_lookback} rows remaining")
-            
             # Validation
             if len(features_df) < 100:
                 raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
