@@ -48,15 +48,13 @@ class FeatureProcessor:
         atr = ta.volatility.AverageTrueRange(
             high=high_s, low=low_s, close=close_s, 
             window=self.atr_period
-        ).average_true_range()
-        atr = atr.bfill().fillna(atr.mean()).values
+        ).average_true_range().values
         
         # Calculate RSI
         rsi = ta.momentum.RSIIndicator(
             close=close_s,
             window=self.rsi_period
-        ).rsi()
-        rsi = rsi.bfill().fillna(50).values  # Default to neutral RSI
+        ).rsi().values
         
         # Calculate Bollinger Bands
         bb = ta.volatility.BollingerBands(
@@ -64,18 +62,16 @@ class FeatureProcessor:
             window=self.boll_period,
             window_dev=2
         )
-        upper = bb.bollinger_hband().bfill().fillna(close_s.iloc[0]).values
-        lower = bb.bollinger_lband().bfill().fillna(close_s.iloc[0]).values
+        upper = bb.bollinger_hband().values
+        lower = bb.bollinger_lband().values
         
-        # Calculate ADX for trend strength
+        # Calculate ADX
         adx = ta.trend.ADXIndicator(
             high=high_s, low=low_s, close=close_s,
             window=self.atr_period
-        ).adx()
-        adx = adx.bfill().fillna(0).values
-        trend_strength = np.clip(adx/25 - 1, -1, 1)  # Same normalization as before
+        ).adx().values
         
-        return atr, rsi, (upper, lower), trend_strength
+        return atr, rsi, (upper, lower), adx
 
     def preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray, pd.Index]:
         """Preprocess market data and calculate features.
@@ -87,50 +83,61 @@ class FeatureProcessor:
             Tuple of (features DataFrame, ATR values)
         """
         
-        features_df = pd.DataFrame(index=data.index)
-        
         with np.errstate(divide='ignore', invalid='ignore'):
             close = data['close'].values
             high = data['high'].values
             low = data['low'].values
             opens = data['open'].values
             
-            # Calculate technical indicators using TA-Lib
-            atr, rsi, (upper_band, lower_band), trend_strength = self._calculate_indicators(high, low, close)
+            # Calculate technical indicators and store in temporary DataFrame
+            atr, rsi, (upper_band, lower_band), adx = self._calculate_indicators(high, low, close)
+            indicators_df = pd.DataFrame({
+                'atr': atr,
+                'rsi': rsi,
+                'upper_band': upper_band,
+                'lower_band': lower_band,
+                'adx': adx
+            }, index=data.index)
             
-            # Store ATR in DataFrame immediately for proper alignment
-            atr_df = pd.DataFrame({'atr': atr}, index=data.index)
+            # Log initial row count
+            initial_rows = len(indicators_df)
             
-            # Calculate ATR normalization
-            window_size = 20
-            atr_sma = pd.Series(atr).rolling(window_size, min_periods=1).mean().values
-            atr_ratio = atr / (atr_sma + 1e-8)
+            # Clean up NaN values from indicators and log dropped rows
+            indicators_df = indicators_df.dropna()
+            dropped_rows = initial_rows - len(indicators_df)
+            print(f"Dropped {dropped_rows} rows containing NaN values ({(dropped_rows/initial_rows)*100:.2f}% of data)")
             
-            # Scale ATR ratio
-            min_expected_ratio = 0.5
-            max_expected_ratio = 2.0
-            expected_range = max_expected_ratio - min_expected_ratio
-            atr_norm = 2 * (atr_ratio - min_expected_ratio) / expected_range - 1
-            atr_norm = np.clip(atr_norm, -1, 1)
+            # Extract cleaned indicator values
+            atr = indicators_df['atr'].values
+            rsi = indicators_df['rsi'].values
+            upper_band = indicators_df['upper_band'].values
+            lower_band = indicators_df['lower_band'].values
+            adx = indicators_df['adx'].values
+            
+            # Get the aligned price data
+            aligned_index = indicators_df.index
+            close = data.loc[aligned_index, 'close'].values
+            high = data.loc[aligned_index, 'high'].values
+            low = data.loc[aligned_index, 'low'].values
+            opens = data.loc[aligned_index, 'open'].values
+            volume = data.loc[aligned_index, 'volume'].values.astype(np.float64)
+            
+            # Calculate ATR percentage change
+            atr_pct = np.zeros_like(atr)
+            atr_pct[1:] = np.clip((atr[1:] - atr[:-1]) / (atr[:-1] + 1e-8), -1, 1)
+            atr_norm = atr_pct
             
             # Calculate other features
             returns = np.zeros_like(close)
             returns[1:] = np.diff(close) / close[:-1]
             returns = np.clip(returns, -0.1, 0.1)
             minutes_in_day = 24 * 60            # Explicitly use UTC to prevent timezone conversions
-            time_index = pd.to_datetime(data.index, utc=True).hour * 60 + pd.to_datetime(data.index, utc=True).minute
+            time_index = pd.to_datetime(aligned_index, utc=True).hour * 60 + pd.to_datetime(aligned_index, utc=True).minute
             
             # Calculate correct angle and trigonometric values
             angle = 2 * np.pi * time_index / minutes_in_day
             sin_time = np.sin(angle)
             cos_time = np.cos(angle)
-              # Debug logging for the last time index
-            if len(time_index) > 0:
-                last_time = pd.to_datetime(data.index[-1], utc=True)
-                last_hour = last_time.hour
-                last_minute = last_time.minute
-                last_time_index = last_hour * 60 + last_minute
-                last_angle = 2 * np.pi * last_time_index / minutes_in_day
 
             # Price action features
             body = close - opens
@@ -147,8 +154,7 @@ class FeatureProcessor:
             volatility_breakout = np.divide(position, band_range, out=np.zeros_like(position), where=band_range!=0)
             volatility_breakout = np.clip(volatility_breakout, 0, 1)
             
-            # Volume change
-            volume = data['volume'].values.astype(np.float64)
+            # Volume change - using aligned volume data
             volume_pct = np.zeros_like(volume, dtype=np.float64)
             volume_pct[1:] = np.divide(
                 volume[1:] - volume[:-1],
@@ -163,47 +169,29 @@ class FeatureProcessor:
                 'atr': atr_norm,
                 'volume_change': volume_pct,
                 'volatility_breakout': volatility_breakout,
-                'trend_strength': trend_strength,
+                'trend_strength': np.clip(adx/25 - 1, -1, 1),  # Normalize ADX to [-1, 1] range
                 'candle_pattern': candle_pattern,
                 'cos_time': cos_time,
                 'sin_time': sin_time,
                 # position_type and unrealized_pnl are added by the environment
             }
-            features_df = pd.DataFrame(features, index=data.index)
-            
-            # Clean up NaN values
-            features_df = features_df.dropna()
+            features_df = pd.DataFrame(features, index=aligned_index)
             
             # Apply lookback and ensure alignment
             if len(features_df) > self.lookback:
                 features_df = features_df.iloc[self.lookback:]
-                # Ensure exact index alignment between features and ATR
-                common_index = features_df.index.intersection(atr_df.index)
-                features_df = features_df.loc[common_index]
-                atr_df = atr_df.loc[common_index]
+                rows_after_lookback = len(features_df)
+                print(f"After lookback period: {rows_after_lookback} rows remaining")
             
             # Validation
             if len(features_df) < 100:
                 raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
-            
-            # Convert to array after guaranteed alignment
-            atr_aligned = atr_df.values.reshape(-1)
-            
-            # Double-check alignment (should never fail now)
-            if len(atr_aligned) != len(features_df):
-                # If lengths still don't match, use minimum length
-                min_len = min(len(features_df), len(atr_aligned))
-                features_df = features_df.iloc[-min_len:]
-                atr_aligned = atr_aligned[-min_len:]
-              # Validate feature ranges
-            for col, values in features_df.items():
-                if col in ['volatility_breakout']:
-                    if (values < 0).any() or (values > 1).any():
-                        raise ValueError(f"Feature {col} contains values outside [0, 1] range")
-                elif col not in ['returns']:                    
-                    if (values < -1).any() or (values > 1).any():
-                        raise ValueError(f"Feature {col} contains values outside [-1, 1] range")
-            return features_df, atr_aligned, features_df.index
+            # Print feature samples for verification
+            print("\nFirst few rows of features:")
+            print(features_df.head().round(4))
+            print("\nLast few rows of features:")
+            print(features_df.tail().round(4))
+            return features_df, atr, features_df.index
         
     def get_feature_names(self) -> list:
         """Get list of feature names."""
