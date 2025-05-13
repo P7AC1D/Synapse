@@ -31,21 +31,25 @@ from callbacks.eval_callback import UnifiedEvalCallback
 
 # Model architecture configuration
 POLICY_KWARGS = {
-    "optimizer_class": th.optim.AdamW,
     "net_arch": {
-        "pi": [256, 128, 64],    # Deeper policy network to compensate for removal of LSTM
-        "vf": [256, 128, 64]     # Matching value network
+        "pi": [512, 256, 128],  # Deeper network
+        "vf": [512, 256, 128]   # Matching value network
     },
-    "activation_fn": th.nn.Mish,  # Better activation function
+    "activation_fn": th.nn.GELU,  # Better gradient flow
     "optimizer_kwargs": {
-        "eps": 1e-5,
-        "weight_decay": 1e-6      # Slightly reduced regularization
+        "eps": 1e-6,
+        "weight_decay": 3e-5
     }
 }
 
-# Training hyperparameters
-MODEL_KWARGS = {
-    "learning_rate": 5e-4,        # Lower learning rate for sparse rewards
+# Initial training hyperparameters
+# Training timesteps configuration
+INITIAL_TIMESTEPS = 100000        # Full timesteps for initial training
+ADAPTATION_TIMESTEPS = 50000      # Reduced timesteps for adaptation phases
+
+# Initial training hyperparameters
+INITIAL_MODEL_KWARGS = {
+    "learning_rate": 5e-4,        # Standard learning rate for initial training
     "n_steps": 2048,              # Increased from 512 to capture more temporal patterns without LSTM
     "batch_size": 256,            # Larger batch for stable sparse reward learning
     "gamma": 0.99,                # High gamma for sparse rewards
@@ -56,8 +60,28 @@ MODEL_KWARGS = {
     "vf_coef": 1.0,               # Higher value importance for sparse rewards
     "max_grad_norm": 0.5,         # Conservative gradient clipping
     "n_epochs": 12,               # More epochs for thorough learning
-    "use_sde": False,             # No stochastic dynamics
+    "use_sde": False              # No stochastic dynamics
 }
+
+# Adaptation phase hyperparameters (for continuous learning)
+# Adaptation phase hyperparameters (for continuous learning)
+ADAPTATION_MODEL_KWARGS = {
+    "learning_rate": 1e-4,       # Further reduce
+    "batch_size": 512,           # Larger batches
+    "n_steps": 4096,            # Longer sequences
+    "n_epochs": 8,              # Fewer epochs
+    "clip_range": 0.15,         # Wider clip
+    "ent_coef": 0.02,          # Lower entropy
+    "gae_lambda": 0.92,        # Lower lambda
+    "max_grad_norm": 0.3,      # Add gradient clipping
+    "gamma": 0.99,             # Keep high gamma for sparse rewards
+    "clip_range_vf": 0.15,     # Match policy clipping
+    "vf_coef": 1.0,           # Keep higher value importance
+    "use_sde": False          # No stochastic dynamics
+}
+
+# Set MODEL_KWARGS to INITIAL_MODEL_KWARGS by default
+MODEL_KWARGS = INITIAL_MODEL_KWARGS
 
 def format_time_remaining(seconds: float) -> str:
     """Convert seconds to days, hours, minutes format."""
@@ -167,14 +191,35 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             obs, _ = env.reset()
             done = False
             
+            # For regime consistency
+            regime_pnl = {'trending': [], 'ranging': []}
+            last_balance = env.balance
+
             while not done:
+                current_step_in_eval_data = env.current_step
+                # Ensure current_step_in_eval_data is a valid index for env.raw_data
+                # env.raw_data is the slice of data passed to this specific TradingEnv instance for evaluation
+                if current_step_in_eval_data < len(env.raw_data):
+                    trend_range_val = env.raw_data['trend_range_regime'].iloc[current_step_in_eval_data]
+                else: # Should not happen if env is running correctly
+                    trend_range_val = 0
+
                 action, _ = model.predict(
                     obs,
                     deterministic=True
                 )
                 obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
-                
+
+                # Track PnL per step for regime analysis
+                step_pnl = env.balance - last_balance
+                last_balance = env.balance
+
+                if -0.2 <= trend_range_val <= 0.2:
+                    regime_pnl['ranging'].append(step_pnl)
+                else: # trend_range_val > 0.2 or trend_range_val < -0.2
+                    regime_pnl['trending'].append(step_pnl)
+
             # Get performance metrics
             performance = env.metrics.get_performance_summary()
         finally:
@@ -190,23 +235,50 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         profit_factor = performance['profit_factor']
         win_rate = performance['win_rate'] / 100
         
-        # 1. Risk-adjusted return component (40% weight)
-        # Add small constant to avoid division by zero
-        risk_adj_return = returns / (max_dd + 0.05)  
-        score += risk_adj_return * 0.4
-        
-        # 2. Raw returns component (30% weight)
-        score += returns * 0.3
-        
-        # 3. Profit factor bonus (up to 20% extra)
+        # Regime Consistency Score
+        total_trending_pnl = sum(regime_pnl['trending'])
+        total_ranging_pnl = sum(regime_pnl['ranging'])
+
+        # Normalize PnL by initial balance to make it comparable
+        norm_trending_pnl = total_trending_pnl / args.initial_balance if args.initial_balance else 0
+        norm_ranging_pnl = total_ranging_pnl / args.initial_balance if args.initial_balance else 0
+
+        regime_consistency_bonus = 0.0
+        # Basic check: reward if both are positive, penalize if one is positive and other is very negative
+        if norm_trending_pnl > 0 and norm_ranging_pnl > 0:
+            regime_consistency_bonus += 0.5 # Max bonus if both are profitable
+            # Further reward if they are somewhat balanced
+            if min(abs(norm_trending_pnl), abs(norm_ranging_pnl)) / (max(abs(norm_trending_pnl), abs(norm_ranging_pnl)) + 1e-6) > 0.25:
+                 regime_consistency_bonus += 0.5
+        elif (norm_trending_pnl > 0 and norm_ranging_pnl < -0.05 * abs(norm_trending_pnl)) or \
+             (norm_ranging_pnl > 0 and norm_trending_pnl < -0.05 * abs(norm_ranging_pnl)):
+            regime_consistency_bonus -= 0.5 # Penalize if one regime heavily subsidizes losses in another
+
+        # Score components (weights adjusted)
+        # 1. Risk-adjusted return component (35% weight)
+        risk_adj_return = returns / (max_dd + 0.05) # Add small constant to avoid division by zero
+        score += risk_adj_return * 0.35
+
+        # 2. Raw returns component (25% weight)
+        score += returns * 0.25
+
+        # 3. Regime Consistency Bonus (20% weight)
+        # regime_consistency_bonus is between -0.5 and 1.0.
+        # We want to scale this to contribute positively.
+        # Let's scale it: (bonus + 0.5) / 1.5 to get it into [0,1] range, then multiply by weight.
+        scaled_regime_consistency = (regime_consistency_bonus + 0.5) / 1.5
+        score += scaled_regime_consistency * 0.20
+
+        # 4. Profit factor bonus (10% weight)
         pf_bonus = 0.0
         if profit_factor > 1.0:
-            pf_bonus = min(profit_factor - 1.0, 2.0) * 0.1
-        score += pf_bonus
-        
-        # 4. Win rate component (10% weight)
-        win_rate_score = win_rate * 0.1
-        score += win_rate_score
+            # Scale profit factor: (PF - 1) capped at 2, then map to 0-1 for bonus component
+            pf_bonus_raw = min(profit_factor - 1.0, 2.0) / 2.0
+            pf_bonus = pf_bonus_raw
+        score += pf_bonus * 0.10
+
+        # 5. Win rate component (10% weight)
+        score += win_rate * 0.10 # win_rate is already 0-1
         
         return {
             'score': score,
@@ -216,7 +288,8 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             'profit_factor': profit_factor,
             'win_rate': win_rate,
             'total_trades': performance['total_trades'],
-            'metrics': performance
+            'metrics': performance,
+            'regime_consistency_metric': scaled_regime_consistency, # Store for analysis
         }
         
     except Exception as e:
@@ -271,6 +344,7 @@ def compare_models_on_full_dataset(current_model_path: str, previous_model_path:
     print(f"  Max DD: {previous_metrics['drawdown']*100:.2f}%")
     print(f"  PF: {previous_metrics['profit_factor']:.2f}")
     print(f"  Win Rate: {previous_metrics['win_rate']:.2f}%")
+    print(f"  Regime Consistency: {previous_metrics.get('regime_consistency_metric', 'N/A'):.2f}")
     
     # Compare scores
     return current_metrics['score'] > previous_metrics['score']
@@ -331,14 +405,35 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     total_iterations = (total_periods - initial_window) // step_size + 1
     
     state_path = f"../results/{args.seed}/training_state.json"
-    training_start, _, state = load_training_state(state_path)
-    
-    best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
-    if os.path.exists(best_model_path):
-        print(f"Resuming training from step {training_start} with best model")
-        model = PPO.load(best_model_path, device=args.device)
-    else:
-        print("Starting new training")
+    checkpoints_dir = os.path.join(f"../results/{args.seed}", "checkpoints")
+    os.makedirs(checkpoints_dir, exist_ok=True)
+
+    model = None
+    training_start, initial_model_path_from_state, state = load_training_state(state_path)
+    overall_best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip") # Renamed for clarity
+
+    if training_start > 0: # Resuming
+        # Try to load the model from the last iteration's checkpoint first
+        last_iter_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{training_start // step_size -1}.zip")
+        if os.path.exists(last_iter_checkpoint_path):
+            print(f"Resuming: Loading model from last iteration checkpoint: {last_iter_checkpoint_path}")
+            model = PPO.load(last_iter_checkpoint_path, device=args.device)
+        elif initial_model_path_from_state and os.path.exists(initial_model_path_from_state): # Fallback to model_path from state (overall_best_model_path)
+            print(f"Resuming: Loading model from state file (overall best): {initial_model_path_from_state}")
+            model = PPO.load(initial_model_path_from_state, device=args.device)
+        elif os.path.exists(overall_best_model_path): # Fallback to current overall_best_model_path
+            print(f"Resuming: Loading model from existing overall best model: {overall_best_model_path}")
+            model = PPO.load(overall_best_model_path, device=args.device)
+        else:
+            print(f"Resuming: No suitable model found to load for iteration {training_start // step_size}. Will create a new one.")
+            training_start = 0 # Effectively start fresh if no model can be loaded
+            model = None
+    else: # Starting new training
+        print("Starting new training.")
+        training_start = 0
+        model = None
+        # If best_model.zip exists from a previous unrelated run, we might want to ignore it or handle it.
+        # For now, a fresh start means a new model.
         training_start = 0
         model = None
     
@@ -401,8 +496,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             train_env = Monitor(TradingEnv(train_data, **env_params))
             val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
             
-            period_timesteps = base_timesteps
-            
+            if model is None:
+                print("\nPerforming initial training...")
+                period_timesteps = INITIAL_TIMESTEPS
             if model is None:
                 print("\nPerforming initial training...")
                 
@@ -414,7 +510,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     verbose=0,
                     device=args.device,
                     seed=args.seed,
-                    **MODEL_KWARGS
+                    **INITIAL_MODEL_KWARGS
                 )
                 
                 # Set up initial training callbacks
@@ -423,7 +519,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     CustomEpsilonCallback(
                         start_eps=1.0,
                         end_eps=0.1,
-                        decay_timesteps=int(args.total_timesteps * 0.7),
+                        decay_timesteps=int(period_timesteps * 0.7),
                         iteration=iteration
                     ),
                     # Evaluation and best model saving
@@ -437,42 +533,25 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                         deterministic=True,
                         verbose=1,
                         iteration=iteration,
-                        training_timesteps=args.total_timesteps
+                        training_timesteps=period_timesteps
                     )
                 ]
                 
                 # Train initial model
                 model.learn(
-                    total_timesteps=args.total_timesteps,
+                    total_timesteps=period_timesteps, # Initial training with full timesteps
                     callback=callbacks,
                     progress_bar=True,
-                    reset_num_timesteps=True
+                    reset_num_timesteps=True # Reset for the very first learning phase
                 )
-                
-                # Check if we found a best model during training
-                curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
-                best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
-                
-                # Update best model if better curr_best was found
-                if os.path.exists(curr_best_path):
-                    if os.path.exists(best_model_path):
-                        if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
-                            model = PPO.load(curr_best_path, device=args.device)
-                            model.save(best_model_path)
-                            print("\nCurrent best model outperformed previous - saved as best model")
-                        else:
-                            model = PPO.load(best_model_path, device=args.device)
-                            print("\nKeeping previous best model")
-                    else:
-                        model = PPO.load(curr_best_path, device=args.device)
-                        model.save(best_model_path)
-                        print("\nNo previous best model - using current best as first best model")
-                        
-                save_training_state(state_path, training_start + step_size, best_model_path)
-            else:
-                print(f"\nContinuing training with existing model...")
+                # Initial model is now trained, subsequent .learn() calls will be continuous.
+            else: # Continuing training with the existing, evolving model
+                print(f"\nContinuing training with existing model for iteration {iteration}...")
+                period_timesteps = ADAPTATION_TIMESTEPS
                 print(f"Training timesteps: {period_timesteps}")
-                args.learning_rate = args.learning_rate * 0.95
+
+                # Set adaptation hyperparameters
+                model.learning_rate = ADAPTATION_MODEL_KWARGS['learning_rate']
                 model.set_env(train_env)
                 
                 # Calculate base timesteps for this iteration
@@ -507,48 +586,48 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     total_timesteps=period_timesteps,
                     callback=callbacks,
                     progress_bar=True,
-                    reset_num_timesteps=True
+                    reset_num_timesteps=False # IMPORTANT: Continue learning from current state
                 )
-                
-                # Update timesteps in evaluation results
-                unified_callback = callbacks[1]  # The evaluation callback
-                for result in unified_callback.eval_results:
-                    result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
 
-            # Compare curr_best against best_model if it exists
-            curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
-            best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
-            
-            if os.path.exists(curr_best_path):
-                if os.path.exists(best_model_path):
-                    if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
-                        model = PPO.load(curr_best_path, device=args.device)
-                        model.save(best_model_path)
-                        print("\nCurrent best model outperformed previous - saved as best model")
-                    else:
-                        model = PPO.load(best_model_path, device=args.device)
-                        print("\nKeeping previous best model")
-                else:
-                    model = PPO.load(curr_best_path, device=args.device)
-                    model.save(best_model_path)
-                    print("\nNo previous best model - using current best as first best model")
-                    
-                # Clean up curr_best files
-                os.remove(curr_best_path)
-                metrics_path = curr_best_path.replace(".zip", "_metrics.json")
+                # Update timesteps in evaluation results (if callback structure requires it)
+                # unified_callback = callbacks[1]
+                # for result in unified_callback.eval_results:
+                #     result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
+
+            # Save checkpoint of the continuously evolving model
+            current_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{iteration}.zip")
+            model.save(current_checkpoint_path)
+            print(f"Saved iteration checkpoint: {current_checkpoint_path}")
+
+            # Logic for updating the overall_best_model_path
+            # UnifiedEvalCallback saves its best model from the validation window as "curr_best_model.zip"
+            curr_best_candidate_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
+
+            if os.path.exists(curr_best_candidate_path):
+                if not os.path.exists(overall_best_model_path) or \
+                   compare_models_on_full_dataset(curr_best_candidate_path, overall_best_model_path, data, args):
+                    # New overall best model found based on full dataset evaluation
+                    # Copy curr_best_candidate_path to overall_best_model_path
+                    # Note: This does NOT change the 'model' variable which continues to evolve.
+                    # We load and save to ensure it's a clean copy.
+                    temp_best_model = PPO.load(curr_best_candidate_path, device=args.device)
+                    temp_best_model.save(overall_best_model_path)
+                    print(f"\nOverall best model updated: {overall_best_model_path}")
+
+                # Clean up the temporary curr_best_model.zip and its metrics
+                os.remove(curr_best_candidate_path)
+                metrics_path = curr_best_candidate_path.replace(".zip", "_metrics.json")
                 if os.path.exists(metrics_path):
                     os.remove(metrics_path)
             else:
-                print("\nNo curr_best model found - reloading best model for next iteration")
-                if os.path.exists(best_model_path):
-                    model = PPO.load(best_model_path, device=args.device)
-                    print("Loaded best model from previous iterations")
-                else:
-                    print("No best model found - continuing with current model")
+                print("\nNo new candidate for overall best model from this iteration's validation.")
                 
             # Calculate iteration time and save state
             iteration_time = time.time() - iteration_start_time
-            save_training_state(state_path, training_start + step_size, best_model_path,
+            # The model_path saved in state should be the overall_best_model_path,
+            # as it's the most robust one for a potential full resume.
+            # However, for resuming the continuous flow, checkpoint_iter_X.zip is used.
+            save_training_state(state_path, training_start + step_size, overall_best_model_path,
                           iteration_time=iteration_time, total_iterations=total_iterations,
                           step_size=step_size)
             
@@ -557,11 +636,28 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
 
     except KeyboardInterrupt:
         print("\nTraining interrupted. Progress saved - use same command to resume.")
-        return model
+        # Save the current state of the evolving model upon interruption
+        if model:
+            interrupt_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_interrupt_iter_{iteration}.zip")
+            model.save(interrupt_checkpoint_path)
+            print(f"Saved interrupt checkpoint: {interrupt_checkpoint_path}")
+        return model # Return the current evolving model
 
-    # Load best model for return
-    best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
-    if os.path.exists(best_model_path):
-        model = PPO.load(best_model_path, device=args.device)
+    # At the end of all iterations, the 'model' variable holds the continuously evolved model.
+    # 'overall_best_model_path' points to the model that performed best on the full dataset.
+    # Decide which one to return as the "final" model.
+    # For continuous learning, the latest state of 'model' is often most relevant.
+    print(f"\nWalk-forward optimization completed.")
+    print(f"Final state of continuously evolved model is in memory (and last checkpoint).")
+    if os.path.exists(overall_best_model_path):
+        print(f"Overall best performing model on full dataset saved at: {overall_best_model_path}")
+        # Optionally, load and return the overall_best_model_path if that's preferred as the final output
+        # model = PPO.load(overall_best_model_path, device=args.device)
 
-    return model
+    # Save the final state of the continuously evolved model
+    final_evolving_model_path = os.path.join(f"../results/{args.seed}", "model_final_evolved.zip")
+    if model:
+        model.save(final_evolving_model_path)
+        print(f"Final state of continuously evolved model saved to: {final_evolving_model_path}")
+
+    return model # Return the continuously evolved model

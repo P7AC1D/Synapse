@@ -24,12 +24,12 @@ def main():
     
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=2500,
+    parser.add_argument('--initial_window', type=int, default=5000,
                       help='Initial training window size in bars')
-    parser.add_argument('--validation_size', type=float, default=0.2,
-                      help='Fraction of window to use for validation (default: 0.2)')
-    parser.add_argument('--step_size', type=int, default=500,
-                      help='Walk-forward step size in bars')
+    parser.add_argument('--validation_size', type=float, default=0.3,
+                      help='Fraction of window to use for validation (default: 0.3, research suggests 0.3-0.4)')
+    parser.add_argument('--step_size', type=int, default=1000,
+                      help='Walk-forward step size in bars (should be large enough for feature stability)')
     parser.add_argument('--balance_per_lot', type=float, default=500.0,
                       help='Account balance required per 0.01 lot')
     parser.add_argument('--random_start', action='store_true',
@@ -99,8 +99,14 @@ def main():
         return
     
     print("\nWalk-forward optimization completed.")
-    print(f"Final model saved at: ../results/{args.seed}/model_final.zip")
-    model.save(f"../results/{args.seed}/model_final.zip")
+    # The returned model is the continuously evolved one.
+    # The overall best performing model on the full dataset is saved as best_model.zip by train_walk_forward.
+    final_evolved_model_path = f"../results/{args.seed}/model_final_evolved.zip"
+    if model: # model could be None if training was interrupted very early
+        model.save(final_evolved_model_path)
+        print(f"Final state of continuously evolved model saved at: {final_evolved_model_path}")
+    else:
+        print("No model was returned from training, possibly due to early interruption.")
 
 if __name__ == "__main__":
     main()

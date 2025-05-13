@@ -180,11 +180,7 @@ class FeatureProcessor:
             # Validation
             if len(features_df) < 100:
                 raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
-            # Print feature samples for verification
-            print("\nFirst few rows of features:")
-            print(features_df.head().round(4))
-            print("\nLast few rows of features:")
-            print(features_df.tail().round(4))
+            
             return features_df, atr, features_df.index
         
     def get_feature_names(self) -> list:
