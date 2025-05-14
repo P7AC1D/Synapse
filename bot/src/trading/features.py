@@ -140,12 +140,15 @@ class FeatureProcessor:
             cos_time = np.cos(angle)
 
             # Price action features
-            body = close - opens
-            upper_wick = high - np.maximum(close, opens)
-            lower_wick = np.minimum(close, opens) - low
-            range_ = high - low + 1e-8
-            candle_pattern = (body/range_ + (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2
-            candle_pattern = np.clip(candle_pattern, -1, 1)
+            # Calculate percentage-based features
+            range_pct = (high - low) / close
+            upper_wick_pct = (high - np.maximum(close, opens)) / close
+            lower_wick_pct = (np.minimum(close, opens) - low) / close
+            
+            # Clip percentage features to reasonable ranges
+            range_pct = np.clip(range_pct, 0, 0.1)  # Max 10% range
+            upper_wick_pct = np.clip(upper_wick_pct, 0, 0.05)  # Max 5% wick
+            lower_wick_pct = np.clip(lower_wick_pct, 0, 0.05)  # Max 5% wick
             
             # Volatility breakout
             band_range = upper_band - lower_band
@@ -170,7 +173,9 @@ class FeatureProcessor:
                 'volume_change': volume_pct,
                 'volatility_breakout': volatility_breakout,
                 'trend_strength': np.clip(adx/25 - 1, -1, 1),  # Normalize ADX to [-1, 1] range
-                'candle_pattern': candle_pattern,
+                'range_pct': range_pct / 0.1,     # Scale [0, 0.1] to [0, 1]
+                'upper_wick_pct': upper_wick_pct / 0.05,  # Scale [0, 0.05] to [0, 1]
+                'lower_wick_pct': lower_wick_pct / 0.05,  # Scale [0, 0.05] to [0, 1]
                 'cos_time': cos_time,
                 'sin_time': sin_time,
                 # position_type and unrealized_pnl are added by the environment
@@ -192,7 +197,9 @@ class FeatureProcessor:
             'volume_change',    # [-1, 1] Volume percentage change
             'volatility_breakout', # [0, 1] Trend with volatility context
             'trend_strength',   # [-1, 1] ADX-based trend quality
-            'candle_pattern',   # [-1, 1] Combined price action signal
+            'range_pct',       # [0, 1] Relative candle size
+            'upper_wick_pct',  # [0, 1] Upper rejection
+            'lower_wick_pct',  # [0, 1] Lower rejection
             'cos_time',        # [-1, 1] Cosine encoding of time
             'sin_time',        # [-1, 1] Sine encoding of time
             'position_type',    # [-1, 0, 1] Current position
