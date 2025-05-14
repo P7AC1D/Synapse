@@ -16,7 +16,7 @@ class OnnxTradeModel:
     def __init__(self, model_path: str, is_recurrent: bool = False, hidden_size: int = 64, 
                  num_layers: int = 1, balance_per_lot: float = 1000.0, initial_balance: float = 10000.0,
                  point_value: float = 0.01, min_lots: float = 0.01, max_lots: float = 200.0,
-                 contract_size: float = 100.0):
+                 contract_size: float = 100.0, window_size: int = 50): # Added window_size
         """
         Initialize the ONNX trade model.
         
@@ -31,6 +31,7 @@ class OnnxTradeModel:
             min_lots: Minimum lot size (default: 0.01)
             max_lots: Maximum lot size (default: 200.0)
             contract_size: Standard contract size (default: 100.0)
+            window_size: Number of past timesteps for market features (default: 50)
         """
         self.logger = logging.getLogger(__name__)
         self.model_path = Path(model_path)
@@ -44,6 +45,7 @@ class OnnxTradeModel:
         self.min_lots = min_lots
         self.max_lots = max_lots
         self.contract_size = contract_size
+        self.window_size = window_size # Added window_size
         
         # For recurrent models, store LSTM states
         self.lstm_hidden = None
@@ -262,7 +264,8 @@ class OnnxTradeModel:
             max_lots=self.max_lots,
             contract_size=self.contract_size,
             spread_variation=spread_variation,
-            slippage_range=slippage_range
+            slippage_range=slippage_range,
+            window_size=self.window_size # Added window_size
         )
         
         # Initialize environment
@@ -326,7 +329,8 @@ class OnnxTradeModel:
                 point_value=self.point_value,
                 min_lots=self.min_lots,
                 max_lots=self.max_lots,
-                contract_size=self.contract_size
+                contract_size=self.contract_size,
+                window_size=self.window_size # Added window_size
             )
             # Initialize environment
             obs, _ = env.reset()

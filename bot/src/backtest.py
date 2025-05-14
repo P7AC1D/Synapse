@@ -468,7 +468,8 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                             spread_variation: float = 0.0,
                             slippage_range: float = 0.0,
                             balance_recheck_bars: int = 0,
-                            reset_states_on_gap: bool = False) -> Dict[str, Any]:
+                            reset_states_on_gap: bool = False,
+                            window_size: int = 50) -> Dict[str, Any]: # Added window_size
     """Run a backtest using the predict_single method to simulate the live trading process."""
     
     # Perform LSTM warmup if model supports it
@@ -487,7 +488,8 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
         min_lots=min_lots,
         max_lots=max_lots,
         contract_size=contract_size,
-        currency_conversion=currency_conversion
+        currency_conversion=currency_conversion,
+        window_size=window_size # Added window_size
     )
     obs, _ = env.reset()
     action_handler = env.action_handler
@@ -795,6 +797,8 @@ def main():
                       help='Log detailed feature values during prediction (only applicable with predict_single method)')
     parser.add_argument('--trades_log_path', type=str, default=None,
                       help='Directory path to store trade tracking logs (use with predict_single method)')
+    parser.add_argument('--window_size', type=int, default=50,
+                        help='Number of past timesteps for market features in observation (default: 50)')
     
     args = parser.parse_args()
     
@@ -858,7 +862,8 @@ def main():
                 point_value=args.point_value,
                 min_lots=args.min_lots,
                 max_lots=args.max_lots,
-                contract_size=args.contract_size
+                contract_size=args.contract_size,
+                window_size=args.window_size # Added for OnnxTradeModel if it uses it
             )
         else:
             print("Using standard PPO model")
@@ -868,7 +873,8 @@ def main():
                 point_value=args.point_value,
                 min_lots=args.min_lots,
                 max_lots=args.max_lots,
-                contract_size=args.contract_size
+                contract_size=args.contract_size,
+                window_size=args.window_size # Added window_size
             )
           # Run backtest based on selected method
         if args.method == 'predict_single':
@@ -890,7 +896,8 @@ def main():
                 slippage_range=args.slippage_range,
                 balance_recheck_bars=args.balance_recheck_bars,
                 trades_log_path=args.trades_log_path,
-                reset_states_on_gap=args.reset_states_on_gap
+                reset_states_on_gap=args.reset_states_on_gap,
+                window_size=args.window_size # Added window_size
             )
         else:  # method == 'evaluate' or args.quiet
             print("\nRunning quiet backtest with evaluate method...")
@@ -911,7 +918,8 @@ def main():
                     initial_balance=args.initial_balance,
                     balance_per_lot=args.balance_per_lot,
                     spread_variation=args.spread_variation,
-                    slippage_range=args.slippage_range
+                    slippage_range=args.slippage_range,
+                    window_size=args.window_size # Added window_size
                 )
             finally:
                 # Always stop the progress indicator

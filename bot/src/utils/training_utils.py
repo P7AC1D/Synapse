@@ -180,7 +180,8 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             point_value=args.point_value,
             min_lots=args.min_lots,
             max_lots=args.max_lots,
-            contract_size=args.contract_size
+            contract_size=args.contract_size,
+            window_size=args.window_size # Added window_size
         )
 
         # Start progress indicator
@@ -495,11 +496,12 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 'point_value': args.point_value,
                 'min_lots': args.min_lots,
                 'max_lots': args.max_lots,
-                'contract_size': args.contract_size
+                'contract_size': args.contract_size,
+                'window_size': args.window_size # Added window_size
             }
         
             train_env = Monitor(TradingEnv(train_data, **env_params))
-            val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
+            val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False})) # window_size is already in env_params
             
             if model is None:
                 print("\nPerforming initial training...")

@@ -41,7 +41,8 @@ class TradingEnv(gym.Env, EzPickle):
                  min_lots: float = 0.01, max_lots: float = 200.0,
                  contract_size: float = 100.0,
                  spread_variation: float = 0.0,
-                 slippage_range: float = 0.0):
+                 slippage_range: float = 0.0,
+                 window_size: int = 50):
 
         # Add hold time tracking
         self.current_hold_time = 0
@@ -58,9 +59,12 @@ class TradingEnv(gym.Env, EzPickle):
             min_lots: Minimum lot size (default: 0.01)
             max_lots: Maximum lot size (default: 200.0)
             contract_size: Standard contract size (default: 100.0 for Gold)
+            window_size: Number of past timesteps for market features (default: 50)
         """
         super().__init__()
         EzPickle.__init__(self)
+
+        self.window_size = window_size
         
         # Trading constants
         self.POINT_VALUE = point_value
@@ -98,13 +102,13 @@ class TradingEnv(gym.Env, EzPickle):
             data['volume'] = np.ones(len(data))
             
         # Process data and setup spaces
-        self.raw_data, self.atr_values, aligned_index = self.feature_processor.preprocess_data(data)
+        self.features_df, self.atr_values, aligned_index = self.feature_processor.preprocess_data(data) # Renamed self.raw_data to self.features_df
         self.action_space = spaces.Discrete(4)
-        self.observation_space = self.feature_processor.setup_observation_space()
+        self.observation_space = self.feature_processor.setup_observation_space(window_size=self.window_size)
         
         # Save aligned datetime index and data length
         self.original_index = aligned_index
-        self.data_length = len(self.raw_data)
+        self.data_length = len(self.features_df)
         
         # Store aligned price data
         self.prices = {
@@ -122,7 +126,10 @@ class TradingEnv(gym.Env, EzPickle):
         # State variables
         self.initial_balance = initial_balance
         self.random_start = random_start
-        self.current_step = 0
+        
+        # Adjust start_step to ensure enough data for the window
+        self.start_step = max(self.feature_processor.lookback, self.window_size -1) # -1 because window includes current step
+        self.current_step = self.start_step 
         self.episode_steps = 0
         self.completed_episodes = 0
         self.current_position = None
@@ -241,10 +248,15 @@ class TradingEnv(gym.Env, EzPickle):
             np.random.seed(seed)
             
         if self.random_start:
-            max_start = max(0, self.data_length - 100)
-            self.current_step = np.random.randint(0, max_start)
+            # Ensure random start respects the new self.start_step requirement
+            min_random_step = self.start_step
+            max_random_step = max(self.start_step, self.data_length - 100) # Ensure at least 100 steps for an episode
+            if min_random_step >= max_random_step: # Fallback if data is too short
+                 self.current_step = self.start_step
+            else:
+                 self.current_step = np.random.randint(min_random_step, max_random_step)
         else:
-            self.current_step = 0
+            self.current_step = self.start_step
             
         self.episode_steps = 0
         self.completed_episodes += 1
@@ -266,28 +278,49 @@ class TradingEnv(gym.Env, EzPickle):
         self.renderer.render_episode_stats(self)
         
     def get_observation(self) -> np.ndarray:
-        """Get current observation."""
-        # In predict context, we want the most recent data point
-        features = self.raw_data.values[-1] if self.predict_context else self.raw_data.values[self.current_step]
+        """Get current observation, including a window of past market features."""
         
+        # Define market feature columns (all except the last 3 position-related ones)
+        market_feature_names = self.feature_processor.get_feature_names()[:-3]
+        
+        if self.predict_context:
+            # For prediction, use the latest window_size market features available
+            # self.features_df contains all processed features up to the latest known data point
+            market_features_window = self.features_df[market_feature_names].values[-self.window_size:]
+            if len(market_features_window) < self.window_size: # Pad if not enough data
+                padding = np.zeros((self.window_size - len(market_features_window), len(market_feature_names)))
+                market_features_window = np.vstack((padding, market_features_window))
+        else:
+            # For backtesting/training, use data up to self.current_step
+            start_idx = self.current_step - self.window_size + 1
+            end_idx = self.current_step + 1
+            market_features_window = self.features_df[market_feature_names].iloc[start_idx:end_idx].values
+
+        # Flatten the window of market features
+        flattened_market_features = market_features_window.flatten()
+        
+        # Current position features
         position_type = self.current_position["direction"] if self.current_position else 0
         
         if self.current_position:
-            # For live trading, use position's profit if available
             if self.predict_context and "profit" in self.current_position:
                 unrealized_pnl = self.current_position["profit"]
             else:
-                # Fallback to calculating PnL for backtesting
                 unrealized_pnl, _ = self.action_handler.manage_position()
-            # Normalize unrealized PnL to be between -1 and 1 based on balance
-            normalized_pnl = np.clip(unrealized_pnl / self.metrics.balance, -1, 1)
+            # Ensure balance is not zero to avoid division by zero
+            current_balance = self.metrics.balance if self.metrics.balance != 0 else self.initial_balance
+            normalized_pnl = np.clip(unrealized_pnl / current_balance, -1, 1)
         else:
             normalized_pnl = 0.0
             
-        # Normalize hold time using TIME_PRESSURE_THRESHOLD
         normalized_hold_time = min(self.current_hold_time / self.reward_calculator.TIME_PRESSURE_THRESHOLD, 1.0) if self.current_position else 0.0
         
-        return np.append(features, [position_type, normalized_pnl, normalized_hold_time])
+        position_features = np.array([position_type, normalized_pnl, normalized_hold_time], dtype=np.float32)
+        
+        # Concatenate flattened market features with current position features
+        final_observation = np.concatenate((flattened_market_features, position_features))
+        
+        return final_observation
         
     def _get_info(self) -> Dict[str, Any]:
         """Get current environment information."""

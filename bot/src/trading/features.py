@@ -15,17 +15,23 @@ class FeatureProcessor:
         self.boll_period = 20
         self.lookback = max(self.boll_period, self.atr_period)
 
-    def setup_observation_space(self, feature_count: int = 12) -> spaces.Box:
-        """Setup observation space with proper feature bounds.
+    def setup_observation_space(self, window_size: int = 50) -> spaces.Box:
+        """Setup observation space with proper feature bounds for windowed input.
         
         Args:
-            feature_count: Number of features in observation space (default: 12)
+            window_size: Number of past timesteps to include for market features.
 
         Returns:
             Box space with feature bounds
         """
+        # Market features are all features except the last 3 (position_type, unrealized_pnl, hold_time)
+        num_market_features = len(self.get_feature_names()) - 3
+        num_position_features = 3
+        
+        total_features = (window_size * num_market_features) + num_position_features
+        
         return spaces.Box(
-            low=-1, high=1, shape=(feature_count,), dtype=np.float32
+            low=-1, high=1, shape=(total_features,), dtype=np.float32
         )
 
     def _calculate_indicators(self, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Tuple[np.ndarray, np.ndarray], np.ndarray]:
