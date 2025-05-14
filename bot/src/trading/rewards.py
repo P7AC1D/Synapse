@@ -13,126 +13,43 @@ class RewardCalculator:
             env: Trading environment instance
         """
         self.env = env
-        self.previous_balance_high = env.initial_balance
         self.trade_entry_balance = env.initial_balance  # Track balance at trade entry
-        self.last_direction = None  # Track trade direction for reversals
-        self.bars_since_consolidation = 0
-        self.min_hold_bars = 20  # Minimum bars for long hold reward
-        self.consolidation_threshold = 0.0015  # BB width threshold for consolidation
-        
-        # Track max unrealized profit for each trade
-        self.max_unrealized_pnl = 0.0
         
         # Reward constants
         self.INVALID_ACTION_PENALTY = -1.0  # Penalty for invalid actions
-        self.GOOD_HOLD_REWARD = 0.2   # Base reward for holding profitable positions
-        self.LOSING_HOLD_PENALTY = -0.1  # Penalty for holding losing positions
-        self.TIME_PRESSURE_THRESHOLD = 100  # Bars before time pressure kicks in
+        self.TRANSACTION_COST = 0.0005  # 5 basis points per trade
+        self.TIME_STEP_COST = 0.00001  # Reduced time step cost (was 0.0001)
+        self.TIME_PRESSURE_THRESHOLD = 100  # Needed for environment observation scaling
         
-    def _is_market_flat(self) -> bool:
-        """Check if market is in consolidation based on volatility breakout."""
-        current_idx = self.env.current_step
-        # volatility_breakout close to 0.5 indicates price near middle of range
-        # values between 0.4-0.6 suggest consolidation
-        # Access features_df instead of raw_data
-        # Ensure current_idx is valid for features_df.iloc
-        # features_df is indexed from 0 to data_length - 1.
-        # current_step in TradingEnv can range from start_step to data_length - 1.
-        # The features_df in TradingEnv is already aligned and sliced by FeatureProcessor.
-        # So, current_idx should directly map to an index in self.env.features_df
-        volatility_breakout = self.env.features_df['volatility_breakout'].iloc[current_idx]
-        return 0.4 <= volatility_breakout <= 0.6
-        
-    def _is_successful_reversal(self, position_type: int, pnl: float) -> bool:
-        """Check if a trade reversal was successful."""
-        if self.last_direction is None or position_type == 0:
-            return False
-            
-        is_reversal = (
-            (position_type == 1 and self.last_direction == 2) or
-            (position_type == 2 and self.last_direction == 1)
-        )
-        
-        return is_reversal and pnl > 0
-
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, current_hold: int,
                         optimal_hold: Optional[int] = None,
                         invalid_action: bool = False) -> float:
-        """Calculate rewards combining sparse and scaled components."""
+        """Calculate rewards using a simplified approach focused on PnL."""
         # Handle invalid actions first
         if invalid_action:
             return self.INVALID_ACTION_PENALTY
             
-        reward = 0.0
+        reward = -self.TIME_STEP_COST  # Small negative reward per timestep
         
-        # Position management rewards
-        if position_type != 0:  # If we have an open position
-            # Update max unrealized PnL
-            if pnl > self.max_unrealized_pnl:
-                self.max_unrealized_pnl = pnl
-            else:
-                # Penalty for giving back profits
-                profit_drawdown = (self.max_unrealized_pnl - pnl) / self.trade_entry_balance
-                reward -= profit_drawdown * 0.5
+        # Transaction cost for new trades
+        if action in [Action.BUY, Action.SELL]:
+            reward -= self.TRANSACTION_COST
+            self.trade_entry_balance = self.env.balance
             
-            if action == Action.HOLD:
-                if pnl > 0:
-                    # Decay the hold reward over time
-                    hold_decay = max(0.2, 1.0 - (current_hold / 100))
-                    reward += self.GOOD_HOLD_REWARD * hold_decay
-                else:
-                    # Penalty for holding losing positions
-                    reward += self.LOSING_HOLD_PENALTY
-                    
-                # Add time pressure after threshold
-                if current_hold > self.TIME_PRESSURE_THRESHOLD:
-                    reward -= 0.01 * (current_hold - self.TIME_PRESSURE_THRESHOLD) / 100
-                    
-            elif action == Action.CLOSE:
-                # Sparse direction reward
-                reward += 1.0 if pnl > 0 else -1.0
-                
-                # Scaled PnL component
-                reward += pnl / self.trade_entry_balance
-                
-                # Track direction for reversals
-                self.last_direction = position_type
-                
-                # Reset max unrealized PnL
-                self.max_unrealized_pnl = 0.0
-                
-                # Reversal bonus (removed long hold bonus to discourage excessive holding)
-                if self._is_successful_reversal(position_type, pnl):
-                    reward += 1.0
-        else:  # No position open
-            # Update trade entry balance and reset max unrealized PnL for new positions
-            if action in [Action.BUY, Action.SELL]:
-                self.trade_entry_balance = self.env.balance
-                self.max_unrealized_pnl = 0.0
-                
-            # Reward for staying out during consolidation
-            if action == Action.HOLD:
-                if self._is_market_flat():
-                    reward += 0.1
-                    self.bars_since_consolidation = 0
-                else:
-                    self.bars_since_consolidation += 1
-                    
-        # New Balance High bonus (applies to all situations)
-        if self.env.balance > self.previous_balance_high:
-            reward += 1.0
-            self.previous_balance_high = self.env.balance
+        # Core PnL reward on position close
+        elif action == Action.CLOSE and position_type != 0:
+            # Scaled PnL component with slightly higher weight
+            reward += 1.5 * (pnl / self.trade_entry_balance)  # Increased from 1.0 to 1.5
+            # Transaction cost for closing
+            reward -= self.TRANSACTION_COST
         
         return float(reward)
 
     def calculate_terminal_reward(self, balance: float, initial_balance: float) -> float:
         """Calculate reward for terminal state."""
         if balance <= 0:
-            return -20.0  # Severe bankruptcy penalty
+            return -5.0  # Bankruptcy penalty
         
-        # End of episode bonus
-        if balance > initial_balance:
-            return 10.0
-        
-        return 0.0
+        # End of episode reward based on total return
+        return (balance - initial_balance) / initial_balance
