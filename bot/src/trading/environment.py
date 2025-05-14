@@ -42,6 +42,9 @@ class TradingEnv(gym.Env, EzPickle):
                  contract_size: float = 100.0,
                  spread_variation: float = 0.0,
                  slippage_range: float = 0.0):
+
+        # Add hold time tracking
+        self.current_hold_time = 0
         """Initialize trading environment.
         
         Args:
@@ -281,7 +284,10 @@ class TradingEnv(gym.Env, EzPickle):
         else:
             normalized_pnl = 0.0
             
-        return np.append(features, [position_type, normalized_pnl])
+        # Normalize hold time using TIME_PRESSURE_THRESHOLD
+        normalized_hold_time = min(self.current_hold_time / self.reward_calculator.TIME_PRESSURE_THRESHOLD, 1.0) if self.current_position else 0.0
+        
+        return np.append(features, [position_type, normalized_pnl, normalized_hold_time])
         
     def _get_info(self) -> Dict[str, Any]:
         """Get current environment information."""

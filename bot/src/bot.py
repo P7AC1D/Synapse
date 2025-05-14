@@ -111,7 +111,8 @@ class TradingBot:
                     "lot_size": position.volume,
                     "entry_step": 0,  # Will be updated in trading cycle
                     "entry_time": str(position.time),
-                    "profit": position.profit  # Get profit directly from MT5
+                    "profit": position.profit,  # Get profit directly from MT5
+                    "hold_time": 0  # Initialize hold time
                 }
                 
             # Case 3: Both have positions - verify details match
@@ -127,10 +128,13 @@ class TradingBot:
                     f"Profit: {self.current_position.get('profit', 0.0):.2f} -> {position.profit:.2f}"
                 )
                 
+                # Increment hold time with each new bar
+                hold_time = self.current_position.get("hold_time", 0) + 1
                 self.current_position.update({
                     "direction": mt5_direction,
                     "lot_size": position.volume,
-                    "profit": position.profit  # Also update profit from MT5
+                    "profit": position.profit,  # Also update profit from MT5
+                    "hold_time": hold_time  # Update hold time
                 })
             
         except Exception as e:
@@ -458,7 +462,8 @@ class TradingBot:
                         "entry_price": current_price,
                         "lot_size": self.trade_executor.last_lot_size,
                         "entry_step": len(data_for_prediction) - 1,
-                        "entry_time": str(data_for_prediction.index[-1])
+                        "entry_time": str(data_for_prediction.index[-1]),
+                        "hold_time": 0  # Initialize hold time for new positions
                     }
                     # Log trade entry with features
                     self.trade_tracker.log_trade_entry(
