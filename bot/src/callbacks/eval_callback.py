@@ -72,9 +72,13 @@ class UnifiedEvalCallback(BaseCallback):
         
         # Back up raw data for reference
         if hasattr(self.eval_env, 'env'):
-            self.eval_env.env.raw_data_backup = self.eval_env.env.raw_data.copy()
+            # Assuming TradingEnv has features_df attribute after preprocessing
+            if hasattr(self.eval_env.env, 'features_df'):
+                self.eval_env.env.features_df_backup = self.eval_env.env.features_df.copy()
         else:
-            self.eval_env.raw_data_backup = self.eval_env.raw_data.copy()
+            # Assuming TradingEnv has features_df attribute after preprocessing
+            if hasattr(self.eval_env, 'features_df'):
+                self.eval_env.features_df_backup = self.eval_env.features_df.copy()
             
     def _run_eval_episode(self, env, eval_seed: int = None, start_pos: int = None) -> Dict[str, float]:
         """Run a complete evaluation episode on given environment."""
@@ -334,7 +338,7 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"  Return: {metrics['return']*100:.2f}%")
                 print(f"  Max Drawdown: {performance['max_drawdown_pct']:.2f}% ({performance['max_equity_drawdown_pct']:.2f}%)")
                 print(f"  Total Reward: {metrics['reward']:.2f}")
-                print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
+                print(f"  Steps Completed: {env.env.current_step:,d} / {env.env.data_length:,d}")
                 
                 # Training Metrics
                 try:
@@ -411,7 +415,7 @@ class UnifiedEvalCallback(BaseCallback):
                     "win_rate": performance['win_rate'],
                     "total_trades": len(metrics['trades']),
                     "steps_completed": env.env.current_step,
-                    "total_steps": len(env.env.raw_data),
+                    "total_steps": env.env.data_length,
                     "total_reward": metrics['reward']
                 }
 

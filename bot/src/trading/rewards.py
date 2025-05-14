@@ -34,7 +34,13 @@ class RewardCalculator:
         current_idx = self.env.current_step
         # volatility_breakout close to 0.5 indicates price near middle of range
         # values between 0.4-0.6 suggest consolidation
-        volatility_breakout = self.env.raw_data['volatility_breakout'].iloc[current_idx]
+        # Access features_df instead of raw_data
+        # Ensure current_idx is valid for features_df.iloc
+        # features_df is indexed from 0 to data_length - 1.
+        # current_step in TradingEnv can range from start_step to data_length - 1.
+        # The features_df in TradingEnv is already aligned and sliced by FeatureProcessor.
+        # So, current_idx should directly map to an index in self.env.features_df
+        volatility_breakout = self.env.features_df['volatility_breakout'].iloc[current_idx]
         return 0.4 <= volatility_breakout <= 0.6
         
     def _is_successful_reversal(self, position_type: int, pnl: float) -> bool:
