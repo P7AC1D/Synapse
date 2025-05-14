@@ -17,7 +17,7 @@ class RewardCalculator:
         self.trade_entry_balance = env.initial_balance  # Track balance at trade entry
         self.last_direction = None  # Track trade direction for reversals
         self.bars_since_consolidation = 0
-        self.min_hold_bars = 50  # Minimum bars for long hold reward
+        self.min_hold_bars = 20  # Minimum bars for long hold reward
         self.consolidation_threshold = 0.0015  # BB width threshold for consolidation
         
         # Track max unrealized profit for each trade
@@ -25,9 +25,9 @@ class RewardCalculator:
         
         # Reward constants
         self.INVALID_ACTION_PENALTY = -1.0  # Penalty for invalid actions
-        self.GOOD_HOLD_REWARD = 0.3   # Base reward for holding profitable positions
-        self.LOSING_HOLD_PENALTY = -0.2  # Penalty for holding losing positions
-        self.TIME_PRESSURE_THRESHOLD = 50  # Bars before time pressure kicks in
+        self.GOOD_HOLD_REWARD = 0.2   # Base reward for holding profitable positions
+        self.LOSING_HOLD_PENALTY = -0.1  # Penalty for holding losing positions
+        self.TIME_PRESSURE_THRESHOLD = 100  # Bars before time pressure kicks in
         
     def _is_market_flat(self) -> bool:
         """Check if market is in consolidation based on volatility breakout."""
