@@ -27,7 +27,8 @@ from trading.environment import TradingEnv
 import torch as th
 
 from callbacks.epsilon_callback import CustomEpsilonCallback
-from callbacks.eval_callback import UnifiedEvalCallback
+from callbacks.eval_callback import ValidationCallback
+from utils.model_evaluator import ModelEvaluator
 
 # Model architecture configuration
 POLICY_KWARGS = {
@@ -530,6 +531,37 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                             **ADAPTATION_MODEL_KWARGS
                         )
                 
+            # Setup iteration directories
+            iteration_dir = os.path.join(f"../results/{args.seed}", f"iteration_{iteration}")
+            os.makedirs(iteration_dir, exist_ok=True)
+            
+            # Initialize model evaluator for this iteration
+            evaluator = ModelEvaluator(
+                save_path=f"../results/{args.seed}",
+                device=args.device,
+                verbose=1
+            )
+            
+            # Setup callbacks
+            callbacks = [
+                # Exploration callback
+                CustomEpsilonCallback(
+                    start_eps=1.0 if model is None else 0.25,
+                    end_eps=0.1 if model is None else 0.01,
+                    decay_timesteps=int(period_timesteps * 0.7),
+                    iteration=iteration
+                ),
+                # Validation callback
+                ValidationCallback(
+                    eval_env=val_env,
+                    eval_freq=args.eval_freq,
+                    model_save_path=iteration_dir,
+                    deterministic=True,
+                    verbose=1,
+                    iteration=iteration
+                )
+            ]
+
             if model is None:
                 # Create new model if no warm start or warm start failed
                 print("Creating new model with initial hyperparameters...")
@@ -542,35 +574,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     seed=args.seed,
                     **INITIAL_MODEL_KWARGS
                 )
-                
-            # Set up callbacks with test environment
-            iteration_dir = os.path.join(f"../results/{args.seed}", f"iteration_{iteration}")
-            os.makedirs(iteration_dir, exist_ok=True)
-            
-            callbacks = [
-                # Exploration with initial high epsilon
-                CustomEpsilonCallback(
-                    start_eps=1.0 if model is None else 0.25,
-                    end_eps=0.1 if model is None else 0.01,
-                    decay_timesteps=int(period_timesteps * 0.7),
-                    iteration=iteration
-                ),
-                # Evaluation with test set
-                UnifiedEvalCallback(
-                    eval_env=val_env,
-                    test_env=test_env,
-                    train_data=train_data,
-                    val_data=val_data,
-                    test_data=test_data,
-                    best_model_save_path=iteration_dir,
-                    log_path=iteration_dir,
-                    eval_freq=args.eval_freq,
-                    deterministic=True,
-                    verbose=1,
-                    iteration=iteration,
-                    training_timesteps=period_timesteps
-                )
-            ]
                 
             # Set training parameters based on warm start and model state
             is_new_model = model is None
@@ -613,6 +616,23 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 total_iterations=total_iterations,
                 step_size=step_size
             )
+            
+            # Post-training evaluation on test set
+            print("\nPerforming final evaluation on test set...")
+            eval_results = evaluator.select_best_model(
+                model=model,
+                val_env=val_env,
+                test_env=test_env,
+                iteration=iteration,
+                is_final_eval=True
+            )
+            
+            if 'test' in eval_results:
+                evaluator.print_evaluation_metrics(
+                    eval_results['test'],
+                    phase="Test",
+                    timestep=model.num_timesteps
+                )
             
             # Move to next iteration
             training_start += step_size
