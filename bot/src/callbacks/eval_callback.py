@@ -88,22 +88,6 @@ class ValidationCallback(BaseCallback):
         win_rate = metric_data['win_rate']  # Already in decimal form
         trades = len(metric_data['trades'])
         
-        # Quick validation checks with debug info
-        if returns <= 0:
-            if self.verbose > 0:
-                print(f"\nScore is -inf because returns ({returns:.2%}) <= 0")
-            return float('-inf')
-            
-        if max_dd > 0.15:
-            if self.verbose > 0:
-                print(f"\nScore is -inf because max drawdown ({max_dd:.2%}) > 15%")
-            return float('-inf')
-            
-        if trades < 10:
-            if self.verbose > 0:
-                print(f"\nScore is -inf because trade count ({trades}) < 10")
-            return float('-inf')
-        
         # Simple scoring based on risk-adjusted returns
         score = returns / (max_dd + 0.05)  # Add small constant to avoid division by zero
         
@@ -132,8 +116,6 @@ class ValidationCallback(BaseCallback):
                 timestep=self.num_timesteps,
                 model=self.model
             )
-            # Print score separately since it's validation-specific
-            print(f"\nValidation Score: {score:.4f}")
             
             # Save if improved
             if score > self.best_val_score:
@@ -142,6 +124,7 @@ class ValidationCallback(BaseCallback):
                     path = os.path.join(self.model_save_path, f"checkpoint_iter_{self.iteration}.zip")
                     self.model.save(path)
                     print(f"\nNew best validation model saved: {path}")
+                    print(f"\nValidation Score: {score:.4f}")
             
             self.last_time_trigger = self.n_calls
             
