@@ -64,6 +64,8 @@ class UnifiedEvalCallback(BaseCallback):
             env.env.current_step = start_pos
         obs, _ = env.reset(seed=eval_seed)
         done = False
+        running_balance = env.env.initial_balance
+        max_balance = running_balance
         episode_reward = 0
         
         while not done:
@@ -79,8 +81,6 @@ class UnifiedEvalCallback(BaseCallback):
         # Get comprehensive metrics from MetricsTracker
         performance = env.env.metrics.get_performance_summary()
         trade_metrics = env.env.trade_metrics
-
-        # Use performance summary directly
         return {
             'return': performance['return_pct'] / 100,
             'max_balance_drawdown': performance['max_drawdown_pct'] / 100,
@@ -95,7 +95,7 @@ class UnifiedEvalCallback(BaseCallback):
             'profit_factor': performance['profit_factor'],
             'unrealized_pnl': env.env.metrics.current_unrealized_pnl
         }
-        
+
     def _calculate_score(self, metrics: Dict[str, float]) -> float:
         """
         Calculate model performance score using financial DRL evaluation criteria.
@@ -123,7 +123,7 @@ class UnifiedEvalCallback(BaseCallback):
                 trade_pnls = [0]
                 
             avg_trade = np.mean(trade_pnls)
-            trade_std = np.std(trade_pnls) if len(trade_pnls) > 1 else 0.0
+            trade_std = np.std(trade_pnls) if len(trade_pnls) > 1 else 0.0   
         else:
             avg_trade = 0.0
             trade_std = 0.0
@@ -137,12 +137,12 @@ class UnifiedEvalCallback(BaseCallback):
             win_rate < 0.40       # Minimum win rate
         ]):
             return float('-inf')
-              # 1. Sortino Ratio (30% weight)
+        
+        # 1. Sortino Ratio (30% weight)
         # Only consider downside deviation
         losing_trades = []
         if 'trade_pnls' in metrics['metrics'] and metrics['metrics']['trade_pnls']:
             losing_trades = [t for t in metrics['metrics']['trade_pnls'] if t < 0]
-            
         downside_std = np.std(losing_trades) if losing_trades else 0.001
         sortino_ratio = returns / (downside_std + 0.001)
         score = min(sortino_ratio, 4.0) / 4.0 * 0.30  # Cap at 4.0
@@ -226,13 +226,13 @@ class UnifiedEvalCallback(BaseCallback):
         # Reject if not enough trades or too short test period
         if test_metrics['metrics']['total_trades'] < min_trades or test_period_days < 30:
             return False
-            
+        
         # Check for improvement with higher threshold
         if test_score > self.best_test_score * 1.05:  # Require 5% improvement
             self.best_test_score = test_score
             self.best_metrics = metrics
             return True
-            
+        
         return False
     
     def _on_step(self) -> bool:
@@ -248,7 +248,6 @@ class UnifiedEvalCallback(BaseCallback):
             print(f"  Max Drawdown: {performance['max_drawdown_pct']:.2f}% ({performance['max_equity_drawdown_pct']:.2f}%)")
             print(f"  Total Reward: {metrics['reward']:.2f}")
             print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
-            
             # Training Metrics
             try:
                 # Debug logging at a finer level
@@ -270,7 +269,6 @@ class UnifiedEvalCallback(BaseCallback):
                     "learning_rate": float(self.model.logger.name_to_value.get('train/learning_rate', 0.0)),
                     "n_updates": int(self.model.logger.name_to_value.get('train/n_updates', 0))
                 }
-                
                 print("\n  Network Stats:")
                 print(f"    Value Network:")
                 print(f"      Loss: {training_stats['value_loss']:.4f}")
@@ -300,7 +298,6 @@ class UnifiedEvalCallback(BaseCallback):
                     "learning_rate": 0.0,
                     "n_updates": 0
                 }
-            
             # Performance Metrics
             print("\n  Performance Metrics:")
             print(f"    Total Trades: {performance['total_trades']} ({performance['win_rate']:.2f}% win)")
@@ -309,7 +306,6 @@ class UnifiedEvalCallback(BaseCallback):
             print(f"    Long Trades: {performance['long_trades']} ({performance['long_win_rate']:.1f}% win)")
             print(f"    Short Trades: {performance['short_trades']} ({performance['short_win_rate']:.1f}% win)")
             print(f"    Profit Factor: {performance['profit_factor']:.2f}")
-
             # Group metrics into categories
             account_stats = {
                 "balance": metrics['balance'],
@@ -319,7 +315,6 @@ class UnifiedEvalCallback(BaseCallback):
                 "max_dd": performance['max_drawdown_pct'],
                 "max_equity_dd": performance['max_equity_drawdown_pct']
             }
-
             trading_stats = {
                 "win_rate": performance['win_rate'],
                 "total_trades": len(metrics['trades']),
@@ -327,7 +322,6 @@ class UnifiedEvalCallback(BaseCallback):
                 "total_steps": len(env.env.raw_data),
                 "total_reward": metrics['reward']
             }
-
             performance_stats = {
                 "total_trades": performance['total_trades'],
                 "average_win": performance['avg_win'],
@@ -343,7 +337,6 @@ class UnifiedEvalCallback(BaseCallback):
                 "win_hold_time": performance['win_hold_time'],
                 "loss_hold_time": performance['loss_hold_time']
             }
-
             return {
                 "name": name,
                 "account": account_stats,
@@ -351,16 +344,15 @@ class UnifiedEvalCallback(BaseCallback):
                 "performance": performance_stats,
                 "training": training_stats
             }
-            
         """Execute evaluation steps."""
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
             # Run evaluation
             is_final_eval = self.num_timesteps >= self.training_timesteps - self.eval_freq
             metrics = self._evaluate_performance(is_final_eval)
-            val_metrics = get_detailed_metrics(self.eval_env, "Validation Results", metrics)
+            val_metrics = get_detailed_metrics(self.eval_env, "Validation Results", metrics['validation'])
             
             if is_final_eval:
-                test_metrics = get_detailed_metrics(self.test_env, "Test Results", metrics)
+                test_metrics = get_detailed_metrics(self.test_env, "Test Results", metrics['test'])
             
             # Save if performance improved
             if self._should_save_model(metrics, is_final_eval):
@@ -368,7 +360,6 @@ class UnifiedEvalCallback(BaseCallback):
                 save_path = os.path.join(self.best_model_save_path,
                                        "best_test_model.zip" if is_final_eval else "curr_best_model.zip")
                 self.model.save(save_path)
-                
                 # Save metrics
                 metrics_path = save_path.replace(".zip", "_metrics.json")
                 with open(metrics_path, 'w') as f:
