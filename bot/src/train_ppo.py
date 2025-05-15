@@ -13,7 +13,10 @@ from sb3_contrib.ppo_recurrent import RecurrentPPO
 import torch as th
 from datetime import datetime
 
-from utils.training_utils import save_training_state, load_training_state, train_walk_forward
+from utils.training_utils import (
+    save_training_state, load_training_state, train_walk_forward, 
+    calculate_timesteps, TRAINING_PASSES
+)
 
 def main():
     parser = argparse.ArgumentParser(description='Train a Recurrent PPO-LSTM model for trading with walk-forward optimization')    
@@ -28,14 +31,14 @@ def main():
     # Training window parameters
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=5000,
-                      help='Initial training window size in bars')
-    parser.add_argument('--test_window', type=int, default=5000,
-                      help='Test window size in bars (default: same as training window)')
-    parser.add_argument('--train_split', type=float, default=0.7,
-                      help='Fraction of window to use for training vs validation (default: 0.7)')
-    parser.add_argument('--step_size', type=int, default=1000,
-                      help='Walk-forward step size in bars (should be large enough for feature stability)')
+    parser.add_argument('--initial_window', type=int, default=4320,
+                      help='Initial window size in bars (default: 9 weeks of 15-min bars)')
+    parser.add_argument('--test_window', type=int, default=480,
+                      help='Test window size in bars (default: 1 week of 15-min bars)')
+    parser.add_argument('--validation_size', type=float, default=0.25,
+                      help='Fraction of window to use for validation (default: 0.25)')
+    parser.add_argument('--step_size', type=int, default=240,
+                      help='Walk-forward step size in bars (default: 1 week of 15-min bars)')
     parser.add_argument('--balance_per_lot', type=float, default=500.0,
                       help='Account balance required per 0.01 lot')
     parser.add_argument('--random_start', action='store_true',
@@ -43,12 +46,13 @@ def main():
     
     # Warm start parameters
     parser.add_argument('--warm_start', action='store_true',
-                      help='Use best model from previous iteration as starting point')
+                      help='Enable continuous learning across walk-forward iterations by using the best performing model from previous test window')
     parser.add_argument('--initial_model', type=str,
-                      help='Path to initial model for first iteration warm start')
+                      help='Path to pre-trained model to start the first iteration (only used if warm_start=True)')
     
-    parser.add_argument('--total_timesteps', type=int, default=100000,
-                      help='Total timesteps for training')
+    # Training iteration control
+    parser.add_argument('--train_passes', type=int, default=30,
+                      help='Number of passes through each training window (default: 30)')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=5e-5,
@@ -86,28 +90,27 @@ def main():
     if not isinstance(data.index, pd.DatetimeIndex):
         data.index = pd.to_datetime(data.index)
     
-    # Calculate window sizes - using bars directly
-    initial_window = args.initial_window
+    # Display window configuration (15-min bars)
+    bars_per_day = 96  # 24 hours * 4 bars per hour for 15-min data
+    val_size = int(args.initial_window * args.validation_size)
+    train_size = args.initial_window - val_size
     
-    # Calculate step size as 10% of window size if using default
-    step_size = args.step_size
-    if step_size == 672:  # If using default value
-        step_size = max(int(initial_window * 0.1), step_size)
-    
-    # Display window configuration with approximate days
-    bars_per_day = 24 * 4  # For displaying approximate days
-    val_size = int(initial_window * args.validation_size)
-    train_size = initial_window - val_size
-    
-    print(f"\nWindow Configuration:")
-    print(f"Initial Window: {initial_window} bars (~{initial_window/bars_per_day:.1f} days)")
-    print(f"Step Size: {step_size} bars (~{step_size/bars_per_day:.1f} days)")
-    print(f"Training Window: {train_size} bars (~{train_size/bars_per_day:.1f} days)")
-    print(f"Validation Window: {val_size} bars (~{val_size/bars_per_day:.1f} days)")
-    print(f"Training/Validation Split: {(1-args.validation_size):.0%}/{args.validation_size:.0%}\n")
+    print(f"\nWindow Configuration (15-min bars):")
+    print(f"Training Window: {train_size} bars ({train_size/bars_per_day:.1f} days)")
+    print(f"Validation Window: {val_size} bars ({val_size/bars_per_day:.1f} days)")
+    print(f"Test Window: {args.test_window} bars ({args.test_window/bars_per_day:.1f} days)")
+    print(f"Step Size: {args.step_size} bars ({args.step_size/bars_per_day:.1f} days)\n")
         
+    # Set training passes from args or default
+    args.train_passes = args.train_passes or TRAINING_PASSES
+
     try:
-        model = train_walk_forward(data, initial_window, step_size, args)
+        model = train_walk_forward(
+            data=data,
+            initial_window=args.initial_window,
+            step_size=args.step_size,
+            args=args
+        )
     except KeyboardInterrupt:
         print("\nTraining interrupted. Progress has been saved.")
         return

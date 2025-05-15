@@ -47,10 +47,34 @@ POLICY_KWARGS = {
     }
 }
 
-# Initial training hyperparameters
-# Training timesteps configuration
-INITIAL_TIMESTEPS = 100000        # Full timesteps for initial training
-ADAPTATION_TIMESTEPS = 50000      # Reduced timesteps for adaptation phases
+# Walk-forward optimization configuration
+TRAINING_PASSES = 30    # Number of passes through each window's data during training
+
+def calculate_timesteps(window_size: int) -> int:
+    """
+    Calculate training timesteps for current window.
+    
+    In walk-forward optimization, each iteration uses a window of data.
+    The model needs multiple passes through this window to learn effectively.
+    Each pass means seeing every bar in the window once.
+    
+    Example:
+    - Window: 2880 bars (6 weeks of 15-min data)
+    - Passes: 30 (each bar is seen 30 times during training)
+    - Result: 2880 * 30 = 86,400 total training steps
+    
+    This ensures:
+    1. Sufficient learning from the data
+    2. Stable convergence through multiple passes
+    3. Consistent training effort across different window sizes
+    
+    Args:
+        window_size: Number of bars in current training window
+        
+    Returns:
+        Total timesteps for training on current window
+    """
+    return window_size * TRAINING_PASSES
 
 # Initial training hyperparameters
 INITIAL_MODEL_KWARGS = {
@@ -68,25 +92,30 @@ INITIAL_MODEL_KWARGS = {
     "use_sde": False              # No stochastic dynamics
 }
 
-# Adaptation phase hyperparameters (for continuous learning)
-# Adaptation phase hyperparameters (for continuous learning)
+# Market regime adaptation hyperparameters based on financial DRL research
 ADAPTATION_MODEL_KWARGS = {
-    "learning_rate": 1e-4,       # Further reduce
-    "batch_size": 512,           # Larger batches
-    "n_steps": 4096,            # Longer sequences
-    "n_epochs": 8,              # Fewer epochs
-    "clip_range": 0.15,         # Wider clip
-    "ent_coef": 0.02,          # Lower entropy
-    "gae_lambda": 0.92,        # Lower lambda
-    "max_grad_norm": 0.3,      # Add gradient clipping
-    "gamma": 0.99,             # Keep high gamma for sparse rewards
-    "clip_range_vf": 0.15,     # Match policy clipping
-    "vf_coef": 1.0,           # Keep higher value importance
-    "use_sde": False          # No stochastic dynamics
+    "learning_rate": 2.5e-4,     # Higher LR for faster adaptation to regime changes
+    "batch_size": 256,           # Smaller batches for more frequent updates
+    "n_steps": 1024,            # Balance between stability and adaptability
+    "n_epochs": 10,             # More epochs for thorough regime learning
+    "clip_range": 0.2,          # Standard PPO clip for stability
+    "ent_coef": 0.01,           # Lower entropy to exploit learned strategies
+    "gae_lambda": 0.95,         # Higher lambda for better advantage estimation
+    "max_grad_norm": 0.5,       # Conservative gradient clipping
+    "gamma": 0.99,              # Standard discount for trading
+    "clip_range_vf": 0.2,       # Match policy clipping
+    "vf_coef": 0.5,            # Balance between value and policy learning
+    "use_sde": True,           # Enable state-dependent exploration for regime shifts
+    "sde_sample_freq": 4       # Sample new noise every 4 steps for stable exploration
 }
 
-# Set MODEL_KWARGS to INITIAL_MODEL_KWARGS by default
-MODEL_KWARGS = INITIAL_MODEL_KWARGS
+# Initialize with adaptation-ready parameters
+MODEL_KWARGS = {
+    **INITIAL_MODEL_KWARGS,
+    "use_sde": True,           # Enable state-dependent exploration from start
+    "sde_sample_freq": 4,      # Sample new noise every 4 steps
+    "ent_coef": 0.05          # Start with higher entropy for better exploration
+}
 
 def format_time_remaining(seconds: float) -> str:
     """Convert seconds to days, hours, minutes format."""
@@ -324,13 +353,13 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
 
 def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
-    Train a model using walk-forward optimization with separate train/validation/test windows.
+    Train a model using walk-forward optimization with continuous learning.
     
     Implements enhanced walk-forward optimization with:
-    - Train(70%)/Validation(30%) split within training window
-    - Separate test window for out-of-sample evaluation
-    - Warm start from previous best model
-    - Progressive window training with model adaptation
+    - Dynamic timesteps based on window size (window_size * training_passes)
+    - Single unified training configuration for consistent learning
+    - Warm start capability with automatic learning rate adjustment
+    - Comprehensive validation and test evaluation
     - State saving for resumable training
     
     Args:
@@ -344,10 +373,30 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     """
     total_periods = len(data)
     test_window = args.test_window or initial_window
-    base_timesteps = args.total_timesteps
-    
-    # Calculate total number of iterations
+
+    # Get training passes from args or use default
+    training_passes = args.train_passes if hasattr(args, 'train_passes') else TRAINING_PASSES
+
+    # Calculate total number of iterations and training steps
     total_iterations = (total_periods - initial_window - test_window) // step_size + 1
+    train_window_size = initial_window - int(initial_window * args.validation_size)
+    timesteps_per_iteration = calculate_timesteps(train_window_size)
+    total_timesteps = timesteps_per_iteration * total_iterations
+    
+    print(f"Training Configuration:")
+    print(f"Training passes per window: {training_passes}")
+    print(f"Timesteps per iteration: {timesteps_per_iteration:,d}")
+    print(f"Total training iterations: {total_iterations}")
+    print(f"Total training timesteps: {total_timesteps:,d}")
+
+    # Calculate validation window size for logging
+    val_size = int(initial_window * args.validation_size)
+    train_size = initial_window - val_size
+    print(f"\nWindow Configuration (15-min bars):")
+    print(f"Training Size: {train_size} bars")
+    print(f"Validation Size: {val_size} bars")
+    print(f"Test Size: {test_window} bars")
+    print(f"Step Size: {step_size} bars")
     
     state_path = f"../results/{args.seed}/training_state.json"
     checkpoints_dir = os.path.join(f"../results/{args.seed}", "checkpoints")
@@ -457,7 +506,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             # Handle warm starting from previous best model
             if model is None:
                 print("\nPerforming initial training...")
-                period_timesteps = INITIAL_TIMESTEPS
+                train_window_size = val_start - train_start
+                period_timesteps = calculate_timesteps(train_window_size)
                 
                 if args.warm_start:
                     # Try loading from previous iteration's best test model
@@ -524,11 +574,13 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 
             # Set training parameters based on warm start and model state
             is_new_model = model is None
+            # Calculate training timesteps based on window size
+            train_window_size = val_start - train_start
+            period_timesteps = calculate_timesteps(train_window_size)
+            
+            # Use adaptation learning rate for warm started models
             if args.warm_start and not is_new_model:
-                period_timesteps = ADAPTATION_TIMESTEPS
                 model.learning_rate = ADAPTATION_MODEL_KWARGS['learning_rate']
-            else:
-                period_timesteps = INITIAL_TIMESTEPS
             
             print(f"\nTraining for {period_timesteps} timesteps...")
             model.learn(
