@@ -59,59 +59,45 @@ class UnifiedEvalCallback(BaseCallback):
         self.best_metrics = {}
         
     def _run_eval_episode(self, env, eval_seed: int = None, start_pos: int = None) -> Dict[str, float]:
-        """Run a complete evaluation episode and collect comprehensive metrics."""
+        """Run a complete evaluation episode on given environment."""
         if start_pos is not None:
             env.env.current_step = start_pos
-        
         obs, _ = env.reset(seed=eval_seed)
         done = False
-        episode_reward = 0.0
-        lstm_states = None
+        episode_reward = 0
         
         while not done:
-            # Run prediction with LSTM state management
-            action, lstm_states = self.model.predict(
-                obs,
-                state=lstm_states,
-                deterministic=self.deterministic
-            )
+            action, _ = self.model.predict(obs, deterministic=self.deterministic)
             obs, reward, terminated, truncated, info = env.step(action)
-            episode_reward += reward
             done = terminated or truncated
+            episode_reward += reward
         
-        # Get core metrics from environment
-        metrics = env.env.get_metrics()
+        # Get comprehensive metrics from MetricsTracker
         performance = env.env.metrics.get_performance_summary()
-        
-        # Compile complete metrics dictionary
-        return {
-            'balance': metrics['balance'],
-            'unrealized_pnl': metrics['unrealized_pnl'],
-            'return': metrics['return'],
+
+        # Ensure all required metrics are available with defaults
+        metrics = {
+            'return': performance.get('return_pct', 0) / 100,
+            'max_drawdown': performance.get('max_drawdown_pct', 0) / 100,
+            'max_equity_drawdown': performance.get('max_equity_drawdown_pct', 0) / 100,
             'reward': episode_reward,
-            'trades': metrics['trades'],
+            'win_rate': performance.get('win_rate', 0) / 100,
+            'profit_factor': performance.get('profit_factor', 0),
+            'trades': env.env.trades,
             'metrics': {
-                'final_balance': metrics['balance'],
-                'final_equity': metrics['balance'] + metrics['unrealized_pnl'],
-                'unrealized_pnl': metrics['unrealized_pnl'],
-                'steps_completed': env.env.current_step,
-                'total_steps': env.env.data_length,
-                'total_trades': len(metrics['trades']),
-                'trade_stats': {
-                    'avg_win_points': performance['avg_win_points'],
-                    'avg_loss_points': performance['avg_loss_points'],
-                    'avg_win_bars': performance['win_hold_time'],
-                    'avg_loss_bars': performance['loss_hold_time'],
-                    'long_trades': performance['long_trades'],
-                    'short_trades': performance['short_trades'],
-                    'long_win_rate': performance['long_win_rate'] / 100,
-                    'short_win_rate': performance['short_win_rate'] / 100
-                },
-                'trade_pnls': [t['pnl'] for t in metrics['trades']],
-                'start_time': metrics['start_time'],
-                'end_time': metrics['end_time']
+                'total_trades': performance.get('total_trades', 0),
+                'trade_pnls': performance.get('trade_pnls', []),
+                'start_time': performance.get('start_time', None),
+                'end_time': performance.get('end_time', None),
+                # Ensure core metrics are included
+                **{k: v for k, v in performance.items() if k not in [
+                    'return_pct', 'max_drawdown_pct', 'max_equity_drawdown_pct',
+                    'win_rate', 'profit_factor', 'total_trades', 'trade_pnls',
+                    'start_time', 'end_time'
+                ]}
             }
         }
+        return metrics
         
     def _calculate_score(self, metrics: Dict[str, float]) -> float:
         """
@@ -125,30 +111,22 @@ class UnifiedEvalCallback(BaseCallback):
         
         Returns negative infinity for models with unacceptable risk characteristics.
         """
-        # Extract core metrics
         returns = metrics['return']
+        max_dd = max(metrics['max_drawdown'], metrics['max_equity_drawdown'])
+        profit_factor = metrics['profit_factor']
+        win_rate = metrics['win_rate']
+        # Extract metrics with safe defaults
         metrics_data = metrics.get('metrics', {})
-        trade_pnls = metrics_data.get('trade_pnls', [])
         trades = metrics_data.get('total_trades', 0)
         
-        # Calculate derived metrics
+        # Calculate average trade PnL and std if we have trades
         if trades > 0:
-            wins = len([pnl for pnl in trade_pnls if pnl > 0])
-            win_rate = wins / trades
-            total_profit = sum([pnl for pnl in trade_pnls if pnl > 0])
-            total_loss = abs(sum([pnl for pnl in trade_pnls if pnl < 0]))
-            profit_factor = total_profit / total_loss if total_loss > 0 else total_profit
+            trade_pnls = metrics_data.get('trade_pnls', [0])
+            avg_trade = np.mean(trade_pnls)
+            trade_std = np.std(trade_pnls) if len(trade_pnls) > 1 else 0.0
         else:
-            win_rate = 0
-            profit_factor = 0
-        # Calculate drawdown
-        balance_curve = [metrics['balance']]  # Start with initial balance
-        for pnl in trade_pnls:
-            balance_curve.append(balance_curve[-1] + pnl)
-        
-        highest_balance = max(balance_curve)
-        lowest_balance = min(balance_curve)
-        max_dd = (highest_balance - lowest_balance) / highest_balance if highest_balance > 0 else 0
+            avg_trade = 0.0
+            trade_std = 0.0
         
         # Reject models with unacceptable characteristics
         if any([
@@ -174,13 +152,8 @@ class UnifiedEvalCallback(BaseCallback):
         
         # 3. Trade Consistency (25% weight)
         # Coefficient of variation of trade PnL (adjusted)
-        if trades > 0:
-            avg_trade = np.mean(trade_pnls)
-            trade_std = np.std(trade_pnls) if len(trade_pnls) > 1 else 0.0
-            cv = abs(trade_std / (avg_trade + 0.001))
-            consistency_score = 1.0 / (1.0 + cv)  # Transform to 0-1 range
-        else:
-            consistency_score = 0.0
+        cv = abs(trade_std / (avg_trade + 0.001))
+        consistency_score = 1.0 / (1.0 + cv)  # Transform to 0-1 range
         score += consistency_score * 0.25
         
         # 4. Risk-Adjusted Profit Factor (20% weight)
@@ -278,15 +251,7 @@ class UnifiedEvalCallback(BaseCallback):
             print(f"Balance: ${val_data.get('final_balance', 0):.2f} (${val_data.get('final_equity', 0):.2f})")
             print(f"Unrealized PnL: {val_data.get('unrealized_pnl', 0):.2f}")
             print(f"Return: {val_metrics['return']*100:.2f}%")
-            
-            # Calculate drawdown from balance curve
-            balance_curve = [val_metrics['balance']]
-            for pnl in val_metrics['metrics']['trade_pnls']:
-                balance_curve.append(balance_curve[-1] + pnl)
-            highest = max(balance_curve)
-            lowest = min(balance_curve)
-            max_dd = ((highest - lowest) / highest * 100) if highest > 0 else 0
-            print(f"Max Drawdown: {max_dd:.2f}%")
+            print(f"Max Drawdown: {val_metrics['max_drawdown']*100:.2f}% ({val_metrics['max_equity_drawdown']*100:.2f}%)")
             print(f"Total Reward: {val_metrics['reward']:.2f}")
             print(f"Steps Completed: {val_data.get('steps_completed', 0):,d} / {val_data.get('total_steps', 0):,d}")
             
@@ -307,9 +272,7 @@ class UnifiedEvalCallback(BaseCallback):
             
             print(f"\nPerformance Metrics:")
             total_trades = val_data.get('total_trades', 0)
-            wins = len([pnl for pnl in val_metrics['metrics']['trade_pnls'] if pnl > 0])
-            win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
-            print(f"  Total Trades: {total_trades} ({win_rate:.2f}% win)")
+            print(f"  Total Trades: {total_trades} ({val_metrics['win_rate']*100:.2f}% win)")
             
             # Extract trade statistics
             trade_stats = val_data.get('trade_stats', {})
@@ -318,15 +281,7 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"  Average Loss: {trade_stats.get('avg_loss_points', 0):.1f} points ({trade_stats.get('avg_loss_bars', 0):.1f} bars)")
                 print(f"  Long Trades: {trade_stats.get('long_trades', 0)} ({trade_stats.get('long_win_rate', 0)*100:.1f}% win)")
                 print(f"  Short Trades: {trade_stats.get('short_trades', 0)} ({trade_stats.get('short_win_rate', 0)*100:.1f}% win)")
-                # Calculate profit factor
-                trade_pnls = val_metrics['metrics']['trade_pnls']
-                if trade_pnls:
-                    total_profit = sum([pnl for pnl in trade_pnls if pnl > 0])
-                    total_loss = abs(sum([pnl for pnl in trade_pnls if pnl < 0]))
-                    profit_factor = total_profit / total_loss if total_loss > 0 else total_profit
-                    print(f"  Profit Factor: {profit_factor:.2f}")
-                else:
-                    print(f"  Profit Factor: 0.00")
+                print(f"  Profit Factor: {val_metrics['profit_factor']:.2f}")
             
             # Log detailed test metrics at iteration end
             if is_final_eval:
@@ -336,26 +291,13 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"Balance: ${test_data.get('final_balance', 0):.2f} (${test_data.get('final_equity', 0):.2f})")
                 print(f"Unrealized PnL: {test_data.get('unrealized_pnl', 0):.2f}")
                 print(f"Return: {test_metrics['return']*100:.2f}%")
-                
-                # Calculate drawdown from balance curve
-                balance_curve = [test_metrics['balance']]
-                for pnl in test_metrics['metrics']['trade_pnls']:
-                    balance_curve.append(balance_curve[-1] + pnl)
-                highest = max(balance_curve)
-                lowest = min(balance_curve)
-                max_dd = ((highest - lowest) / highest * 100) if highest > 0 else 0
-                print(f"Max Drawdown: {max_dd:.2f}%")
+                print(f"Max Drawdown: {test_metrics['max_drawdown']*100:.2f}% ({test_metrics['max_equity_drawdown']*100:.2f}%)")
                 print(f"Total Reward: {test_metrics['reward']:.2f}")
                 print(f"Steps Completed: {test_data.get('steps_completed', 0):,d} / {test_data.get('total_steps', 0):,d}")
                 
                 print(f"\nPerformance Metrics:")
                 total_trades = test_data.get('total_trades', 0)
-                if total_trades > 0:
-                    wins = len([pnl for pnl in test_metrics['metrics']['trade_pnls'] if pnl > 0])
-                    win_rate = (wins / total_trades * 100)
-                    print(f"  Total Trades: {total_trades} ({win_rate:.2f}% win)")
-                else:
-                    print(f"  Total Trades: {total_trades} (0.00% win)")
+                print(f"  Total Trades: {total_trades} ({test_metrics['win_rate']*100:.2f}% win)")
                 
                 # Extract trade statistics
                 trade_stats = test_data.get('trade_stats', {})
@@ -364,15 +306,7 @@ class UnifiedEvalCallback(BaseCallback):
                     print(f"  Average Loss: {trade_stats.get('avg_loss_points', 0):.1f} points ({trade_stats.get('avg_loss_bars', 0):.1f} bars)")
                     print(f"  Long Trades: {trade_stats.get('long_trades', 0)} ({trade_stats.get('long_win_rate', 0)*100:.1f}% win)")
                     print(f"  Short Trades: {trade_stats.get('short_trades', 0)} ({trade_stats.get('short_win_rate', 0)*100:.1f}% win)")
-                    # Calculate profit factor
-                    trade_pnls = test_metrics['metrics']['trade_pnls']
-                    if trade_pnls:
-                        total_profit = sum([pnl for pnl in trade_pnls if pnl > 0])
-                        total_loss = abs(sum([pnl for pnl in trade_pnls if pnl < 0]))
-                        profit_factor = total_profit / total_loss if total_loss > 0 else total_profit
-                        print(f"  Profit Factor: {profit_factor:.2f}")
-                    else:
-                        print(f"  Profit Factor: 0.00")
+                    print(f"  Profit Factor: {test_metrics['profit_factor']:.2f}")
             
             # Save if performance improved
             if self._should_save_model(metrics, is_final_eval):
