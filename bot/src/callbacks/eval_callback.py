@@ -224,7 +224,7 @@ class UnifiedEvalCallback(BaseCallback):
         test_period_days = (end_time - start_time).days if start_time and end_time else 0
         
         # Reject if not enough trades or too short test period
-        if test_metrics['metrics']['total_trades'] < min_trades or test_period_days < 30:
+        if test_metrics['total_trades'] < min_trades or test_period_days < 30:
             return False
         
         # Check for improvement with higher threshold
@@ -350,12 +350,14 @@ class UnifiedEvalCallback(BaseCallback):
             is_final_eval = self.num_timesteps >= self.training_timesteps - self.eval_freq
             metrics = self._evaluate_performance(is_final_eval)
             val_metrics = get_detailed_metrics(self.eval_env, "Validation Results", metrics['validation'])
+            all_metrics = {'validation': val_metrics}
             
             if is_final_eval:
-                test_metrics = get_detailed_metrics(self.test_env, "Test Results", metrics['test'])
+                all_metrics['test'] = get_detailed_metrics(self.test_env, "Test Results", metrics['test'])
+                
             
             # Save if performance improved
-            if self._should_save_model(metrics, is_final_eval):
+            if self._should_save_model(all_metrics, is_final_eval):
                 # Save model
                 save_path = os.path.join(self.best_model_save_path,
                                        "best_test_model.zip" if is_final_eval else "curr_best_model.zip")
