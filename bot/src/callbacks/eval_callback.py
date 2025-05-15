@@ -109,7 +109,7 @@ class UnifiedEvalCallback(BaseCallback):
         Returns negative infinity for models with unacceptable risk characteristics.
         """
         returns = metrics['return']
-        max_dd = max(metrics['max_drawdown'], metrics['max_equity_drawdown'])
+        max_dd = max(metrics['max_balance_drawdown'], metrics['max_equity_drawdown'])
         profit_factor = metrics['profit_factor']
         win_rate = metrics['win_rate']
         # Extract metrics with safe defaults
@@ -247,7 +247,7 @@ class UnifiedEvalCallback(BaseCallback):
             print(f"  Return: {metrics['return']*100:.2f}%")
             print(f"  Max Drawdown: {performance['max_drawdown_pct']:.2f}% ({performance['max_equity_drawdown_pct']:.2f}%)")
             print(f"  Total Reward: {metrics['reward']:.2f}")
-            print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
+            print(f"  Steps Completed: {env.env.current_step:,d} / {env.env.data_length:,d}")
             # Training Metrics
             try:
                 # Debug logging at a finer level
@@ -319,7 +319,7 @@ class UnifiedEvalCallback(BaseCallback):
                 "win_rate": performance['win_rate'],
                 "total_trades": len(metrics['trades']),
                 "steps_completed": env.env.current_step,
-                "total_steps": len(env.env.raw_data),
+                "total_steps": env.env.data_length,
                 "total_reward": metrics['reward']
             }
             performance_stats = {
