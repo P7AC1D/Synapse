@@ -1,5 +1,5 @@
 """Callback modules for training."""
 from .epsilon_callback import CustomEpsilonCallback
-from .eval_callback import UnifiedEvalCallback
+from .eval_callback import ValidationCallback
 
-__all__ = ['CustomEpsilonCallback', 'UnifiedEvalCallback']
+__all__ = ['CustomEpsilonCallback', 'ValidationCallback']

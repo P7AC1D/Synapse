@@ -539,7 +539,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             evaluator = ModelEvaluator(
                 save_path=f"../results/{args.seed}",
                 device=args.device,
-                verbose=1
+                verbose=args.verbose
             )
             
             # Setup callbacks
@@ -557,7 +557,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     eval_freq=args.eval_freq,
                     model_save_path=iteration_dir,
                     deterministic=True,
-                    verbose=1,
+                    verbose=args.verbose,
                     iteration=iteration
                 )
             ]
@@ -628,7 +628,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             )
             
             if 'test' in eval_results:
-                evaluator.print_evaluation_metrics(
+                evaluator.print_evaluation_results(
                     eval_results['test'],
                     phase="Test",
                     timestep=model.num_timesteps

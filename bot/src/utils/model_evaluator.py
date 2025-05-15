@@ -83,7 +83,10 @@ class ModelEvaluator:
             'current_direction': trade_metrics['current_direction'],
             'profit_factor': performance['profit_factor'],
             'unrealized_pnl': env.env.metrics.current_unrealized_pnl,
-            'metrics': performance
+            'metrics': {
+                'performance': performance,
+                'env': env
+            }
         }
 
     def calculate_score(self, metrics: Dict[str, float]) -> float:
@@ -138,6 +141,9 @@ class ModelEvaluator:
                          iteration: int,
                          is_final_eval: bool = False) -> Dict[str, Any]:
         """Evaluate and potentially select model as new best."""
+        # Store model reference for network stats
+        self.model = model
+        
         # Generate consistent seed
         eval_seed = np.random.randint(0, 1000000)
         
@@ -200,28 +206,22 @@ class ModelEvaluator:
         
         return result
 
-    def print_evaluation_metrics(self, data: Dict[str, Any], phase: str, timestep: Optional[int] = None) -> None:
-        """Print detailed evaluation metrics."""
+    def print_evaluation_results(self, data: Dict[str, Dict[str, Any]], phase: str, timestep: Optional[int] = None) -> None:
+        """Print complete evaluation results.
+        
+        Args:
+            data: Evaluation results dictionary with metrics and environment data
+            phase: Name of the evaluation phase (e.g. "Training", "Validation", "Test")
+            timestep: Optional current timestep for progress tracking
+        """
+        # Print metrics using the metrics tracker
         metrics = data['metrics']
-        score = data['score']
+        env = data['metrics']['env']
+        env.metrics.print_evaluation_metrics(
+            phase=phase,
+            timestep=timestep,
+            model=self.model if hasattr(self, 'model') else None
+        )
         
-        step_info = f" (Timestep {timestep:,d})" if timestep is not None else ""
-        print(f"\n===== {phase} Metrics{step_info} =====")
-        print(f"Score: {score:.4f}")
-        
-        # Account metrics
-        print("\nAccount Metrics:")
-        print(f"  Balance: ${metrics['balance']:.2f}")
-        print(f"  Return: {metrics['return']*100:.2f}%")
-        print(f"  Max Balance DD: {metrics['max_balance_drawdown']*100:.2f}%")
-        print(f"  Max Equity DD: {metrics['max_equity_drawdown']*100:.2f}%")
-        
-        # Trading metrics
-        performance = metrics['metrics']
-        print("\nTrading Metrics:")
-        print(f"  Total Trades: {performance['total_trades']}")
-        print(f"  Win Rate: {performance['win_rate']:.2f}%")
-        print(f"  Profit Factor: {performance['profit_factor']:.2f}")
-        print(f"  Avg Win: {performance['avg_win_points']:.1f} points")
-        print(f"  Avg Loss: {performance['avg_loss_points']:.1f} points")
-        print(f"  Avg Hold Time: {performance['avg_hold_time']:.1f} bars")
+        # Print score separately since it's evaluator-specific
+        print(f"Score: {data['score']:.4f}")

@@ -71,6 +71,8 @@ def main():
                       help='Standard contract size (default: 100.0)')
     parser.add_argument('--window_size', type=int, default=50,
                         help='Number of past timesteps for market features in observation (default: 50)')
+    parser.add_argument('--verbose', type=int, default=1,
+                        help='Verbosity level for training output (0: minimal, 1: normal, 2: debug)')
     
     args = parser.parse_args()
     

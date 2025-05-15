@@ -286,3 +286,67 @@ class MetricsTracker:
         
         return {k: float(v) if isinstance(v, (np.float32, np.float64)) else v 
                 for k, v in summary.items()}
+
+    def print_evaluation_metrics(self, phase: str = "Evaluation", timestep: Optional[int] = None, 
+                               model: Optional['RecurrentPPO'] = None) -> None:
+        """Print formatted evaluation metrics.
+        
+        Args:
+            phase: Name of the evaluation phase (e.g. "Training", "Validation", "Test")
+            timestep: Optional current timestep for progress tracking
+            model: Optional model for printing network stats
+        """
+        metrics = self.get_performance_summary()
+        
+        step_info = f" (Timestep {timestep:,d})" if timestep is not None else ""
+        print(f"\n===== {phase} Metrics{step_info} =====")
+        
+        # Account summary
+        print(f"  Balance: ${self.balance:.2f} (${self.balance + self.current_unrealized_pnl:.2f})")
+        print(f"  Unrealized PnL: {self.current_unrealized_pnl:.2f}")
+        print(f"  Return: {metrics['return_pct']:.2f}%")
+        print(f"  Max Drawdown: {metrics['max_drawdown_pct']:.2f}% ({metrics['max_equity_drawdown_pct']:.2f}%)")
+        print(f"  Total Reward: {metrics['total_pnl']:.2f}")
+        
+        # Network stats (if model provided)
+        if model is not None:
+            try:
+                training_stats = {
+                    # Value network stats
+                    "value_loss": float(model.logger.name_to_value.get('train/value_loss', 0.0)),
+                    "explained_variance": float(model.logger.name_to_value.get('train/explained_variance', 0.0)),
+                    # Policy network stats
+                    "policy_loss": float(model.logger.name_to_value.get('train/policy_gradient_loss', 0.0)),
+                    "entropy_loss": float(model.logger.name_to_value.get('train/entropy_loss', 0.0)),
+                    "approx_kl": float(model.logger.name_to_value.get('train/approx_kl', 0.0)),
+                    # Training stats
+                    "total_loss": float(model.logger.name_to_value.get('train/loss', 0.0)),
+                    "clip_fraction": float(model.logger.name_to_value.get('train/clip_fraction', 0.0)),
+                    "learning_rate": float(model.logger.name_to_value.get('train/learning_rate', 0.0)),
+                    "n_updates": int(model.logger.name_to_value.get('train/n_updates', 0))
+                }
+                
+                print("\n  Network Stats:")
+                print(f"    Value Network:")
+                print(f"      Loss: {training_stats['value_loss']:.4f}")
+                print(f"      Explained Var: {training_stats['explained_variance']:.2f}")
+                print(f"    Policy Network:")
+                print(f"      Loss: {training_stats['policy_loss']:.4f}")
+                print(f"      Entropy: {training_stats['entropy_loss']:.4f}")
+                print(f"      KL Div: {training_stats['approx_kl']:.4f}")
+                print(f"    Training:")
+                print(f"      Total Loss: {training_stats['total_loss']:.4f}")
+                print(f"      Clip Fraction: {training_stats['clip_fraction']:.4f}")
+                print(f"      Learning Rate: {training_stats['learning_rate']:.6f}")
+                print(f"      Updates: {training_stats['n_updates']}")
+            except Exception as e:
+                print("\n  Network Stats: Not available")
+        
+        # Performance metrics
+        print("\n  Performance Metrics:")
+        print(f"    Total Trades: {metrics['total_trades']} ({metrics['win_rate']:.2f}% win)")
+        print(f"    Average Win: {metrics['avg_win_points']:.1f} points ({metrics['win_hold_time']:.1f} bars)")
+        print(f"    Average Loss: {metrics['avg_loss_points']:.1f} points ({metrics['loss_hold_time']:.1f} bars)")
+        print(f"    Long Trades: {metrics['long_trades']} ({metrics['long_win_rate']:.1f}% win)")
+        print(f"    Short Trades: {metrics['short_trades']} ({metrics['short_win_rate']:.1f}% win)")
+        print(f"    Profit Factor: {metrics['profit_factor']:.2f}")

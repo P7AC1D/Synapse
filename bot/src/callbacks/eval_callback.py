@@ -12,7 +12,7 @@ import json
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Any, Optional
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback
 from trading.environment import TradingEnv
@@ -41,7 +41,7 @@ class ValidationCallback(BaseCallback):
         # Initialize tracking
         self.best_val_score = -float("inf")
 
-    def _evaluate_model(self, eval_seed: Optional[int] = None) -> Dict[str, float]:
+    def _evaluate_model(self, eval_seed: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
         """Run complete evaluation episode."""
         obs, _ = self.eval_env.reset(seed=eval_seed)
         done = False
@@ -62,7 +62,7 @@ class ValidationCallback(BaseCallback):
         performance = self.eval_env.env.metrics.get_performance_summary()
         trade_metrics = self.eval_env.env.trade_metrics
         
-        return {
+        metrics = {
             'return': performance['return_pct'] / 100,
             'max_balance_drawdown': performance['max_drawdown_pct'] / 100,
             'max_equity_drawdown': performance['max_equity_drawdown_pct'] / 100,
@@ -72,24 +72,49 @@ class ValidationCallback(BaseCallback):
             'trades': self.eval_env.env.trades,
             'profit_factor': performance['profit_factor'],
             'unrealized_pnl': self.eval_env.env.metrics.current_unrealized_pnl,
-            'metrics': performance
+            'metrics': {
+                'performance': performance,
+                'env': self.eval_env
+            }
         }
+        return metrics
 
-    def _calculate_score(self, metrics: Dict[str, float]) -> float:
+    def _calculate_score(self, metric_data: Dict[str, Any]) -> float:
         """Calculate model score based on validation metrics."""
         # Extract core metrics
-        returns = metrics['return']
-        max_dd = max(metrics['max_balance_drawdown'], metrics['max_equity_drawdown'])
-        profit_factor = metrics['profit_factor']
-        win_rate = metrics['win_rate']
-        trades = len(metrics['trades'])
+        returns = metric_data['return']  # Already in decimal form
+        max_dd = max(metric_data['max_balance_drawdown'], metric_data['max_equity_drawdown'])  # Already in decimal form
+        profit_factor = metric_data['profit_factor']
+        win_rate = metric_data['win_rate']  # Already in decimal form
+        trades = len(metric_data['trades'])
         
-        # Quick validation checks
-        if returns <= 0 or max_dd > 0.15 or trades < 10:
+        # Quick validation checks with debug info
+        if returns <= 0:
+            if self.verbose > 0:
+                print(f"\nScore is -inf because returns ({returns:.2%}) <= 0")
+            return float('-inf')
+            
+        if max_dd > 0.15:
+            if self.verbose > 0:
+                print(f"\nScore is -inf because max drawdown ({max_dd:.2%}) > 15%")
+            return float('-inf')
+            
+        if trades < 10:
+            if self.verbose > 0:
+                print(f"\nScore is -inf because trade count ({trades}) < 10")
             return float('-inf')
         
         # Simple scoring based on risk-adjusted returns
-        score = returns / (max_dd + 0.05)
+        score = returns / (max_dd + 0.05)  # Add small constant to avoid division by zero
+        
+        if self.verbose > 0:
+            print(f"\nScore components:")
+            print(f"  Returns: {returns:.2%}")
+            print(f"  Max DD: {max_dd:.2%}")
+            print(f"  Trades: {trades}")
+            print(f"  Win Rate: {win_rate:.2%}")
+            print(f"  Profit Factor: {profit_factor:.2f}")
+            print(f"  Final Score: {score:.4f}")
         
         return score
     
@@ -101,14 +126,14 @@ class ValidationCallback(BaseCallback):
             metrics = self._evaluate_model(eval_seed=np.random.randint(0, 1000000))
             score = self._calculate_score(metrics)
             
-            # Print metrics
-            print(f"\n===== Validation Metrics (Timestep {self.num_timesteps:,d}) =====")
-            print(f"  Score: {score:.4f}")
-            print(f"  Return: {metrics['return']*100:.2f}%")
-            print(f"  Max DD: {max(metrics['max_balance_drawdown'], metrics['max_equity_drawdown'])*100:.2f}%")
-            print(f"  Win Rate: {metrics['win_rate']*100:.2f}%")
-            print(f"  Profit Factor: {metrics['profit_factor']:.2f}")
-            print(f"  Total Trades: {len(metrics['trades'])}")
+            # Print validation metrics with model stats
+            self.eval_env.env.metrics.print_evaluation_metrics(
+                phase="Validation",
+                timestep=self.num_timesteps,
+                model=self.model
+            )
+            # Print score separately since it's validation-specific
+            print(f"\nValidation Score: {score:.4f}")
             
             # Save if improved
             if score > self.best_val_score:
