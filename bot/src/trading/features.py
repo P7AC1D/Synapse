@@ -111,7 +111,6 @@ class FeatureProcessor:
             # Clean up NaN values from indicators and log dropped rows
             indicators_df = indicators_df.dropna()
             dropped_rows = initial_rows - len(indicators_df)
-            print(f"Dropped {dropped_rows} rows containing NaN values ({(dropped_rows/initial_rows)*100:.2f}% of data)")
             
             # Extract cleaned indicator values
             atr = indicators_df['atr'].values
