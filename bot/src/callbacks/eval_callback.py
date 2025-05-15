@@ -57,7 +57,7 @@ class UnifiedEvalCallback(BaseCallback):
         self.best_val_score = -float("inf")
         self.best_test_score = -float("inf")
         self.best_metrics = {}
-        
+
     def _run_eval_episode(self, env, eval_seed: int = None, start_pos: int = None) -> Dict[str, float]:
         """Run a complete evaluation episode on given environment."""
         if start_pos is not None:
@@ -69,35 +69,32 @@ class UnifiedEvalCallback(BaseCallback):
         while not done:
             action, _ = self.model.predict(obs, deterministic=self.deterministic)
             obs, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
+            done = terminated or truncated        
             episode_reward += reward
+
+            # Track running metrics
+            running_balance = env.env.balance
+            max_balance = max(max_balance, running_balance)
         
         # Get comprehensive metrics from MetricsTracker
         performance = env.env.metrics.get_performance_summary()
+        trade_metrics = env.env.trade_metrics
 
-        # Ensure all required metrics are available with defaults
-        metrics = {
-            'return': performance.get('return_pct', 0) / 100,
-            'max_drawdown': performance.get('max_drawdown_pct', 0) / 100,
-            'max_equity_drawdown': performance.get('max_equity_drawdown_pct', 0) / 100,
+        # Use performance summary directly
+        return {
+            'return': performance['return_pct'] / 100,
+            'max_balance_drawdown': performance['max_drawdown_pct'] / 100,
+            'max_equity_drawdown': performance['max_equity_drawdown_pct'] / 100,
             'reward': episode_reward,
-            'win_rate': performance.get('win_rate', 0) / 100,
-            'profit_factor': performance.get('profit_factor', 0),
+            'win_rate': performance['win_rate'] / 100,
+            'avg_profit': performance['avg_win'],
+            'avg_loss': performance['avg_loss'],
+            'balance': env.env.metrics.balance,
             'trades': env.env.trades,
-            'metrics': {
-                'total_trades': performance.get('total_trades', 0),
-                'trade_pnls': performance.get('trade_pnls', []),
-                'start_time': performance.get('start_time', None),
-                'end_time': performance.get('end_time', None),
-                # Ensure core metrics are included
-                **{k: v for k, v in performance.items() if k not in [
-                    'return_pct', 'max_drawdown_pct', 'max_equity_drawdown_pct',
-                    'win_rate', 'profit_factor', 'total_trades', 'trade_pnls',
-                    'start_time', 'end_time'
-                ]}
-            }
+            'current_direction': trade_metrics['current_direction'],
+            'profit_factor': performance['profit_factor'],
+            'unrealized_pnl': env.env.metrics.current_unrealized_pnl
         }
-        return metrics
         
     def _calculate_score(self, metrics: Dict[str, float]) -> float:
         """
@@ -118,10 +115,13 @@ class UnifiedEvalCallback(BaseCallback):
         # Extract metrics with safe defaults
         metrics_data = metrics.get('metrics', {})
         trades = metrics_data.get('total_trades', 0)
-        
-        # Calculate average trade PnL and std if we have trades
+          # Calculate average trade PnL and std if we have trades
         if trades > 0:
-            trade_pnls = metrics_data.get('trade_pnls', [0])
+            trade_pnls = metrics_data.get('trade_pnls', [])
+            # Safety check to avoid empty lists
+            if not trade_pnls:
+                trade_pnls = [0]
+                
             avg_trade = np.mean(trade_pnls)
             trade_std = np.std(trade_pnls) if len(trade_pnls) > 1 else 0.0
         else:
@@ -137,10 +137,12 @@ class UnifiedEvalCallback(BaseCallback):
             win_rate < 0.40       # Minimum win rate
         ]):
             return float('-inf')
-            
-        # 1. Sortino Ratio (30% weight)
+              # 1. Sortino Ratio (30% weight)
         # Only consider downside deviation
-        losing_trades = [t for t in metrics['metrics']['trade_pnls'] if t < 0]
+        losing_trades = []
+        if 'trade_pnls' in metrics['metrics'] and metrics['metrics']['trade_pnls']:
+            losing_trades = [t for t in metrics['metrics']['trade_pnls'] if t < 0]
+            
         downside_std = np.std(losing_trades) if losing_trades else 0.001
         sortino_ratio = returns / (downside_std + 0.001)
         score = min(sortino_ratio, 4.0) / 4.0 * 0.30  # Cap at 4.0
@@ -234,79 +236,131 @@ class UnifiedEvalCallback(BaseCallback):
         return False
     
     def _on_step(self) -> bool:
+        """Helper function to collect and print detailed metrics for each dataset"""
+        def get_detailed_metrics(env, name, metrics):
+            # Get comprehensive metrics from MetricsTracker
+            performance = env.env.metrics.get_performance_summary()
+
+            print(f"\n===== {name} Metrics (Timestep {self.num_timesteps:,d}) =====")
+            print(f"  Balance: ${metrics['balance']:.2f} (${metrics['balance'] + metrics['unrealized_pnl']:.2f})")
+            print(f"  Unrealized PnL: {metrics['unrealized_pnl']:.2f}")
+            print(f"  Return: {metrics['return']*100:.2f}%")
+            print(f"  Max Drawdown: {performance['max_drawdown_pct']:.2f}% ({performance['max_equity_drawdown_pct']:.2f}%)")
+            print(f"  Total Reward: {metrics['reward']:.2f}")
+            print(f"  Steps Completed: {env.env.current_step:,d} / {len(env.env.raw_data):,d}")
+            
+            # Training Metrics
+            try:
+                # Debug logging at a finer level
+                if self.verbose > 1:
+                    print("\nAvailable Training Metrics:", list(self.model.logger.name_to_value.keys()))
+                
+                # Collect training metrics
+                training_stats = {
+                    # Value network stats
+                    "value_loss": float(self.model.logger.name_to_value.get('train/value_loss', 0.0)),
+                    "explained_variance": float(self.model.logger.name_to_value.get('train/explained_variance', 0.0)),
+                    # Policy network stats
+                    "policy_loss": float(self.model.logger.name_to_value.get('train/policy_gradient_loss', 0.0)),
+                    "entropy_loss": float(self.model.logger.name_to_value.get('train/entropy_loss', 0.0)),
+                    "approx_kl": float(self.model.logger.name_to_value.get('train/approx_kl', 0.0)),
+                    # Training stats
+                    "total_loss": float(self.model.logger.name_to_value.get('train/loss', 0.0)),
+                    "clip_fraction": float(self.model.logger.name_to_value.get('train/clip_fraction', 0.0)),
+                    "learning_rate": float(self.model.logger.name_to_value.get('train/learning_rate', 0.0)),
+                    "n_updates": int(self.model.logger.name_to_value.get('train/n_updates', 0))
+                }
+                
+                print("\n  Network Stats:")
+                print(f"    Value Network:")
+                print(f"      Loss: {training_stats['value_loss']:.4f}")
+                print(f"      Explained Var: {training_stats['explained_variance']:.2f}")
+                print(f"    Policy Network:")
+                print(f"      Loss: {training_stats['policy_loss']:.4f}")
+                print(f"      Entropy: {training_stats['entropy_loss']:.4f}")
+                print(f"      KL Div: {training_stats['approx_kl']:.4f}")
+                print(f"    Training:")
+                print(f"      Total Loss: {training_stats['total_loss']:.4f}")
+                print(f"      Clip Fraction: {training_stats['clip_fraction']:.4f}")
+                print(f"      Learning Rate: {training_stats['learning_rate']:.6f}")
+                print(f"      Updates: {training_stats['n_updates']}")
+            except (KeyError, AttributeError):
+                print("    Training stats not yet available")
+                training_stats = {
+                    # Value network stats
+                    "value_loss": 0.0,
+                    "explained_variance": 0.0,
+                    # Policy network stats
+                    "policy_loss": 0.0,
+                    "entropy_loss": 0.0,
+                    "approx_kl": 0.0,
+                    # Training stats
+                    "total_loss": 0.0,
+                    "clip_fraction": 0.0,
+                    "learning_rate": 0.0,
+                    "n_updates": 0
+                }
+            
+            # Performance Metrics
+            print("\n  Performance Metrics:")
+            print(f"    Total Trades: {performance['total_trades']} ({performance['win_rate']:.2f}% win)")
+            print(f"    Average Win: {performance['avg_win_points']:.1f} points ({performance['win_hold_time']:.1f} bars)")
+            print(f"    Average Loss: {performance['avg_loss_points']:.1f} points ({performance['loss_hold_time']:.1f} bars)")
+            print(f"    Long Trades: {performance['long_trades']} ({performance['long_win_rate']:.1f}% win)")
+            print(f"    Short Trades: {performance['short_trades']} ({performance['short_win_rate']:.1f}% win)")
+            print(f"    Profit Factor: {performance['profit_factor']:.2f}")
+
+            # Group metrics into categories
+            account_stats = {
+                "balance": metrics['balance'],
+                "equity": metrics['balance'] + metrics['unrealized_pnl'],
+                "unrealized_pnl": metrics['unrealized_pnl'],
+                "return": metrics['return'] * 100,
+                "max_dd": performance['max_drawdown_pct'],
+                "max_equity_dd": performance['max_equity_drawdown_pct']
+            }
+
+            trading_stats = {
+                "win_rate": performance['win_rate'],
+                "total_trades": len(metrics['trades']),
+                "steps_completed": env.env.current_step,
+                "total_steps": len(env.env.raw_data),
+                "total_reward": metrics['reward']
+            }
+
+            performance_stats = {
+                "total_trades": performance['total_trades'],
+                "average_win": performance['avg_win'],
+                "average_loss": performance['avg_loss'],
+                "avg_win_points": performance['avg_win_points'],
+                "avg_loss_points": performance['avg_loss_points'],
+                "profit_factor": performance['profit_factor'],
+                "long_trades": performance['long_trades'],
+                "long_win_rate": performance['long_win_rate'],
+                "short_trades": performance['short_trades'],
+                "short_win_rate": performance['short_win_rate'],
+                "avg_hold_time": performance['avg_hold_time'],
+                "win_hold_time": performance['win_hold_time'],
+                "loss_hold_time": performance['loss_hold_time']
+            }
+
+            return {
+                "name": name,
+                "account": account_stats,
+                "trading": trading_stats,
+                "performance": performance_stats,
+                "training": training_stats
+            }
+            
         """Execute evaluation steps."""
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
             # Run evaluation
             is_final_eval = self.num_timesteps >= self.training_timesteps - self.eval_freq
             metrics = self._evaluate_performance(is_final_eval)
+            val_metrics = get_detailed_metrics(self.eval_env, "Validation Results", metrics)
             
-            # Log detailed validation metrics
-            val_metrics = metrics['validation']
-            val_data = val_metrics.get('metrics', {})
-            # Get model training stats from last rollout
-            if hasattr(self.model, 'logger') and self.model.logger:
-                train_stats = self.model.logger.name_to_value
-
-            print(f"\n=== Validation Results (Timestep {self.num_timesteps:,d}) ===")
-            print(f"Balance: ${val_data.get('final_balance', 0):.2f} (${val_data.get('final_equity', 0):.2f})")
-            print(f"Unrealized PnL: {val_data.get('unrealized_pnl', 0):.2f}")
-            print(f"Return: {val_metrics['return']*100:.2f}%")
-            print(f"Max Drawdown: {val_metrics['max_drawdown']*100:.2f}% ({val_metrics['max_equity_drawdown']*100:.2f}%)")
-            print(f"Total Reward: {val_metrics['reward']:.2f}")
-            print(f"Steps Completed: {val_data.get('steps_completed', 0):,d} / {val_data.get('total_steps', 0):,d}")
-            
-            if hasattr(self.model, 'logger') and self.model.logger:
-                print(f"\nNetwork Stats:")
-                print(f"  Value Network:")
-                print(f"    Loss: {train_stats.get('value_loss', 0):.4f}")
-                print(f"    Explained Var: {train_stats.get('explained_variance', 0):.2f}")
-                print(f"  Policy Network:")
-                print(f"    Loss: {train_stats.get('policy_loss', 0):.4f}")
-                print(f"    Entropy: {train_stats.get('entropy', 0):.4f}")
-                print(f"    KL Div: {train_stats.get('kl', 0):.4f}")
-                print(f"  Training:")
-                print(f"    Total Loss: {train_stats.get('total_loss', 0):.4f}")
-                print(f"    Clip Fraction: {train_stats.get('clip_fraction', 0):.4f}")
-                print(f"    Learning Rate: {train_stats.get('learning_rate', 0):.6f}")
-                print(f"    Updates: {self.n_calls}")
-            
-            print(f"\nPerformance Metrics:")
-            total_trades = val_data.get('total_trades', 0)
-            print(f"  Total Trades: {total_trades} ({val_metrics['win_rate']*100:.2f}% win)")
-            
-            # Extract trade statistics
-            trade_stats = val_data.get('trade_stats', {})
-            if trade_stats:
-                print(f"  Average Win: {trade_stats.get('avg_win_points', 0):.1f} points ({trade_stats.get('avg_win_bars', 0):.1f} bars)")
-                print(f"  Average Loss: {trade_stats.get('avg_loss_points', 0):.1f} points ({trade_stats.get('avg_loss_bars', 0):.1f} bars)")
-                print(f"  Long Trades: {trade_stats.get('long_trades', 0)} ({trade_stats.get('long_win_rate', 0)*100:.1f}% win)")
-                print(f"  Short Trades: {trade_stats.get('short_trades', 0)} ({trade_stats.get('short_win_rate', 0)*100:.1f}% win)")
-                print(f"  Profit Factor: {val_metrics['profit_factor']:.2f}")
-            
-            # Log detailed test metrics at iteration end
             if is_final_eval:
-                test_metrics = metrics['test']
-                test_data = test_metrics.get('metrics', {})
-                print(f"\n=== Test Results (End of Iteration {self.iteration}) ===")
-                print(f"Balance: ${test_data.get('final_balance', 0):.2f} (${test_data.get('final_equity', 0):.2f})")
-                print(f"Unrealized PnL: {test_data.get('unrealized_pnl', 0):.2f}")
-                print(f"Return: {test_metrics['return']*100:.2f}%")
-                print(f"Max Drawdown: {test_metrics['max_drawdown']*100:.2f}% ({test_metrics['max_equity_drawdown']*100:.2f}%)")
-                print(f"Total Reward: {test_metrics['reward']:.2f}")
-                print(f"Steps Completed: {test_data.get('steps_completed', 0):,d} / {test_data.get('total_steps', 0):,d}")
-                
-                print(f"\nPerformance Metrics:")
-                total_trades = test_data.get('total_trades', 0)
-                print(f"  Total Trades: {total_trades} ({test_metrics['win_rate']*100:.2f}% win)")
-                
-                # Extract trade statistics
-                trade_stats = test_data.get('trade_stats', {})
-                if trade_stats:
-                    print(f"  Average Win: {trade_stats.get('avg_win_points', 0):.1f} points ({trade_stats.get('avg_win_bars', 0):.1f} bars)")
-                    print(f"  Average Loss: {trade_stats.get('avg_loss_points', 0):.1f} points ({trade_stats.get('avg_loss_bars', 0):.1f} bars)")
-                    print(f"  Long Trades: {trade_stats.get('long_trades', 0)} ({trade_stats.get('long_win_rate', 0)*100:.1f}% win)")
-                    print(f"  Short Trades: {trade_stats.get('short_trades', 0)} ({trade_stats.get('short_win_rate', 0)*100:.1f}% win)")
-                    print(f"  Profit Factor: {test_metrics['profit_factor']:.2f}")
+                test_metrics = get_detailed_metrics(self.test_env, "Test Results", metrics)
             
             # Save if performance improved
             if self._should_save_model(metrics, is_final_eval):
