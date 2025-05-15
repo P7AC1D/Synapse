@@ -108,25 +108,17 @@ class UnifiedEvalCallback(BaseCallback):
         
         Returns negative infinity for models with unacceptable risk characteristics.
         """
-        returns = metrics['return']
-        max_dd = max(metrics['max_balance_drawdown'], metrics['max_equity_drawdown'])
-        profit_factor = metrics['profit_factor']
-        win_rate = metrics['win_rate']
-        # Extract metrics with safe defaults
-        metrics_data = metrics.get('metrics', {})
-        trades = metrics_data.get('total_trades', 0)
-          # Calculate average trade PnL and std if we have trades
-        if trades > 0:
-            trade_pnls = metrics_data.get('trade_pnls', [])
-            # Safety check to avoid empty lists
-            if not trade_pnls:
-                trade_pnls = [0]
-                
-            avg_trade = np.mean(trade_pnls)
-            trade_std = np.std(trade_pnls) if len(trade_pnls) > 1 else 0.0   
-        else:
-            avg_trade = 0.0
-            trade_std = 0.0
+        # We're getting the detailed metrics structure from get_detailed_metrics
+        account = metrics.get('account', {})
+        performance = metrics.get('performance', {})
+        trading = metrics.get('trading', {})
+        
+        returns = account.get('return', 0.0) / 100  # Convert percentage back to decimal
+        max_dd = max(account.get('max_dd', 0.0), account.get('max_equity_dd', 0.0)) / 100
+        profit_factor = performance.get('profit_factor', 0.0)
+        win_rate = performance.get('win_rate', 0.0) / 100  # Convert percentage back to decimal
+        trades = performance.get('total_trades', 0)
+        metrics_data = performance
         
         # Reject models with unacceptable characteristics
         if any([
@@ -141,8 +133,15 @@ class UnifiedEvalCallback(BaseCallback):
         # 1. Sortino Ratio (30% weight)
         # Only consider downside deviation
         losing_trades = []
-        if 'trade_pnls' in metrics['metrics'] and metrics['metrics']['trade_pnls']:
-            losing_trades = [t for t in metrics['metrics']['trade_pnls'] if t < 0]
+        # Check if trade_pnls is available in the metrics structure
+        if isinstance(metrics_data, dict):
+            if 'trade_pnls' in metrics_data:
+                losing_trades = [t for t in metrics_data['trade_pnls'] if t < 0]
+            # For detailed metrics structure
+            elif 'average_loss' in metrics_data and metrics_data['average_loss'] is not None:
+                # Use average loss as a proxy if individual trades aren't available
+                losing_trades = [metrics_data['average_loss']] * max(1, int(trades * (1 - win_rate)))
+        
         downside_std = np.std(losing_trades) if losing_trades else 0.001
         sortino_ratio = returns / (downside_std + 0.001)
         score = min(sortino_ratio, 4.0) / 4.0 * 0.30  # Cap at 4.0
@@ -153,6 +152,33 @@ class UnifiedEvalCallback(BaseCallback):
         score += min(calmar_ratio, 3.0) / 3.0 * 0.25  # Cap at 3.0
         
         # 3. Trade Consistency (25% weight)
+        # Try to get trade_pnls for consistency calculation
+        trade_pnls = []
+        avg_trade = 0.0
+        trade_std = 0.0
+        
+        if trades > 0:
+            # Try to get trade_pnls from metrics_data
+            if isinstance(metrics_data, dict):
+                trade_pnls = metrics_data.get('trade_pnls', [])
+                # If no trade_pnls, approximate using average win/loss
+                if not trade_pnls and 'average_win' in metrics_data and 'average_loss' in metrics_data:
+                    win_rate_decimal = win_rate if win_rate <= 1.0 else win_rate/100.0
+                    wins = int(trades * win_rate_decimal)
+                    losses = trades - wins
+                    avg_win = metrics_data.get('average_win', 0)
+                    avg_loss = metrics_data.get('average_loss', 0)
+                    # Create synthetic trade_pnls based on average win/loss
+                    if wins > 0 and losses > 0:
+                        trade_pnls = ([avg_win] * wins + [avg_loss] * losses)
+            
+            # Safety check to avoid empty lists
+            if not trade_pnls:
+                trade_pnls = [0]
+                
+            avg_trade = np.mean(trade_pnls)
+            trade_std = np.std(trade_pnls) if len(trade_pnls) > 1 else 0.0   
+            
         # Coefficient of variation of trade PnL (adjusted)
         cv = abs(trade_std / (avg_trade + 0.001))
         consistency_score = 1.0 / (1.0 + cv)  # Transform to 0-1 range
@@ -161,7 +187,7 @@ class UnifiedEvalCallback(BaseCallback):
         # 4. Risk-Adjusted Profit Factor (20% weight)
         # Profit factor penalized by drawdown severity
         risk_adj_pf = profit_factor * (1.0 - max_dd)
-        score += min(risk_adj_pf, 2.0) / 2.0 * 0.20  # Cap at 2.0
+        score += min(risk_adj_pf, 2.0) / 2.0 * 0.20
         
         return score
                 
@@ -208,23 +234,40 @@ class UnifiedEvalCallback(BaseCallback):
         test_metrics = metrics['test']
         test_score = self._calculate_score(test_metrics)
         
-        # Additional test phase requirements
+        # Get the number of trades safely based on metric format
         min_trades = 20  # Minimum trades for statistical significance
-        # Handle datetime or string timestamps
-        metrics_data = test_metrics.get('metrics', {})
-        start_time = metrics_data.get('start_time')
-        end_time = metrics_data.get('end_time')
+        test_total_trades = 0
+        
+        # Check which format we're using
+        if 'performance' in test_metrics:
+            # Using the detailed metrics format
+            test_total_trades = test_metrics.get('performance', {}).get('total_trades', 0)
+            # Get start and end times from metrics if available
+            trading = test_metrics.get('trading', {})
+            start_time = trading.get('start_time')
+            end_time = trading.get('end_time')
+        else:
+            # Using the raw metrics format
+            trade_data = test_metrics.get('trades', [])
+            test_total_trades = len(trade_data) if isinstance(trade_data, list) else test_metrics.get('total_trades', 0)
+            # Try to get start and end times from metrics
+            metrics_data = test_metrics.get('metrics', {})
+            start_time = metrics_data.get('start_time')
+            end_time = metrics_data.get('end_time')
         
         # Convert string timestamps to datetime if needed
         if isinstance(start_time, str):
             start_time = pd.to_datetime(start_time)
         if isinstance(end_time, str):
             end_time = pd.to_datetime(end_time)
-            
-        test_period_days = (end_time - start_time).days if start_time and end_time else 0
+        
+        # Calculate test period duration in days if possible
+        test_period_days = 0
+        if start_time and end_time:
+            test_period_days = (end_time - start_time).days
         
         # Reject if not enough trades or too short test period
-        if test_metrics['total_trades'] < min_trades or test_period_days < 30:
+        if test_total_trades < min_trades or test_period_days < 30:
             return False
         
         # Check for improvement with higher threshold
