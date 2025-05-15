@@ -25,18 +25,27 @@ def main():
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
     
+    # Training window parameters
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
     parser.add_argument('--initial_window', type=int, default=5000,
                       help='Initial training window size in bars')
-    parser.add_argument('--validation_size', type=float, default=0.3,
-                      help='Fraction of window to use for validation (default: 0.3, research suggests 0.3-0.4)')
+    parser.add_argument('--test_window', type=int, default=5000,
+                      help='Test window size in bars (default: same as training window)')
+    parser.add_argument('--train_split', type=float, default=0.7,
+                      help='Fraction of window to use for training vs validation (default: 0.7)')
     parser.add_argument('--step_size', type=int, default=1000,
                       help='Walk-forward step size in bars (should be large enough for feature stability)')
     parser.add_argument('--balance_per_lot', type=float, default=500.0,
                       help='Account balance required per 0.01 lot')
     parser.add_argument('--random_start', action='store_true',
                       help='Start training from random positions in the dataset')
+    
+    # Warm start parameters
+    parser.add_argument('--warm_start', action='store_true',
+                      help='Use best model from previous iteration as starting point')
+    parser.add_argument('--initial_model', type=str,
+                      help='Path to initial model for first iteration warm start')
     
     parser.add_argument('--total_timesteps', type=int, default=100000,
                       help='Total timesteps for training')

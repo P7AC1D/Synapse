@@ -302,59 +302,6 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         print(f"Error evaluating model {model_path}: {e}")
         return None
 
-def compare_models_on_full_dataset(current_model_path: str, previous_model_path: str, 
-                                 full_data: pd.DataFrame, args) -> bool:
-    """
-    Compare current best model against previous period model on full dataset.
-    
-    Args:
-        current_model_path: Path to current best model
-        previous_model_path: Path to previous period model
-        full_data: Complete dataset for evaluation
-        args: Training arguments
-        
-    Returns:
-        True if current model performs better, False otherwise
-    """
-    # Evaluate current model
-    current_metrics = evaluate_model_on_dataset(current_model_path, full_data, args)
-    if not current_metrics:
-        print("Could not evaluate current model")
-        return False
-        
-    # Skip comparison if no previous model exists
-    if not os.path.exists(previous_model_path):
-        print("No previous model to compare against")
-        return True
-        
-    # Evaluate previous model
-    previous_metrics = evaluate_model_on_dataset(previous_model_path, full_data, args)
-    if not previous_metrics:
-        print("Could not evaluate previous model")
-        return True
-        
-    # Print comparison
-    print("\n=== Full Dataset Model Comparison ===")
-    print(f"Current Model:")
-    print(f"  Score: {current_metrics['score']:.4f}")
-    print(f"  Return: {current_metrics['returns']*100:.2f}%")
-    print(f"  Risk-Adjusted Return: {current_metrics['risk_adj_return']:.2f}")
-    print(f"  Max DD: {current_metrics['drawdown']*100:.2f}%")
-    print(f"  PF: {current_metrics['profit_factor']:.2f}")
-    print(f"  Win Rate: {current_metrics['win_rate']:.2f}%")
-    
-    print(f"\nPrevious Model:")
-    print(f"  Score: {previous_metrics['score']:.4f}")
-    print(f"  Return: {previous_metrics['returns']*100:.2f}%")
-    print(f"  Risk-Adjusted Return: {previous_metrics['risk_adj_return']:.2f}")
-    print(f"  Max DD: {previous_metrics['drawdown']*100:.2f}%")
-    print(f"  PF: {previous_metrics['profit_factor']:.2f}")
-    print(f"  Win Rate: {previous_metrics['win_rate']:.2f}%")
-    print(f"  Regime Consistency: {previous_metrics.get('regime_consistency_metric', 'N/A'):.2f}")
-    
-    # Compare scores
-    return current_metrics['score'] > previous_metrics['score']
-
 def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     """
     Load training state for resuming interrupted training.
@@ -377,14 +324,14 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
 
 def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
-    Train a model using walk-forward optimization.
+    Train a model using walk-forward optimization with separate train/validation/test windows.
     
-    Implements walk-forward optimization with:
-    - Progressive window training
-    - Model validation and selection
+    Implements enhanced walk-forward optimization with:
+    - Train(70%)/Validation(30%) split within training window
+    - Separate test window for out-of-sample evaluation
+    - Warm start from previous best model
+    - Progressive window training with model adaptation
     - State saving for resumable training
-    - Adaptive exploration decay
-    - Best model tracking and comparison
     
     Args:
         data: Full dataset for training
@@ -394,45 +341,30 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         
     Returns:
         RecurrentPPO: Final trained model or last checkpoint if interrupted
-        
-    Notes:
-        - Uses 'validation_size' from args to split training/validation
-        - Saves checkpoints and best models in ../results/{seed}/
-        - Maintains training state for resumption
-        - Adapts exploration and learning rates over iterations
-        
-    Raises:
-        ValueError: If window/step size parameters are invalid
     """
     total_periods = len(data)
+    test_window = args.test_window or initial_window
     base_timesteps = args.total_timesteps
     
     # Calculate total number of iterations
-    total_iterations = (total_periods - initial_window) // step_size + 1
+    total_iterations = (total_periods - initial_window - test_window) // step_size + 1
     
     state_path = f"../results/{args.seed}/training_state.json"
     checkpoints_dir = os.path.join(f"../results/{args.seed}", "checkpoints")
     os.makedirs(checkpoints_dir, exist_ok=True)
 
     model = None
-    training_start, initial_model_path_from_state, state = load_training_state(state_path)
-    overall_best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip") # Renamed for clarity
+    training_start, initial_model_path, state = load_training_state(state_path)
 
     if training_start > 0: # Resuming
-        # Try to load the model from the last iteration's checkpoint first
-        last_iter_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{training_start // step_size -1}.zip")
-        if os.path.exists(last_iter_checkpoint_path):
-            print(f"Resuming: Loading model from last iteration checkpoint: {last_iter_checkpoint_path}")
-            model = RecurrentPPO.load(last_iter_checkpoint_path, device=args.device)
-        elif initial_model_path_from_state and os.path.exists(initial_model_path_from_state): # Fallback to model_path from state (overall_best_model_path)
-            print(f"Resuming: Loading model from state file (overall best): {initial_model_path_from_state}")
-            model = RecurrentPPO.load(initial_model_path_from_state, device=args.device)
-        elif os.path.exists(overall_best_model_path): # Fallback to current overall_best_model_path
-            print(f"Resuming: Loading model from existing overall best model: {overall_best_model_path}")
-            model = RecurrentPPO.load(overall_best_model_path, device=args.device)
+        # Try to load the model from the last iteration's test model first
+        prev_iter_test_model = os.path.join(f"../results/{args.seed}/iteration_{training_start // step_size - 1}", "best_test_model.zip")
+        if os.path.exists(prev_iter_test_model):
+            print(f"Resuming: Loading model from previous iteration's best test model: {prev_iter_test_model}")
+            model = RecurrentPPO.load(prev_iter_test_model, device=args.device)
         else:
-            print(f"Resuming: No suitable model found to load for iteration {training_start // step_size}. Will create a new one.")
-            training_start = 0 # Effectively start fresh if no model can be loaded
+            print(f"Resuming: No suitable model found for iteration {training_start // step_size}. Will create a new one.")
+            training_start = 0
             model = None
     else: # Starting new training
         print("Starting new training.")
@@ -443,13 +375,15 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         training_start = 0
         model = None
     
-    # Validate window and step sizes
-    if initial_window < step_size * 5:
-        raise ValueError("Initial window should be at least 5x step size for stable training")
+    # Fixed window sizes for 15min intraday trading
+    # Total window = 9 weeks (4320 bars)
+    # Step size = 1 week (480 bars) with 50% overlap
+    STEP_SIZE = 240  # 1 week of 15min bars with 50% overlap
     
-    min_window_overlap = 0.5  # 50% minimum overlap between windows
-    if step_size > initial_window * (1 - min_window_overlap):
-        raise ValueError(f"Step size too large. Should be <= {initial_window * (1 - min_window_overlap)} for sufficient overlap")
+    # Validate that step size matches our sliding window approach
+    if step_size != STEP_SIZE:
+        print(f"Warning: Adjusting step size from {step_size} to {STEP_SIZE} to match research recommendations")
+        step_size = STEP_SIZE
 
     try:
         while training_start + initial_window <= total_periods:
@@ -467,26 +401,41 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 print(f"Average iteration time: {state['avg_iteration_time']/60:.1f} minutes")
                 print(f"Completed iterations: {state.get('completed_iterations', 0) - 1}/{total_iterations}")
             
-            # Calculate window boundaries using validation size parameter
-            val_size = int(initial_window * args.validation_size)
-            train_size = initial_window - val_size
-            
+            """
+            Calculate window sizes based on research recommendations for 15min intraday trading:
+            - Training window: ~6 weeks (2880 bars) to capture multiple market regimes
+            - Validation window: 2 weeks (960 bars) for model selection 
+            - Test window: 1 week (480 bars) for out-of-sample evaluation
+            - Step size: 1 week (480 bars) with 50% overlap
+            Total window: 9 weeks per iteration
+            """
             train_start = training_start
-            train_end = train_start + train_size
-            val_end = min(train_end + val_size, total_periods)
+            val_start = train_start + 2880  # 6 weeks of 15min bars
+            test_start = val_start + 960    # 2 weeks of 15min bars
+            test_end = min(test_start + 480, total_periods)  # 1 week of 15min bars
             
-            # Ensure we have enough validation data
-            if val_end - train_end < val_size * 0.5:  # Require at least half the validation window
+            # Ensure we have enough data for all windows
+            if test_end - test_start < 240:  # At least half week of test data
                 break
                 
-            train_data = data.iloc[train_start:train_end].copy()
-            val_data = data.iloc[train_end:val_end].copy()
-        
-            train_data.index = data.index[train_start:train_end]
-            val_data.index = data.index[train_end:val_end]
+            # Extract data windows
+            train_data = data.iloc[train_start:val_start].copy()
+            val_data = data.iloc[val_start:test_start].copy()
+            test_data = data.iloc[test_start:test_end].copy()
+            
+            # Set proper indices
+            train_data.index = data.index[train_start:val_start]
+            val_data.index = data.index[val_start:test_start]
+            test_data.index = data.index[test_start:test_end]
+            
+            # Ensure we have enough data for minimum trading significance
+            min_trading_bars = 240  # At least half week of trading
+            if test_end - test_start < min_trading_bars:
+                break
             
             print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
             print(f"=== Validation Period: {val_data.index[0]} to {val_data.index[-1]} ===")
+            print(f"=== Test Period: {test_data.index[0]} to {test_data.index[-1]} ===")
             print(f"=== Walk-forward Iteration: {iteration}/{total_iterations} ===")
         
             env_params = {
@@ -500,16 +449,40 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 'window_size': args.window_size # Added window_size
             }
         
+            # Setup environments
             train_env = Monitor(TradingEnv(train_data, **env_params))
-            val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False})) # window_size is already in env_params
-            
+            val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
+            test_env = Monitor(TradingEnv(test_data, **{**env_params, 'random_start': False}))
+
+            # Handle warm starting from previous best model
             if model is None:
                 print("\nPerforming initial training...")
                 period_timesteps = INITIAL_TIMESTEPS
-            if model is None:
-                print("\nPerforming initial training...")
                 
-                # Initialize new model with optimized hyperparameters for trading
+                if args.warm_start:
+                    # Try loading from previous iteration's best test model
+                    prev_iter_model_path = os.path.join(f"../results/{args.seed}/iteration_{iteration-1}", "best_test_model.zip")
+                    if os.path.exists(prev_iter_model_path):
+                        print(f"Warm starting from previous iteration: {prev_iter_model_path}")
+                        model = RecurrentPPO.load(
+                            prev_iter_model_path,
+                            env=train_env,
+                            device=args.device,
+                            **ADAPTATION_MODEL_KWARGS  # Use adaptation hyperparameters for warm start
+                        )
+                    # Fallback to initial model if specified
+                    elif args.initial_model and os.path.exists(args.initial_model):
+                        print(f"Warm starting from initial model: {args.initial_model}")
+                        model = RecurrentPPO.load(
+                            args.initial_model,
+                            env=train_env,
+                            device=args.device,
+                            **ADAPTATION_MODEL_KWARGS
+                        )
+                
+            if model is None:
+                # Create new model if no warm start or warm start failed
+                print("Creating new model with initial hyperparameters...")
                 model = RecurrentPPO(
                     "MlpLstmPolicy",
                     train_env,
@@ -520,123 +493,74 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     **INITIAL_MODEL_KWARGS
                 )
                 
-                # Set up initial training callbacks
-                callbacks = [
-                    # Exploration with initial high epsilon
-                    CustomEpsilonCallback(
-                        start_eps=1.0,
-                        end_eps=0.1,
-                        decay_timesteps=int(period_timesteps * 0.7),
-                        iteration=iteration
-                    ),
-                    # Evaluation and best model saving
-                    UnifiedEvalCallback(
-                        val_env,
-                        train_data=train_data,
-                        val_data=val_data,
-                        best_model_save_path=f"../results/{args.seed}",
-                        log_path=f"../results/{args.seed}",
-                        eval_freq=args.eval_freq,
-                        deterministic=True,
-                        verbose=1,
-                        iteration=iteration,
-                        training_timesteps=period_timesteps
-                    )
-                ]
-                
-                # Train initial model
-                model.learn(
-                    total_timesteps=period_timesteps, # Initial training with full timesteps
-                    callback=callbacks,
-                    progress_bar=True,
-                    reset_num_timesteps=True # Reset for the very first learning phase
+            # Set up callbacks with test environment
+            iteration_dir = os.path.join(f"../results/{args.seed}", f"iteration_{iteration}")
+            os.makedirs(iteration_dir, exist_ok=True)
+            
+            callbacks = [
+                # Exploration with initial high epsilon
+                CustomEpsilonCallback(
+                    start_eps=1.0 if model is None else 0.25,
+                    end_eps=0.1 if model is None else 0.01,
+                    decay_timesteps=int(period_timesteps * 0.7),
+                    iteration=iteration
+                ),
+                # Evaluation with test set
+                UnifiedEvalCallback(
+                    eval_env=val_env,
+                    test_env=test_env,
+                    train_data=train_data,
+                    val_data=val_data,
+                    test_data=test_data,
+                    best_model_save_path=iteration_dir,
+                    log_path=iteration_dir,
+                    eval_freq=args.eval_freq,
+                    deterministic=True,
+                    verbose=1,
+                    iteration=iteration,
+                    training_timesteps=period_timesteps
                 )
-                # Initial model is now trained, subsequent .learn() calls will be continuous.
-            else: # Continuing training with the existing, evolving model
-                print(f"\nContinuing training with existing model for iteration {iteration}...")
+            ]
+                
+            # Set training parameters based on warm start and model state
+            is_new_model = model is None
+            if args.warm_start and not is_new_model:
                 period_timesteps = ADAPTATION_TIMESTEPS
-                print(f"Training timesteps: {period_timesteps}")
-
-                # Set adaptation hyperparameters
                 model.learning_rate = ADAPTATION_MODEL_KWARGS['learning_rate']
-                model.set_env(train_env)
-                
-                # Calculate base timesteps for this iteration
-                start_timesteps = iteration * period_timesteps
-                
-                # Set up callbacks for continued training
-                callbacks = [
-                    # Exploration with decay
-                    CustomEpsilonCallback(
-                        start_eps=0.25 if iteration < 3 else 0.1,
-                        end_eps=0.01,
-                        decay_timesteps=int(period_timesteps * 0.75),
-                        iteration=iteration
-                    ),
-                    # Evaluation and model saving
-                    UnifiedEvalCallback(
-                        val_env,
-                        train_data=train_data,
-                        val_data=val_data,
-                        best_model_save_path=f"../results/{args.seed}",
-                        log_path=f"../results/{args.seed}",
-                        eval_freq=args.eval_freq,
-                        deterministic=True,
-                        verbose=0,
-                        iteration=iteration,
-                        training_timesteps=period_timesteps
-                    )
-                ]
-                
-                # Perform training with updated callbacks
-                results = model.learn(
-                    total_timesteps=period_timesteps,
-                    callback=callbacks,
-                    progress_bar=True,
-                    reset_num_timesteps=False # IMPORTANT: Continue learning from current state
-                )
-
-                # Update timesteps in evaluation results (if callback structure requires it)
-                # unified_callback = callbacks[1]
-                # for result in unified_callback.eval_results:
-                #     result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
+            else:
+                period_timesteps = INITIAL_TIMESTEPS
+            
+            print(f"\nTraining for {period_timesteps} timesteps...")
+            model.learn(
+                total_timesteps=period_timesteps,
+                callback=callbacks,
+                progress_bar=True,
+                reset_num_timesteps=is_new_model  # Reset only for new models
+            )
 
             # Save checkpoint of the continuously evolving model
             current_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{iteration}.zip")
             model.save(current_checkpoint_path)
             print(f"Saved iteration checkpoint: {current_checkpoint_path}")
 
-            # Logic for updating the overall_best_model_path
-            # UnifiedEvalCallback saves its best model from the validation window as "curr_best_model.zip"
-            curr_best_candidate_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
-
-            if os.path.exists(curr_best_candidate_path):
-                if not os.path.exists(overall_best_model_path) or \
-                   compare_models_on_full_dataset(curr_best_candidate_path, overall_best_model_path, data, args):
-                    # New overall best model found based on full dataset evaluation
-                    # Copy curr_best_candidate_path to overall_best_model_path
-                    # Note: This does NOT change the 'model' variable which continues to evolve.
-                    # We load and save to ensure it's a clean copy.
-                    temp_best_model = RecurrentPPO.load(curr_best_candidate_path, device=args.device)
-                    temp_best_model.save(overall_best_model_path)
-                    print(f"\nOverall best model updated: {overall_best_model_path}")
-
-                # Clean up the temporary curr_best_model.zip and its metrics
-                os.remove(curr_best_candidate_path)
-                metrics_path = curr_best_candidate_path.replace(".zip", "_metrics.json")
-                if os.path.exists(metrics_path):
-                    os.remove(metrics_path)
-            else:
-                print("\nNo new candidate for overall best model from this iteration's validation.")
+            # The best model from test set evaluation is already saved by the callback
+            # as best_test_model.zip in the iteration directory. This will be used
+            # for warm starting the next iteration.
+            best_test_model_path = os.path.join(iteration_dir, "best_test_model.zip")
+            print(f"\nBest model from this iteration saved at: {best_test_model_path}")
+            print("This model will be used for warm starting the next iteration if warm_start=True")
                 
             # Calculate iteration time and save state
             iteration_time = time.time() - iteration_start_time
-            # The model_path saved in state should be the overall_best_model_path,
-            # as it's the most robust one for a potential full resume.
-            # However, for resuming the continuous flow, checkpoint_iter_X.zip is used.
-            save_training_state(state_path, training_start + step_size, overall_best_model_path,
-                          iteration_time=iteration_time, total_iterations=total_iterations,
-                          step_size=step_size)
+            # Save state with path to best test model for potential resume
+            save_training_state(
+                state_path, 
+                training_start + step_size,
+                best_test_model_path,  # Use best test model path for resuming
+                iteration_time=iteration_time,
+                total_iterations=total_iterations,
+                step_size=step_size
+            )
             
             # Move to next iteration
             training_start += step_size
@@ -650,21 +574,11 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             print(f"Saved interrupt checkpoint: {interrupt_checkpoint_path}")
         return model # Return the current evolving model
 
-    # At the end of all iterations, the 'model' variable holds the continuously evolved model.
-    # 'overall_best_model_path' points to the model that performed best on the full dataset.
-    # Decide which one to return as the "final" model.
-    # For continuous learning, the latest state of 'model' is often most relevant.
+    # Save final evolved model
     print(f"\nWalk-forward optimization completed.")
-    print(f"Final state of continuously evolved model is in memory (and last checkpoint).")
-    if os.path.exists(overall_best_model_path):
-        print(f"Overall best performing model on full dataset saved at: {overall_best_model_path}")
-        # Optionally, load and return the overall_best_model_path if that's preferred as the final output
-        # model = RecurrentPPO.load(overall_best_model_path, device=args.device)
-
-    # Save the final state of the continuously evolved model
-    final_evolving_model_path = os.path.join(f"../results/{args.seed}", "model_final_evolved.zip")
+    final_model_path = os.path.join(f"../results/{args.seed}", "final_evolved_model.zip")
     if model:
-        model.save(final_evolving_model_path)
-        print(f"Final state of continuously evolved model saved to: {final_evolving_model_path}")
+        model.save(final_model_path)
+        print(f"Final evolved model saved to: {final_model_path}")
 
-    return model # Return the continuously evolved model
+    return model
