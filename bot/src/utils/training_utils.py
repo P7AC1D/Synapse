@@ -15,7 +15,7 @@ import os
 import json
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Tuple, Dict, Any, List
+from typing import Tuple, Dict, Any, List, Optional
 import time
 import threading
 from utils.progress import show_progress_continuous, stop_progress_indicator
@@ -23,7 +23,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.utils import get_linear_fn
 from sb3_contrib.ppo_recurrent import RecurrentPPO
-from trading.environment import TradingEnv
+from trading.environment import TradingEnv, TradingConfig
 import torch as th
 
 from callbacks.epsilon_callback import CustomEpsilonCallback
@@ -134,8 +134,35 @@ def format_time_remaining(seconds: float) -> str:
     
     return " ".join(parts)
 
-def save_training_state(path: str, training_start: int, model_path: str, 
-                       iteration_time: float = None, total_iterations: int = None, step_size: int = None) -> None:
+def save_interrupt_state(path: str, iteration: int, model_path: str) -> None:
+    """
+    Save state when training is interrupted, marking the current iteration as incomplete.
+    This ensures the next training session starts from the last fully completed iteration.
+    """
+    try:
+        with open(path, 'r') as f:
+            state = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+        
+    # Update state to reflect interrupted iteration
+    state['interrupted_iteration'] = iteration
+    state['model_path'] = model_path
+    state['timestamp'] = datetime.now().isoformat()
+    
+    # Set completed_iterations to the last fully completed iteration
+    state['completed_iterations'] = iteration - 1 if iteration > 0 else 0
+    
+    print(f"\nSaving interrupt state:")
+    print(f"Last completed iteration: {state['completed_iterations']}")
+    print(f"Interrupted at iteration: {iteration}")
+    
+    with open(path, 'w') as f:
+        json.dump(state, f)
+
+def save_training_state(path: str, training_start: int, model_path: str,
+                       iteration_time: float = None, total_iterations: int = None, 
+                       step_size: int = None, is_completed: bool = True) -> None:
     """
     Save current training state to file for resumable training.
     
@@ -170,11 +197,11 @@ def save_training_state(path: str, training_start: int, model_path: str,
         state['iteration_times'] = state['iteration_times'][-5:]
         state['avg_iteration_time'] = sum(state['iteration_times']) / len(state['iteration_times'])
     
-    # Calculate completed iterations based on current iteration
-    if step_size is not None:
-        current_iteration = training_start // step_size
-        # We count the current iteration as completed since we're saving at the end
-        state['completed_iterations'] = current_iteration
+        # Calculate current iteration and completed iterations
+        if step_size is not None:
+            current_iteration = training_start // step_size
+            # The completed iteration is the current - 1 since we're at the start of current
+            state['completed_iterations'] = current_iteration - 1 if current_iteration > 0 else 0
     
     if total_iterations is not None:
         state['total_iterations'] = total_iterations
@@ -204,14 +231,8 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         # Create evaluation environment
         env = TradingEnv(
             data=data,
-            initial_balance=args.initial_balance,
-            balance_per_lot=args.balance_per_lot,
-            predict_mode=False,  
-            point_value=args.point_value,
-            min_lots=args.min_lots,
-            max_lots=args.max_lots,
-            contract_size=args.contract_size,
-            window_size=args.window_size
+            predict_mode=False,
+            config=create_env_config(args)
         )
 
         # Start progress indicator
@@ -352,6 +373,20 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     except (FileNotFoundError, json.JSONDecodeError):
         return 0, None, {}
 
+def create_env_config(args, spread_variation: float = 0.0, slippage_range: float = 0.0) -> TradingConfig:
+    """Create TradingConfig from args with optional spread and slippage settings."""
+    return TradingConfig(
+        initial_balance=args.initial_balance,
+        balance_per_lot=args.balance_per_lot,
+        point_value=args.point_value,
+        min_lots=args.min_lots,
+        max_lots=args.max_lots,
+        contract_size=args.contract_size,
+        window_size=args.window_size,
+        spread_variation=spread_variation,
+        slippage_range=slippage_range
+    )
+
 def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
     Train a model using walk-forward optimization with continuous learning.
@@ -403,25 +438,110 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     checkpoints_dir = os.path.join(f"../results/{args.seed}", "checkpoints")
     os.makedirs(checkpoints_dir, exist_ok=True)
 
-    model = None
+    # Initialize model and state
     training_start, initial_model_path, state = load_training_state(state_path)
+    model = None
+    env_config = create_env_config(args)
+    
+    if training_start > 0:  # Resuming training
+        # Get last completed iteration from state
+        last_completed_iter = state.get('completed_iterations', -1)
+        interrupted_iter = state.get('interrupted_iteration')
+        
+        # Check for stale state at the start
+        stale_state = False
+        try:
+            with open(state_path, 'r') as f:
+                current_state = json.load(f)
+                if 'interrupted_iteration' in current_state:
+                    interrupt_time = datetime.fromisoformat(current_state['timestamp'])
+                    if (datetime.now() - interrupt_time).total_seconds() > 86400:  # 24 hours
+                        stale_state = True
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
 
-    if training_start > 0: # Resuming
-        # Try to load the model from the last iteration's test model first
-        prev_iter_test_model = os.path.join(f"../results/{args.seed}/iteration_{training_start // step_size - 1}", "best_test_model.zip")
-        if os.path.exists(prev_iter_test_model):
-            print(f"Resuming: Loading model from previous iteration's best test model: {prev_iter_test_model}")
-            model = RecurrentPPO.load(prev_iter_test_model, device=args.device)
-        else:
-            print(f"Resuming: No suitable model found for iteration {training_start // step_size}. Will create a new one.")
+        if stale_state:
+            print("\nWarning: Found stale interrupt state (>24h old)")
+            print("Starting fresh training to avoid inconsistent state")
+            # Reset state completely
+            current_state = {
+                'training_start': 0,
+                'timestamp': datetime.now().isoformat(),
+                'iteration_times': [],
+                'avg_iteration_time': 0.0,
+                'total_iterations': total_iterations
+            }
+            with open(state_path, 'w') as f:
+                json.dump(current_state, f)
+            print("- State file reset successfully")
+            print("- Starting fresh training...")
+            # Reset training variables and start fresh
             training_start = 0
             model = None
-    else: # Starting new training
+            interrupted_iter = None
+
+        if interrupted_iter is not None and training_start > 0:
+            print(f"\nResuming from interrupted iteration {interrupted_iter}")
+            print(f"Last completed iteration: {last_completed_iter}")
+            # Use the interrupted iteration's data window
+            training_start = interrupted_iter * step_size
+            train_start = training_start
+            print(f"Resuming training at index: {train_start}")
+            
+            # Clear interrupt state since we're resuming
+            try:
+                with open(state_path, 'r') as f:
+                    current_state = json.load(f)
+                if 'interrupted_iteration' in current_state:
+                    interrupted = current_state['interrupted_iteration']
+                    del current_state['interrupted_iteration']
+                    print(f"\nState Transition:")
+                    print(f"- Cleared interrupted state (was iteration {interrupted})")
+                    print(f"- Resuming training from iteration {interrupted}")
+                    with open(state_path, 'w') as f:
+                        json.dump(current_state, f)
+                    print("- State file updated successfully")
+            except (FileNotFoundError, json.JSONDecodeError):
+                pass
+        else:
+            print(f"\nResuming from last completed iteration: {last_completed_iter}")
+            train_start = training_start
+            print(f"Resuming training at index: {train_start}")
+        
+        # Setup initial environment for model loading
+        val_start = train_start + 2880
+        train_data = data.iloc[train_start:val_start].copy()
+        train_env = Monitor(TradingEnv(train_data, predict_mode=False, config=env_config))
+        # Try loading models in order of preference
+        model_paths = [
+            os.path.join(f"../results/{args.seed}/iteration_{last_completed_iter}", "best_test_model.zip"),
+            os.path.join(checkpoints_dir, f"checkpoint_iter_{last_completed_iter}.zip"),
+            os.path.join(checkpoints_dir, f"checkpoint_interrupt_iter_{last_completed_iter}.zip")
+        ]
+
+        for model_path in model_paths:
+            if os.path.exists(model_path):
+                print(f"Resuming: Loading model from {model_path}")
+                try:
+                    model = RecurrentPPO.load(
+                        model_path,
+                        env=train_env,
+                        device=args.device,
+                        custom_objects={"learning_rate": ADAPTATION_MODEL_KWARGS["learning_rate"]}
+                    )
+                    model.set_env(train_env)
+                    print(f"Successfully loaded model from {model_path}")
+                    break
+                except Exception as e:
+                    print(f"Failed to load model from {model_path}: {e}")
+                    continue
+                    
+        if model is None:
+            print(f"\nWarning: Could not find any valid model for iteration {last_completed_iter}")
+            print("\nStarting fresh training...")
+            training_start = 0
+    else:  # Starting new training
         print("Starting new training.")
-        training_start = 0
-        model = None
-        # If best_model.zip exists from a previous unrelated run, we might want to ignore it or handle it.
-        # For now, a fresh start means a new model.
         training_start = 0
         model = None
     
@@ -488,48 +608,59 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             print(f"=== Test Period: {test_data.index[0]} to {test_data.index[-1]} ===")
             print(f"=== Walk-forward Iteration: {iteration}/{total_iterations} ===")
         
-            env_params = {
-                'initial_balance': args.initial_balance,
-                'balance_per_lot': args.balance_per_lot,
-                'predict_mode': False,
-                'point_value': args.point_value,
-                'min_lots': args.min_lots,
-                'max_lots': args.max_lots,
-                'contract_size': args.contract_size,
-                'window_size': args.window_size
-            }
+            # Create shared environment config
+            env_config = create_env_config(args)
         
-            # Setup environments
-            train_env = Monitor(TradingEnv(train_data, **env_params))
-            val_env = Monitor(TradingEnv(val_data, **env_params))
-            test_env = Monitor(TradingEnv(test_data, **env_params))
+            # Setup environments with config
+            train_env = Monitor(TradingEnv(train_data, predict_mode=False, config=env_config))
+            val_env = Monitor(TradingEnv(val_data, predict_mode=False, config=env_config))
+            test_env = Monitor(TradingEnv(test_data, predict_mode=False, config=env_config))
 
+            # Calculate training timesteps for this window
+            train_window_size = val_start - train_start
+            period_timesteps = calculate_timesteps(train_window_size)
+            
             # Handle warm starting from previous best model
             if model is None:
                 print("\nPerforming initial training...")
-                train_window_size = val_start - train_start
-                period_timesteps = calculate_timesteps(train_window_size)
                 
                 if args.warm_start:
-                    # Try loading from previous iteration's best test model
-                    prev_iter_model_path = os.path.join(f"../results/{args.seed}/iteration_{iteration-1}", "best_test_model.zip")
-                    if os.path.exists(prev_iter_model_path):
-                        print(f"Warm starting from previous iteration: {prev_iter_model_path}")
-                        model = RecurrentPPO.load(
-                            prev_iter_model_path,
-                            env=train_env,
-                            device=args.device,
-                            **ADAPTATION_MODEL_KWARGS  # Use adaptation hyperparameters for warm start
-                        )
-                    # Fallback to initial model if specified
-                    elif args.initial_model and os.path.exists(args.initial_model):
-                        print(f"Warm starting from initial model: {args.initial_model}")
-                        model = RecurrentPPO.load(
-                            args.initial_model,
-                            env=train_env,
-                            device=args.device,
-                            **ADAPTATION_MODEL_KWARGS
-                        )
+                    # Try loading models in order of preference
+                    last_completed = state.get('completed_iterations', iteration - 1)
+                    model_paths = []
+                    
+                    if last_completed >= 0:
+                        # Try last completed iteration's models
+                        model_paths.extend([
+                            os.path.join(f"../results/{args.seed}/iteration_{last_completed}", "best_test_model.zip"),
+                            os.path.join(checkpoints_dir, f"checkpoint_iter_{last_completed}.zip"),
+                            os.path.join(checkpoints_dir, f"checkpoint_interrupt_iter_{last_completed}.zip")
+                        ])
+                    
+                    # Add initial model as final fallback
+                    if args.initial_model:
+                        model_paths.append(args.initial_model)
+                    
+                    # Try loading each model in order
+                    for model_path in model_paths:
+                        if os.path.exists(model_path):
+                            try:
+                                print(f"Warm starting from: {model_path}")
+                                model = RecurrentPPO.load(
+                                    model_path,
+                                    env=train_env,
+                                    device=args.device,
+                                    custom_objects={"learning_rate": ADAPTATION_MODEL_KWARGS["learning_rate"]}
+                                )
+                                # Ensure environment is properly set
+                                model.set_env(train_env)
+                                break
+                            except Exception as e:
+                                print(f"Failed to load model from {model_path}: {e}")
+                                continue
+                    
+                    if model is None:
+                        print("\nCould not load any existing models. Starting fresh training...")
                 
             # Setup iteration directories
             iteration_dir = os.path.join(f"../results/{args.seed}", f"iteration_{iteration}")
@@ -577,11 +708,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 
             # Set training parameters based on warm start and model state
             is_new_model = model is None
-            # Calculate training timesteps based on window size
-            train_window_size = val_start - train_start
-            period_timesteps = calculate_timesteps(train_window_size)
             
-            # Use adaptation learning rate for warm started models
+            # Use adaptation learning rate for warm started models if applicable
             if args.warm_start and not is_new_model:
                 model.learning_rate = ADAPTATION_MODEL_KWARGS['learning_rate']
             
@@ -605,17 +733,23 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             print(f"\nBest model from this iteration saved at: {best_test_model_path}")
             print("This model will be used for warm starting the next iteration if warm_start=True")
                 
-            # Calculate iteration time and save state
+            # Post-iteration cleanup and state management
             iteration_time = time.time() - iteration_start_time
-            # Save state with path to best test model for potential resume
+            
+            # Update state for completed iteration
             save_training_state(
                 state_path, 
-                training_start + step_size,
-                best_test_model_path,  # Use best test model path for resuming
+                training_start + step_size,  # Next iteration's start
+                best_test_model_path,  # Best model from current iteration
                 iteration_time=iteration_time,
                 total_iterations=total_iterations,
-                step_size=step_size
+                step_size=step_size,
+                is_completed=True  # Mark this iteration as completed
             )
+            
+            # Print iteration summary
+            print(f"\nCompleted iteration {iteration}. Saved best model: {best_test_model_path}")
+            print(f"Time taken: {iteration_time/60:.1f} minutes")
             
             # Post-training evaluation on test set
             print("\nPerforming final evaluation on test set...")
@@ -636,7 +770,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             
             # Move to next iteration
             training_start += step_size
-
+            
     except KeyboardInterrupt:
         print("\nTraining interrupted. Progress saved - use same command to resume.")
         # Save the current state of the evolving model upon interruption
@@ -644,6 +778,11 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             interrupt_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_interrupt_iter_{iteration}.zip")
             model.save(interrupt_checkpoint_path)
             print(f"Saved interrupt checkpoint: {interrupt_checkpoint_path}")
+            
+            # Save interrupted state without incrementing completed iterations
+            save_interrupt_state(state_path, iteration, interrupt_checkpoint_path)
+            print(f"Training state saved. Will resume from iteration {iteration}")
+            
         return model # Return the current evolving model
 
     # Save final evolved model
