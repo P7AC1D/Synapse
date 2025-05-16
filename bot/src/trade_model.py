@@ -1,6 +1,6 @@
 """Models for trading prediction using reinforcement learning."""
-
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple
 
@@ -8,75 +8,98 @@ import numpy as np
 import pandas as pd
 from sb3_contrib.ppo_recurrent import RecurrentPPO
 
-from trading.environment import TradingEnv
+from trading.environment import TradingEnv, TradingConfig
 from trading.actions import Action
+
+@dataclass
+class ModelConfig:
+    """Configuration for trade model."""
+    model_path: Path
+    balance_per_lot: float = 1000.0
+    initial_balance: float = 10000.0
+    point_value: float = 0.01
+    min_lots: float = 0.01
+    max_lots: float = 200.0
+    contract_size: float = 100.0
+    window_size: int = 50
+    warmup_window: int = 100
+    device: str = 'cpu'
+
+    def validate(self) -> None:
+        """Validate configuration parameters."""
+        if not self.model_path.exists():
+            raise ValueError(f"Model file not found: {self.model_path}")
+        if self.balance_per_lot <= 0:
+            raise ValueError("balance_per_lot must be positive")
+        if self.initial_balance <= 0:
+            raise ValueError("initial_balance must be positive")
+        if self.min_lots <= 0 or self.max_lots <= 0:
+            raise ValueError("Lot sizes must be positive")
+        if self.min_lots > self.max_lots:
+            raise ValueError("min_lots cannot be greater than max_lots")
+        if self.window_size <= 0:
+            raise ValueError("window_size must be positive")
+        if self.warmup_window <= 0:
+            raise ValueError("warmup_window must be positive")
 
 class TradeModel:
     """Class for loading and making predictions with a trained PPO model."""
     
-    def __init__(self, model_path: str, balance_per_lot: float = 1000.0, initial_balance: float = 10000.0,
-                 point_value: float = 0.01,
-                 min_lots: float = 0.01, max_lots: float = 200.0,
-                 contract_size: float = 100.0, window_size: int = 50):
-        """
-        Initialize the trade model.
+    def __init__(self, config: ModelConfig):
+        """Initialize the trade model.
         
         Args:
-            model_path: Path to the saved model file
-            balance_per_lot: Account balance required per 0.01 lot (default: 1000.0)
-            initial_balance: Starting account balance (default: 10000.0)
-            point_value: Value of one price point movement (default: 0.01)
-            min_lots: Minimum lot size (default: 0.01)
-            max_lots: Maximum lot size (default: 200.0)
-            contract_size: Standard contract size (default: 100.0)
-            window_size: Number of past timesteps for market features (default: 50)
+            config: Model configuration object
         """
+        config.validate()
+        self.config = config
         self.logger = logging.getLogger(__name__)
-        self.model_path = Path(model_path)
+        self.logger.info(f"Initializing trade model with {config.model_path}")
+        
+        # Initialize model state
         self.model = None
-        self.balance_per_lot = balance_per_lot
-        self.initial_balance = initial_balance
-        self.point_value = point_value
-        self.min_lots = min_lots
-        self.max_lots = max_lots
-        self.contract_size = contract_size
-        self.window_size = window_size
-        # LSTM state management
+        # State management
         self.lstm_states = None
-        self.is_recurrent = True  # Flag to indicate this is a recurrent model
+        self.is_recurrent = True
         
-        self.required_columns = [
-            'open',   # Required for price action features
-            'close',  # Price data
-            'high',   # Price data
-            'low',    # Price data
-            'spread'  # Price data
-        ]
+        # Required data columns - could be moved to config if needs to be customizable
+        self.required_columns = {
+            'open': 'Required for price action features',
+            'close': 'Price data',
+            'high': 'Price data',
+            'low': 'Price data',
+            'spread': 'Price data'
+        }
         
-        # Load the model
-        self.load_model()
-        
-    def load_model(self) -> bool:
-        """Load the pre-trained PPO-LSTM model.
-        
-        Returns:
-            bool: True if model loaded successfully, False otherwise
-        """
+        # Initialize model
         try:
-            # Load the PPO-LSTM model with saved hyperparameters
+            self._initialize_model()
+        except Exception as e:
+            self.logger.error(f"Failed to initialize model: {e}")
+            raise
+            
+    def _initialize_model(self) -> None:
+        """Initialize and load the PPO model."""
+        self.logger.debug(f"Loading model from {self.config.model_path}")
+        
+        try:
             self.model = RecurrentPPO.load(
-                self.model_path,
+                self.config.model_path,
                 print_system_info=False,
-                device='cpu'
+                device=self.config.device
             )
-            # Initialize LSTM states to None
+            
+            # Verify model architecture
+            if not hasattr(self.model, 'lstm_hidden_size'):
+                raise ValueError("Model does not have LSTM architecture")
+                
+            # Reset LSTM states
             self.lstm_states = None
-            self.logger.info(f"Model successfully loaded from {self.model_path}")
-            return True
+            self.logger.debug("Model loaded successfully")
             
         except Exception as e:
-            self.logger.error(f"Error loading model: {e}")
-            return False
+            self.logger.error(f"Failed to load model: {str(e)}")
+            raise ValueError(f"Model loading failed: {str(e)}")
     
     def prepare_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -135,6 +158,125 @@ class TradeModel:
                 return f"{base_desc} current {position_map[position_type]} position"
             return f"{base_desc} but rejected - no position exists"
             
+    def _calculate_position_metrics(self, env: TradingEnv) -> Dict[str, Any]:
+        """Calculate current position metrics."""
+        position_metrics = {
+            'active_positions': 1 if env.current_position is not None else 0,
+        }
+        
+        if env.current_position:
+            unrealized_pnl, profit_points = env.action_handler.manage_position()
+            position_metrics['position'] = {
+                'direction': env.current_position['direction'],
+                'entry_price': env.current_position['entry_price'],
+                'lot_size': env.current_position['lot_size'],
+                'hold_time': env.current_step - env.current_position['entry_step'],
+                'unrealized_pnl': unrealized_pnl,
+                'profit_points': profit_points
+            }
+            
+        return position_metrics
+        
+    def _calculate_streak_metrics(self, trades: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Calculate trade streak metrics."""
+        current_win_streak = 0
+        current_loss_streak = 0
+        max_win_streak = 0
+        max_loss_streak = 0
+        
+        for trade in trades:
+            pnl = trade.get('pnl', 0)
+            if pnl > 0 and abs(pnl) >= 1e-8:
+                current_win_streak += 1
+                current_loss_streak = 0
+                max_win_streak = max(max_win_streak, current_win_streak)
+            else:
+                current_loss_streak += 1
+                current_win_streak = 0
+                max_loss_streak = max(max_loss_streak, current_loss_streak)
+                
+        return {
+            'max_consecutive_wins': max_win_streak,
+            'max_consecutive_losses': max_loss_streak,
+            'current_consecutive_wins': current_win_streak,
+            'current_consecutive_losses': current_loss_streak
+        }
+        
+    def _calculate_hold_time_metrics(self, trades_df: pd.DataFrame, 
+                                   winning_trades: pd.DataFrame, 
+                                   losing_trades: pd.DataFrame) -> Dict[str, Any]:
+        """Calculate hold time metrics for trades."""
+        metrics = {
+            'avg_hold_time': float(trades_df['hold_time'].mean()),
+            'median_hold_time': float(trades_df['hold_time'].median()),
+        }
+        
+        if not winning_trades.empty and 'hold_time' in winning_trades.columns:
+            metrics.update({
+                'win_hold_time': float(winning_trades['hold_time'].mean()),
+                'win_hold_time_0th': float(winning_trades['hold_time'].min()),
+                'win_hold_time_1st': float(winning_trades['hold_time'].quantile(0.01)),
+                'win_hold_time_10th': float(winning_trades['hold_time'].quantile(0.1)),
+                'win_hold_time_20th': float(winning_trades['hold_time'].quantile(0.2)),
+                'win_hold_time_median': float(winning_trades['hold_time'].median()),
+                'win_hold_time_80th': float(winning_trades['hold_time'].quantile(0.8)),
+                'win_hold_time_90th': float(winning_trades['hold_time'].quantile(0.9)),
+                'win_hold_time_99th': float(winning_trades['hold_time'].quantile(0.99)),
+                'win_hold_time_100th': float(winning_trades['hold_time'].max())
+            })
+            
+        if not losing_trades.empty and 'hold_time' in losing_trades.columns:
+            metrics.update({
+                'loss_hold_time': float(losing_trades['hold_time'].mean()),
+                'loss_hold_time_0th': float(losing_trades['hold_time'].min()),
+                'loss_hold_time_1st': float(losing_trades['hold_time'].quantile(0.01)),
+                'loss_hold_time_10th': float(losing_trades['hold_time'].quantile(0.1)),
+                'loss_hold_time_20th': float(losing_trades['hold_time'].quantile(0.2)),
+                'loss_hold_time_median': float(losing_trades['hold_time'].median()),
+                'loss_hold_time_80th': float(losing_trades['hold_time'].quantile(0.8)),
+                'loss_hold_time_90th': float(losing_trades['hold_time'].quantile(0.9)),
+                'loss_hold_time_99th': float(losing_trades['hold_time'].quantile(0.99)),
+                'loss_hold_time_100th': float(losing_trades['hold_time'].max())
+            })
+            
+        return metrics
+        
+    def _calculate_points_metrics(self, winning_trades: pd.DataFrame, 
+                                losing_trades: pd.DataFrame) -> Dict[str, Any]:
+        """Calculate profit/loss points metrics."""
+        metrics = {}
+        
+        if not winning_trades.empty:
+            metrics.update({
+                'avg_win_points': float(winning_trades["profit_points"].mean()),
+                'win_points_0th': float(winning_trades["profit_points"].min()),
+                'win_points_1st': float(winning_trades["profit_points"].quantile(0.01)),
+                'win_points_10th': float(winning_trades["profit_points"].quantile(0.1)),
+                'win_points_20th': float(winning_trades["profit_points"].quantile(0.2)),
+                'median_win_points': float(winning_trades["profit_points"].median()),
+                'win_points_80th': float(winning_trades["profit_points"].quantile(0.8)),
+                'win_points_90th': float(winning_trades["profit_points"].quantile(0.9)),
+                'win_points_99th': float(winning_trades["profit_points"].quantile(0.99)),
+                'win_points_100th': float(winning_trades["profit_points"].max())
+            })
+        
+        if not losing_trades.empty:
+            abs_loss_points = losing_trades["profit_points"].abs()
+            metrics.update({
+                'avg_loss_points': -float(abs_loss_points.mean()),
+                'loss_points_0th': -float(abs_loss_points.min()),
+                'loss_points_1st': -float(abs_loss_points.quantile(0.01)),
+                'loss_points_10th': -float(abs_loss_points.quantile(0.1)),
+                'loss_points_20th': -float(abs_loss_points.quantile(0.2)),
+                'median_loss_points': -float(abs_loss_points.median()),
+                'loss_points_80th': -float(abs_loss_points.quantile(0.8)),
+                'loss_points_90th': -float(abs_loss_points.quantile(0.9)),
+                'loss_points_99th': -float(abs_loss_points.quantile(0.99)),
+                'loss_points_100th': -float(abs_loss_points.max())
+            })
+            
+        return metrics
+
     def _calculate_backtest_metrics(self, env: TradingEnv, total_steps: int, total_reward: float) -> Dict[str, Any]:
         """
         Calculate metrics from backtest results.
@@ -256,74 +398,15 @@ class TradeModel:
             if len(returns) > 1 and returns.std() > 0:
                 metrics['sharpe_ratio'] = float((returns.mean() / returns.std()) * np.sqrt(252))
             
-            # Hold time analysis with medians and 90th percentiles
+            # Calculate hold time metrics
             if 'hold_time' in trades_df.columns:
-                metrics.update({
-                    'avg_hold_time': float(trades_df['hold_time'].mean()),
-                    'median_hold_time': float(trades_df['hold_time'].median()),
-                })
-                
-                if not winning_trades.empty and 'hold_time' in winning_trades.columns:
-                    metrics.update({
-                        'win_hold_time': float(winning_trades['hold_time'].mean()),
-                        'win_hold_time_0th': float(winning_trades['hold_time'].min()),
-                        'win_hold_time_1st': float(winning_trades['hold_time'].quantile(0.01)),
-                        'win_hold_time_10th': float(winning_trades['hold_time'].quantile(0.1)),
-                        'win_hold_time_20th': float(winning_trades['hold_time'].quantile(0.2)),
-                        'win_hold_time_median': float(winning_trades['hold_time'].median()),
-                        'win_hold_time_80th': float(winning_trades['hold_time'].quantile(0.8)),
-                        'win_hold_time_90th': float(winning_trades['hold_time'].quantile(0.9)),
-                        'win_hold_time_99th': float(winning_trades['hold_time'].quantile(0.99)),
-                        'win_hold_time_100th': float(winning_trades['hold_time'].max())
-                    })
-                    
-                if not losing_trades.empty and 'hold_time' in losing_trades.columns:
-                    metrics.update({
-                        'loss_hold_time': float(losing_trades['hold_time'].mean()),
-                        'loss_hold_time_0th': float(losing_trades['hold_time'].min()),
-                        'loss_hold_time_1st': float(losing_trades['hold_time'].quantile(0.01)),
-                        'loss_hold_time_10th': float(losing_trades['hold_time'].quantile(0.1)),
-                        'loss_hold_time_20th': float(losing_trades['hold_time'].quantile(0.2)),
-                        'loss_hold_time_median': float(losing_trades['hold_time'].median()),
-                        'loss_hold_time_80th': float(losing_trades['hold_time'].quantile(0.8)),
-                        'loss_hold_time_90th': float(losing_trades['hold_time'].quantile(0.9)),
-                        'loss_hold_time_99th': float(losing_trades['hold_time'].quantile(0.99)),
-                        'loss_hold_time_100th': float(losing_trades['hold_time'].max())
-                    })
+                metrics.update(self._calculate_hold_time_metrics(trades_df, winning_trades, losing_trades))
+        
+        # Calculate points and update metrics
+        metrics.update(self._calculate_points_metrics(winning_trades, losing_trades))
         
         # Include trade history
         metrics['trades'] = env.trades
-
-        # Calculate points metrics including averages, medians, and 90th percentiles
-        if not winning_trades.empty:
-            metrics.update({
-                'avg_win_points': float(winning_trades["profit_points"].mean()),
-                'win_points_0th': float(winning_trades["profit_points"].min()),
-                'win_points_1st': float(winning_trades["profit_points"].quantile(0.01)),
-                'win_points_10th': float(winning_trades["profit_points"].quantile(0.1)),
-                'win_points_20th': float(winning_trades["profit_points"].quantile(0.2)),
-                'median_win_points': float(winning_trades["profit_points"].median()),
-                'win_points_80th': float(winning_trades["profit_points"].quantile(0.8)),
-                'win_points_90th': float(winning_trades["profit_points"].quantile(0.9)),
-                'win_points_99th': float(winning_trades["profit_points"].quantile(0.99)),
-                'win_points_100th': float(winning_trades["profit_points"].max())
-            })
-        
-        if not losing_trades.empty:
-            # Calculate stats on absolute values, then make negative
-            abs_loss_points = losing_trades["profit_points"].abs()
-            metrics.update({
-                'avg_loss_points': -float(abs_loss_points.mean()),
-                'loss_points_0th': -float(abs_loss_points.min()),
-                'loss_points_1st': -float(abs_loss_points.quantile(0.01)),
-                'loss_points_10th': -float(abs_loss_points.quantile(0.1)),
-                'loss_points_20th': -float(abs_loss_points.quantile(0.2)),
-                'median_loss_points': -float(abs_loss_points.median()),
-                'loss_points_80th': -float(abs_loss_points.quantile(0.8)),
-                'loss_points_90th': -float(abs_loss_points.quantile(0.9)),
-                'loss_points_99th': -float(abs_loss_points.quantile(0.99)),
-                'loss_points_100th': -float(abs_loss_points.max())
-            })
         
         # Calculate consecutive trade metrics
         current_win_streak = 0
@@ -353,87 +436,104 @@ class TradeModel:
         
         return metrics
 
-    def evaluate(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: Optional[float] = None,
-                spread_variation: float = 0.0, slippage_range: float = 0.0) -> Dict[str, Any]:
-        """
-        Evaluate model performance without verbose logging.
+    def evaluate(self, data: pd.DataFrame, initial_balance: Optional[float] = None,
+                balance_per_lot: Optional[float] = None, spread_variation: float = 0.0,
+                slippage_range: float = 0.0) -> Dict[str, Any]:
+        """Evaluate model performance with backtesting.
         
         Args:
             data: DataFrame with market data
-            initial_balance: Starting account balance
-            balance_per_lot: Account balance required per 0.01 lot (if None, uses instance default)
+            initial_balance: Optional starting balance (defaults to config value)
+            balance_per_lot: Optional balance per lot (defaults to config value)
             spread_variation: Random spread variation range (default: 0.0)
             slippage_range: Maximum price slippage range in points (default: 0.0)
                 
         Returns:
             Dictionary with backtest metrics and trade summary
+            
+        Raises:
+            ValueError: If model not loaded or data validation fails
         """
         if self.model is None:
             raise ValueError("Model not loaded. Call load_model() first.")
-        
-        # Use provided balance_per_lot or fall back to instance default
-        balance_per_lot = balance_per_lot if balance_per_lot is not None else self.balance_per_lot
-        
-        # Prepare data
-        data = self.prepare_data(data)
-        
-        # Perform LSTM warmup if model supports it
-        if self.is_lstm_model():
-            warmup_window = min(100, len(data) // 10)  # Use 100 bars or 10% of data
-            self.warmup_lstm_state(data.iloc[:-warmup_window], warmup_window)
-            print(f"\nWarmed up LSTM states using {warmup_window} bars")
-        
-        # Create environment for evaluation
-        env = TradingEnv(
-            data=data,
-            initial_balance=initial_balance,
-            balance_per_lot=balance_per_lot,
-            random_start=False,
-            point_value=self.point_value,
-            min_lots=self.min_lots,
-            max_lots=self.max_lots,
-            contract_size=self.contract_size,
-            spread_variation=spread_variation,
-            slippage_range=slippage_range,
-            window_size=self.window_size
-        )
-        
-        # Initialize environment
-        obs, _ = env.reset()
-        
-        done = False
-        step = 0
-        total_reward = 0.0
-        
-        while not done:
-            # Make prediction with LSTM states
-            raw_action, self.lstm_states = self.model.predict(
-                obs,
-                state=self.lstm_states,
-                deterministic=True
+        try:
+            # Validate and prepare data
+            data = self.prepare_data(data)
+            
+            # Use config values if not overridden
+            initial_balance = initial_balance or self.config.initial_balance
+            balance_per_lot = balance_per_lot or self.config.balance_per_lot
+            
+            self.logger.info(
+                f"Starting evaluation with balance=${initial_balance:.2f}, "
+                f"balance_per_lot=${balance_per_lot:.2f}"
             )
             
-            # Process action with improved error handling
-            try:
-                if isinstance(raw_action, np.ndarray):
-                    action_value = int(raw_action.item())
-                else:
-                    action_value = int(raw_action)
-                discrete_action = action_value % 4
-                
-                # Add explicit position check and force close if needed
-                if env.current_position is not None and discrete_action in [Action.BUY, Action.SELL]:
-                    discrete_action = Action.HOLD 
-            except (ValueError, TypeError):
-                discrete_action = 0
+            # Perform LSTM warm-up
+            if self.is_lstm_model():
+                warmup_window = min(self.config.warmup_window, len(data) // 10)
+                self.warmup_lstm_state(data.iloc[:-warmup_window], warmup_window)
+                self.logger.info(f"Warmed up LSTM states using {warmup_window} bars")
             
-            # Execute step
-            obs, reward, done, _, _ = env.step(discrete_action)
-            total_reward += reward
-            step += 1
-        
-        # Calculate metrics with additional error handling
-        return self._calculate_backtest_metrics(env, step, total_reward)
+            # Create environment for evaluation
+            env = TradingEnv(
+                data=data,
+                config=TradingConfig(
+                    initial_balance=initial_balance,
+                    balance_per_lot=balance_per_lot,
+                    point_value=self.config.point_value,
+                    min_lots=self.config.min_lots,
+                    max_lots=self.config.max_lots,
+                    contract_size=self.config.contract_size,
+                    window_size=self.config.window_size,
+                    spread_variation=spread_variation,
+                    slippage_range=slippage_range
+                )
+            )
+            
+            # Run evaluation
+            obs, _ = env.reset()
+            done = False
+            step = 0
+            total_reward = 0.0
+            
+            while not done:
+                raw_action, self.lstm_states = self.model.predict(
+                    obs,
+                    state=self.lstm_states,
+                    deterministic=True
+                )
+                
+                # Process action with improved error handling
+                try:
+                    if isinstance(raw_action, np.ndarray):
+                        action_value = int(raw_action.item())
+                    else:
+                        action_value = int(raw_action)
+                    discrete_action = action_value % 4
+                    
+                    if env.current_position is not None and discrete_action in [Action.BUY, Action.SELL]:
+                        discrete_action = Action.HOLD 
+                except (ValueError, TypeError):
+                    discrete_action = 0
+                
+                # Execute step
+                obs, reward, done, _, _ = env.step(discrete_action)
+                total_reward += reward
+                step += 1
+            
+            # Calculate final metrics
+            metrics = self._calculate_backtest_metrics(env, step, total_reward)
+            self.logger.info(
+                f"Evaluation completed: {metrics['total_trades']} trades, "
+                f"return {metrics['return_pct']:.2f}%, "
+                f"win rate {metrics['win_rate']:.1f}%"
+            )
+            return metrics
+            
+        except Exception as e:
+            self.logger.error(f"Evaluation failed: {str(e)}")
+            raise
 
     def predict_single(self, data: pd.DataFrame, env: Optional[TradingEnv] = None) -> Dict[str, Any]:
         """
@@ -456,15 +556,17 @@ class TradeModel:
         if env is None:
             env = TradingEnv(
                 data=data,
-                initial_balance=self.initial_balance,
-                balance_per_lot=self.balance_per_lot,
-                random_start=False,
+                config=TradingConfig(
+                    initial_balance=self.config.initial_balance,
+                    balance_per_lot=self.config.balance_per_lot,
+                    point_value=self.config.point_value,
+                    min_lots=self.config.min_lots,
+                    max_lots=self.config.max_lots,
+                    contract_size=self.config.contract_size,
+                    window_size=self.config.window_size
+                ),
                 predict_mode=True,
-                point_value=self.point_value,
-                min_lots=self.min_lots,
-                max_lots=self.max_lots,
-                contract_size=self.contract_size,
-                window_size=self.window_size
+                random_start=False
             )
             # Initialize environment
             obs, _ = env.reset()
@@ -535,15 +637,16 @@ class TradeModel:
         # Create environment for warm-up
         env = TradingEnv(
             data=data.iloc[-warmup_window:],
-            initial_balance=self.initial_balance,
-            balance_per_lot=self.balance_per_lot,
-            random_start=False,
-            predict_mode=True,
-            point_value=self.point_value,
-            min_lots=self.min_lots,
-            max_lots=self.max_lots,
-            contract_size=self.contract_size,
-            window_size=self.window_size
+            config=TradingConfig(
+                initial_balance=self.config.initial_balance,
+                balance_per_lot=self.config.balance_per_lot,
+                point_value=self.config.point_value,
+                min_lots=self.config.min_lots,
+                max_lots=self.config.max_lots,
+                contract_size=self.config.contract_size,
+                window_size=self.config.window_size
+            ),
+            predict_mode=True
         )
         
         # Initialize environment
