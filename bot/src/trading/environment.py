@@ -1,16 +1,40 @@
 """Trading environment for single-position trading with PPO-LSTM."""
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass
 from typing import Dict, List, Tuple, Any, Optional
 from gymnasium import spaces
 from gymnasium.utils import EzPickle
 import gymnasium as gym
+import logging
 
 from .actions import Action, ActionHandler
 from .features import FeatureProcessor
 from .metrics import MetricsTracker
 from .rendering import Renderer
 from .rewards import RewardCalculator
+
+# Feature indices for market state
+TREND_STRENGTH_IDX = 5
+VOLATILITY_BREAKOUT_IDX = 4
+TREND_THRESHOLD = 0.3
+VOLATILITY_THRESHOLD = 0.7
+
+@dataclass
+class TradingConfig:
+    """Configuration for trading environment."""
+    initial_balance: float = 10000.0
+    balance_per_lot: float = 1000.0
+    point_value: float = 0.001
+    min_lots: float = 0.01
+    max_lots: float = 200.0
+    contract_size: float = 100.0
+    spread_variation: float = 0.0
+    slippage_range: float = 0.0
+    window_size: int = 50
+    max_drawdown: float = 0.4
+    min_bars_per_episode: int = 240
+    currency_conversion: float = 1.0
 
 class TradingEnv(gym.Env, EzPickle):
     """Trading environment for single-position trading with PPO-LSTM."""
@@ -34,74 +58,73 @@ class TradingEnv(gym.Env, EzPickle):
             return self.metrics.balance
         return self.initial_balance  # Fallback before metrics initialization
         
-    def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
-                 balance_per_lot: float = 1000.0, predict_mode: bool = False, 
-                 currency_conversion: Optional[float] = None,
-                 point_value: float = 0.001,
-                 min_lots: float = 0.01, max_lots: float = 200.0,
-                 contract_size: float = 100.0,
-                 spread_variation: float = 0.0,
-                 slippage_range: float = 0.0,
-                 window_size: int = 50):
-
-        # Add hold time tracking
-        self.current_hold_time = 0
+    def __init__(self, data: pd.DataFrame, predict_mode: bool = False, config: Optional[TradingConfig] = None):
         """Initialize trading environment.
         
         Args:
             data: DataFrame with OHLCV data
-            initial_balance: Starting account balance
-            balance_per_lot: Account balance required per 0.01 lot
             predict_mode: Whether environment is being used for live prediction (True) or backtesting (False)
-            currency_conversion: Optional conversion rate for account currency (e.g. USD/ZAR)
-            point_value: Value of one price point movement (default: 0.001 for Gold)
-            min_lots: Minimum lot size (default: 0.01)
-            max_lots: Maximum lot size (default: 200.0)
-            contract_size: Standard contract size (default: 100.0 for Gold)
-            window_size: Number of past timesteps for market features (default: 50)
+            config: Trading environment configuration. If None, uses default values.
         """
         super().__init__()
         EzPickle.__init__(self)
-
-        self.window_size = window_size
         
-        # Trading constants
-        self.POINT_VALUE = point_value
-        self.MIN_LOTS = min_lots
-        self.MAX_LOTS = max_lots
-        self.CONTRACT_SIZE = contract_size
-        self.BALANCE_PER_LOT = balance_per_lot
-        self.MAX_DRAWDOWN = 0.4      # Maximum drawdown
-        self.initial_balance = initial_balance
-        self.currency_conversion = currency_conversion or 1.0  # Default to 1.0 if not provided
+        # Input validation
+        if data is None or len(data) == 0:
+            raise ValueError("Input data cannot be None or empty")
         
-        # Set predict_context flag for live trading vs backtesting
+        # Initialize configuration and logging
+        self.config = config or TradingConfig()
+        self.logger = logging.getLogger(__name__)
+        self.logger.debug("Initializing trading environment...")
+        
+        # Validate configuration
+        if self.config.initial_balance <= 0:
+            raise ValueError("Initial balance must be positive")
+        if self.config.window_size <= 0:
+            raise ValueError("Window size must be positive")
+        if self.config.min_bars_per_episode <= 0:
+            raise ValueError("Minimum bars per episode must be positive")
+            
+        # Initialize core variables
         self.predict_context = predict_mode
+        self.window_size = self.config.window_size
+        self.initial_balance = self.config.initial_balance
         
-        # Market simulation settings
-        self.spread_variation = spread_variation
-        self.slippage_range = slippage_range
+        self.logger.debug(
+            f"Configuration: balance=${self.initial_balance:.2f}, "
+            f"window={self.window_size}, mode={'prediction' if predict_mode else 'training'}"
+        )
         
-        # Initialize components
+        # Initialize environment components
+        self._init_components()
+        
+        # Process and validate data
+        self._process_market_data(data)
+        
+        # Set up spaces
+        self.action_space = spaces.Discrete(4)
+        self.observation_space = self.feature_processor.setup_observation_space(window_size=self.window_size)
+
+    def _init_components(self) -> None:
+        """Initialize environment components."""
         self.feature_processor = FeatureProcessor()
-        self.metrics = MetricsTracker(initial_balance)
+        self.metrics = MetricsTracker(self.initial_balance)
         self.action_handler = ActionHandler(self)
         self.renderer = Renderer()
         self.reward_calculator = RewardCalculator(self)
+
+    def _process_market_data(self, data: pd.DataFrame) -> None:
+        """Process and validate market data."""
         
         # Verify required columns
-        required_columns = ['open', 'close', 'high', 'low', 'spread']
+        required_columns = ['open', 'close', 'high', 'low', 'spread', 'volume']
         missing_columns = [col for col in required_columns if col not in data.columns]
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
             
-        # Add volume if not present
-        if 'volume' not in data.columns:
-            print("Warning: 'volume' column not found, using synthetic volume data")
-            data['volume'] = np.ones(len(data))
-            
         # Process data and setup spaces
-        self.features_df, self.atr_values, aligned_index = self.feature_processor.preprocess_data(data) # Renamed self.raw_data to self.features_df
+        self.features_df, self.atr_values, aligned_index = self.feature_processor.preprocess_data(data)
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.feature_processor.setup_observation_space(window_size=self.window_size)
         
@@ -122,195 +145,240 @@ class TradingEnv(gym.Env, EzPickle):
         if any(len(price_data) != self.data_length for price_data in self.prices.values()):
             raise ValueError("Price data arrays must have same length as feature data")
         
-        # State variables
-        self.initial_balance = initial_balance
+        # Calculate starting point ensuring enough historical data
+        self.start_step = max(self.feature_processor.lookback, self.window_size - 1)
+        min_data_required = self.start_step + self.config.min_bars_per_episode
         
-        # Adjust start_step to ensure enough data for the window
-        self.start_step = max(self.feature_processor.lookback, self.window_size - 1) # -1 because window includes current step
-        self.current_step = self.start_step 
+        if self.data_length < min_data_required:
+            raise ValueError(
+                f"Insufficient data: got {self.data_length} bars, need at least {min_data_required} "
+                f"(lookback: {self.feature_processor.lookback}, window: {self.window_size}, "
+                f"min episode: {self.config.min_bars_per_episode})"
+            )
+            
+        self.logger.debug(
+            f"Data processed successfully: {self.data_length} bars available, "
+            f"starting from index {self.start_step}"
+        )
+        
+        # Initialize to starting state
+        self._reset_state()
+        
+    def _reset_state(self) -> None:
+        """Reset environment state variables."""
+        self.current_step = self.start_step
         self.episode_steps = 0
         self.completed_episodes = 0
         self.current_position = None
         self.trades = []
         self.trade_metrics = {'current_direction': 0}
+        self.current_hold_time = 0
         
-        # State tracking
-        self.current_hold_time = 0  # Track position hold duration
-        
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
-        """Execute one environment step."""
-        # Process action and get current state
-        action = self.action_handler.process_action(action)
-        current_spread = self.prices['spread'][self.current_step] * self.POINT_VALUE
-        
-        # Get position info before action
-        position_type = self.current_position["direction"] if self.current_position else 0
-        current_atr = self.prices['atr'][self.current_step]
-        
-        # Detect invalid actions
+    def _handle_trade_action(self, action: int, current_spread: float) -> Tuple[float, bool, float]:
+        """Handle trade action and return associated PnL and validity."""
         invalid_action = False
-        if action in [Action.BUY, Action.SELL] and self.current_position is not None:
-            invalid_action = True  # Trying to open position when one exists
-        elif action == Action.CLOSE and self.current_position is None:
-            invalid_action = True  # Trying to close non-existent position
-            
-        # Update counters
-        self.episode_steps += 1
-        self.current_step += 1
-        
-        
-        # Update hold time for existing positions
-        if self.current_position:
-            self.current_hold_time += 1
-
-        # Initialize state variables
         pnl = 0.0
-        unrealized_pnl = 0.0
-        trade_info = None
-
-        # Handle different actions
-        if action in [Action.BUY, Action.SELL]:
-            if self.current_position is None:
-                direction = 1 if action == Action.BUY else 2
-                self.action_handler.execute_trade(direction, current_spread)
+        unrealized_pnl = 0.0        
+        
+        # Validate action
+        if action in [Action.BUY, Action.SELL] and self.current_position is not None:
+            invalid_action = True
+            self.logger.debug("Invalid action: Attempting to open position when one exists")
+        elif action == Action.CLOSE and self.current_position is None:
+            invalid_action = True
+            self.logger.debug("Invalid action: Attempting to close non-existent position")
+            
+        # Execute valid actions
+        if not invalid_action:
+            if action in [Action.BUY, Action.SELL]:
+                if self.current_position is None:
+                    direction = 1 if action == Action.BUY else 2
+                    self.action_handler.execute_trade(direction, current_spread)
+                    self.current_hold_time = 0
+                    self.logger.debug(f"Opened {'long' if direction == 1 else 'short'} position")
+                    
+            elif action == Action.CLOSE and self.current_position:
+                pnl, trade_info = self.action_handler.close_position()
+                if pnl != 0:
+                    self.trades.append(trade_info)
+                    self.metrics.add_trade(trade_info)
+                    self.metrics.update_balance(pnl)
+                    self.logger.debug(f"Closed position with PnL: {pnl:.2f}")
+                self.current_position = None
                 self.current_hold_time = 0
-                
-        elif action == Action.CLOSE and self.current_position:
-            pnl, trade_info = self.action_handler.close_position()
-            if pnl != 0:
-                self.trades.append(trade_info)
-                self.metrics.add_trade(trade_info)
-                self.metrics.update_balance(pnl)
-            self.current_position = None
-            self.current_hold_time = 0
-                
-        # Track unrealized PnL for any active position
+        
+        # Update unrealized PnL for active position
         if self.current_position:
             if self.predict_context and "profit" in self.current_position:
-                # Use position's profit for live trading
                 unrealized_pnl = self.current_position["profit"]
                 profit_points = self.current_position.get("profit_points", 0.0)
-                self.current_position["current_profit_points"] = profit_points
             else:
-                # Calculate PnL for backtesting
                 unrealized_pnl, profit_points = self.action_handler.manage_position()
-                self.current_position["current_profit_points"] = profit_points
-            # Update metrics with unrealized PnL for accurate drawdown tracking
+            self.current_position["current_profit_points"] = profit_points
             self.metrics.update_unrealized_pnl(unrealized_pnl)
         else:
             self.metrics.update_unrealized_pnl(0.0)
+            
+        return pnl, invalid_action, unrealized_pnl
 
-        if action == Action.HOLD:
-            # HOLD action with position - PnL already updated above
-            pass
-
-        # Calculate reward using RewardCalculator
-        reward = self.reward_calculator.calculate_reward(
-            action=action,
-            position_type=position_type,
-            pnl=pnl if action == Action.CLOSE else unrealized_pnl,
-            atr=current_atr,
-            current_hold=self.current_hold_time,
-            optimal_hold=None,
-            invalid_action=invalid_action
-        )
-        
-        # Calculate terminal conditions
+    def _get_terminal_state(self) -> Tuple[bool, float]:
+        """Check if episode should terminate and handle terminal state."""
         end_of_data = self.current_step >= self.data_length - 1
         max_drawdown = self.metrics.get_equity_drawdown()
-        done = end_of_data or self.metrics.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
+        bankrupt = self.metrics.balance <= 0
+        drawdown_exceeded = max_drawdown >= self.config.max_drawdown
         
-        # Auto-close position at end of episode and handle terminal rewards
+        done = end_of_data or bankrupt or drawdown_exceeded
+        terminal_reward = 0.0
+        
         if done:
+            # Log termination reason
+            if bankrupt:
+                self.logger.debug("Episode terminated due to bankruptcy")
+            elif drawdown_exceeded:
+                self.logger.debug(f"Episode terminated due to max drawdown: {max_drawdown:.2%}")
+            elif end_of_data:
+                self.logger.debug("Episode completed normally")
+            
+            # Close any open position
             if self.current_position:
                 pnl, trade_info = self.action_handler.close_position()
                 if pnl != 0:
                     self.trades.append(trade_info)
                     self.metrics.add_trade(trade_info)
                     self.metrics.update_balance(pnl)
-            self.current_hold_time = 0  # Reset hold time at end of episode
+                    self.logger.debug(f"Closed final position with PnL: {pnl:.2f}")
+                self.current_hold_time = 0
             
-            # Calculate terminal reward
-            terminal_reward = self.reward_calculator.calculate_terminal_reward(self.metrics.balance, self.initial_balance)
-            reward += terminal_reward
+            terminal_reward = self.reward_calculator.calculate_terminal_reward(
+                self.metrics.balance, self.initial_balance
+            )
+            
+        return done, terminal_reward
         
-        # Get observation and check truncation
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
+        """Execute one environment step."""
+        # Pre-process action and update state
+        action = self.action_handler.process_action(action)
+        current_spread = self.prices['spread'][self.current_step] * self.config.point_value
+        
+        self.episode_steps += 1
+        self.current_step += 1
+        if self.current_position:
+            self.current_hold_time += 1
+            
+        # Process trade
+        pnl, invalid_action, unrealized_pnl = self._handle_trade_action(action, current_spread)
+        
+        # Calculate reward components
+        reward = self.reward_calculator.calculate_reward(
+            action=action,
+            position_type=self.current_position["direction"] if self.current_position else 0,
+            pnl=pnl if action == Action.CLOSE else unrealized_pnl,
+            atr=self.prices['atr'][self.current_step],
+            current_hold=self.current_hold_time,
+            optimal_hold=None,
+            invalid_action=invalid_action
+        )
+        
+        # Check terminal state
+        done, terminal_reward = self._get_terminal_state()
+        reward += terminal_reward
+        
+        # Get final state
         obs = self.get_observation()
         truncated = self.current_step >= self.data_length - 1
         
         return obs, float(reward), done, truncated, self._get_info()
         
     def reset(self, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
-        """Reset the environment to initial state."""
+        """Reset the environment to initial state.
+        
+        Args:
+            seed: Optional random seed for reproducibility
+            options: Optional configuration dictionary
+            
+        Returns:
+            Tuple of (initial observation, environment info)
+        """
+        # Set random seed if provided
         if seed is not None:
             np.random.seed(seed)
+            self.action_space.seed(seed)
             
-        # Always start from the beginning of valid data range
-        self.current_step = self.start_step
-            
-        self.episode_steps = 0
+        # Reset environment state
+        self._reset_state()
         self.completed_episodes += 1
-        self.current_position = None
-        self.trades = []
-        self.trade_metrics = {'current_direction': 0}
         
-        # Reset metrics and reward state
-        self.metrics.reset()
-        self.reward_calculator.previous_balance_high = self.initial_balance
-        self.reward_calculator.last_direction = None
-        self.reward_calculator.bars_since_consolidation = 0
-        self.reward_calculator.max_unrealized_pnl = 0.0  # Reset max unrealized PnL tracking
+        # Reset component states
+        self.metrics.reset(self.initial_balance)
         
-        return self.get_observation(), self._get_info()
+        # Reset reward calculator state
+        self.reward_calculator.reset(
+            initial_balance=self.initial_balance,
+            min_bars=self.config.min_bars_per_episode
+        )
+        
+        self.logger.debug(f"Environment reset (episode {self.completed_episodes})")
+        
+        # Get initial observation and info
+        obs = self.get_observation()
+        info = self._get_info()
+        
+        return obs, info
         
     def render(self) -> None:
         """Render the environment."""
         self.renderer.render_episode_stats(self)
         
-    def get_observation(self) -> np.ndarray:
-        """Get current observation, including a window of past market features."""
-        
-        # Define market feature columns (all except the last 3 position-related ones)
+    def _get_market_features(self) -> np.ndarray:
+        """Get market features window."""
         market_feature_names = self.feature_processor.get_feature_names()[:-3]
         
         if self.predict_context:
-            # For prediction, use the latest window_size market features available
-            # self.features_df contains all processed features up to the latest known data point
-            market_features_window = self.features_df[market_feature_names].values[-self.window_size:]
-            if len(market_features_window) < self.window_size: # Pad if not enough data
-                padding = np.zeros((self.window_size - len(market_features_window), len(market_feature_names)))
-                market_features_window = np.vstack((padding, market_features_window))
+            # For live prediction
+            features = self.features_df[market_feature_names].values[-self.window_size:]
+            if len(features) < self.window_size:
+                padding = np.zeros((self.window_size - len(features), len(market_feature_names)))
+                features = np.vstack((padding, features))
         else:
-            # For backtesting/training, use data up to self.current_step
+            # For backtesting/training
             start_idx = self.current_step - self.window_size + 1
             end_idx = self.current_step + 1
-            market_features_window = self.features_df[market_feature_names].iloc[start_idx:end_idx].values
-
-        # Flatten the window of market features
-        flattened_market_features = market_features_window.flatten()
+            features = self.features_df[market_feature_names].iloc[start_idx:end_idx].values
+            
+        return features.flatten()
         
-        # Current position features
+    def _get_position_features(self) -> np.ndarray:
+        """Get current position state features."""
+        # Position type
         position_type = self.current_position["direction"] if self.current_position else 0
         
+        # Normalized PnL
         if self.current_position:
             if self.predict_context and "profit" in self.current_position:
                 unrealized_pnl = self.current_position["profit"]
             else:
                 unrealized_pnl, _ = self.action_handler.manage_position()
-            # Ensure balance is not zero to avoid division by zero
-            current_balance = self.metrics.balance if self.metrics.balance != 0 else self.initial_balance
+            # Ensure non-zero denominator
+            current_balance = max(self.metrics.balance, self.initial_balance)
             normalized_pnl = np.clip(unrealized_pnl / current_balance, -1, 1)
         else:
             normalized_pnl = 0.0
-            
-        normalized_hold_time = min(self.current_hold_time / self.reward_calculator.TIME_PRESSURE_THRESHOLD, 1.0) if self.current_position else 0.0
         
-        position_features = np.array([position_type, normalized_pnl, normalized_hold_time], dtype=np.float32)
+        # Normalized hold time
+        normalized_hold_time = (
+            min(self.current_hold_time / self.reward_calculator.TIME_PRESSURE_THRESHOLD, 1.0)
+            if self.current_position else 0.0
+        )
         
-        # Concatenate flattened market features with current position features
-        final_observation = np.concatenate((flattened_market_features, position_features))
-        
-        return final_observation
+        return np.array([position_type, normalized_pnl, normalized_hold_time], dtype=np.float32)
+    
+    def get_observation(self) -> np.ndarray:
+        """Get current observation, combining market and position features."""
+        market_features = self._get_market_features()
+        position_features = self._get_position_features()
+        return np.concatenate((market_features, position_features))
         
     def _get_info(self) -> Dict[str, Any]:
         """Get current environment information."""

@@ -19,19 +19,28 @@ class MetricsTracker:
         self.max_loss_streak = 0
         self.reset()
 
-    def reset(self) -> None:
-        """Reset all metrics to initial state."""
+    def reset(self, initial_balance: Optional[float] = None) -> None:
+        """Reset all metrics to initial state.
+        
+        Args:
+            initial_balance: Optional new initial balance. If None, uses previous initial_balance.
+        """
+        if initial_balance is not None:
+            self.initial_balance = initial_balance
+            
         self.trades: List[Dict[str, Any]] = []
         self.balance = self.initial_balance
         self.max_balance = self.initial_balance
         self.current_unrealized_pnl = 0.0
         self.win_count = 0
         self.loss_count = 0
+        
         # Reset streak counters
         self.current_win_streak = 0
         self.current_loss_streak = 0
         self.max_win_streak = 0
         self.max_loss_streak = 0
+        
         self.metrics = {
             'win_rate': 0.0,
             'avg_profit': 0.0,
@@ -43,16 +52,13 @@ class MetricsTracker:
             'current_consecutive_losses': 0
         }
         
-        # Track histories for accurate drawdown calculations
-        self.balance_history = [self.initial_balance]  # Balance history points
-        self.balance_peaks = [self.initial_balance]    # Running balance peaks
-        
-        self.equity_history = [self.initial_balance]   # Total equity points
-        self.equity_peaks = [self.initial_balance]     # Running equity peaks
-        
-        # Maximum drawdowns seen
-        self.max_balance_dd = 0.0  # Maximum balance drawdown
-        self.max_equity_dd = 0.0   # Maximum equity drawdown
+        # Reset drawdown tracking
+        self.balance_history = [self.initial_balance]
+        self.balance_peaks = [self.initial_balance]
+        self.equity_history = [self.initial_balance]
+        self.equity_peaks = [self.initial_balance]
+        self.max_balance_dd = 0.0
+        self.max_equity_dd = 0.0
 
     def add_trade(self, trade_info: Dict[str, Any]) -> None:
         """Add a completed trade and update metrics.

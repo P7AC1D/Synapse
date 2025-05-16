@@ -21,6 +21,25 @@ class RewardCalculator:
         self.TIME_STEP_COST = 0.00001  # Reduced time step cost (was 0.0001)
         self.TIME_PRESSURE_THRESHOLD = 100  # Needed for environment observation scaling
         
+        # State tracking
+        self.previous_balance_high = env.initial_balance
+        self.last_direction = None
+        self.max_unrealized_pnl = 0.0
+        self.bars_since_consolidation = 0
+        
+    def reset(self, initial_balance: float, min_bars: int = None) -> None:
+        """Reset reward calculator state.
+        
+        Args:
+            initial_balance: Starting balance for new episode
+            min_bars: Minimum bars required per episode
+        """
+        self.trade_entry_balance = initial_balance
+        self.previous_balance_high = initial_balance
+        self.last_direction = None
+        self.max_unrealized_pnl = 0.0
+        self.bars_since_consolidation = 0
+        
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, current_hold: int,
                         optimal_hold: Optional[int] = None,
