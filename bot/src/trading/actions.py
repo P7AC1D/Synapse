@@ -52,21 +52,21 @@ class ActionHandler:
         
         # Apply slippage if configured
         slippage = 0.0
-        if hasattr(self.env, 'slippage_range') and self.env.slippage_range > 0:
-            slippage = np.random.uniform(0, self.env.slippage_range) * self.env.POINT_VALUE
+        if self.env.config.slippage_range > 0:
+            slippage = np.random.uniform(0, self.env.config.slippage_range) * self.env.config.point_value
             if direction == 1:  # Buy - slippage increases entry price
                 current_price += slippage
             else:  # Sell - slippage decreases entry price
                 current_price -= slippage
         # Calculate lot size based on account balance in USD equivalent
-        usd_balance = self.env.balance / self.env.currency_conversion
-        usd_balance_per_lot = self.env.BALANCE_PER_LOT / self.env.currency_conversion
+        usd_balance = self.env.balance / self.env.config.currency_conversion
+        usd_balance_per_lot = self.env.config.balance_per_lot / self.env.config.currency_conversion
         
         lot_size = max(
-            self.env.MIN_LOTS,
+            self.env.config.min_lots,
             min(
-                self.env.MAX_LOTS,
-                round((usd_balance / usd_balance_per_lot) * self.env.MIN_LOTS, 2)
+                self.env.config.max_lots,
+                round((usd_balance / usd_balance_per_lot) * self.env.config.min_lots, 2)
             )
         )
         
@@ -107,12 +107,12 @@ class ActionHandler:
         entry_step = self.env.current_position["entry_step"]
         
         # Get current spread for exit price adjustment
-        current_spread = self.env.prices['spread'][self.env.current_step] * self.env.POINT_VALUE
+        current_spread = self.env.prices['spread'][self.env.current_step] * self.env.config.point_value
         
         # Apply slippage if configured
         slippage = 0.0
-        if hasattr(self.env, 'slippage_range') and self.env.slippage_range > 0:
-            slippage = np.random.uniform(0, self.env.slippage_range) * self.env.POINT_VALUE
+        if self.env.config.slippage_range > 0:
+            slippage = np.random.uniform(0, self.env.config.slippage_range) * self.env.config.point_value
             if direction == 1:  # Long position closing - slippage decreases exit price
                 current_price -= slippage
             else:  # Short position closing - slippage increases exit price
@@ -129,10 +129,10 @@ class ActionHandler:
             profit_points = entry_price - exit_price
             
         # Calculate P&L in USD then convert to account currency
-        usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
+        usd_pnl = profit_points * lot_size * self.env.config.contract_size
         # Multiply by currency conversion rate to get P&L in account currency
-        pnl = usd_pnl * self.env.currency_conversion
-        profit_points_normalized = profit_points / self.env.POINT_VALUE
+        pnl = usd_pnl * self.env.config.currency_conversion
+        profit_points_normalized = profit_points / self.env.config.point_value
         
         # Create trade info
         trade_info = {
@@ -168,7 +168,7 @@ class ActionHandler:
         lot_size = self.env.current_position["lot_size"]
         
         # Get current spread for unrealized P&L calculation
-        current_spread = self.env.prices['spread'][self.env.current_step] * self.env.POINT_VALUE
+        current_spread = self.env.prices['spread'][self.env.current_step] * self.env.config.point_value
         
         # Calculate raw P&L first - use current price without spread for display
         if direction == 1:  # Long position
@@ -179,9 +179,9 @@ class ActionHandler:
             profit_points = entry_price - current_exit_price
             
         # Calculate P&L in USD then convert to account currency
-        usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
+        usd_pnl = profit_points * lot_size * self.env.config.contract_size
         # Multiply by currency conversion rate to get P&L in account currency
-        unrealized_pnl = usd_pnl * self.env.currency_conversion
-        profit_points_normalized = profit_points / self.env.POINT_VALUE
+        unrealized_pnl = usd_pnl * self.env.config.currency_conversion
+        profit_points_normalized = profit_points / self.env.config.point_value
 
         return unrealized_pnl, profit_points_normalized
