@@ -83,10 +83,8 @@ class ModelEvaluator:
             'current_direction': trade_metrics['current_direction'],
             'profit_factor': performance['profit_factor'],
             'unrealized_pnl': env.env.metrics.current_unrealized_pnl,
-            'metrics': {
-                'performance': performance,
-                'env': env
-            }
+            'performance': performance,
+            'env': env
         }
 
     def calculate_score(self, metrics: Dict[str, float]) -> float:
@@ -215,9 +213,10 @@ class ModelEvaluator:
             timestep: Optional current timestep for progress tracking
         """
         # Print metrics using the metrics tracker
-        metrics = data['metrics']
-        env = data['metrics']['env']
-        env.metrics.print_evaluation_metrics(
+        metrics = data['metrics']  # This contains the flattened metrics now
+        env = metrics['env']  # Environment now directly accessible
+        metrics_tracker = env.metrics
+        metrics_tracker.print_evaluation_metrics(
             phase=phase,
             timestep=timestep,
             model=self.model if hasattr(self, 'model') else None
