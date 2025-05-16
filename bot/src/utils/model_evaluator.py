@@ -191,10 +191,21 @@ class ModelEvaluator:
             model_path = os.path.join(iter_path, save_name)
             model.save(model_path)
             
-            # Save metrics
+            # Create serializable metrics dictionary by removing env object
+            serializable_result = {}
+            for phase in result:
+                serializable_result[phase] = {
+                    'score': result[phase]['score'],
+                    'metrics': {
+                        k: v for k, v in result[phase]['metrics'].items() 
+                        if k != 'env'  # Exclude env object
+                    }
+                }
+            
+            # Save serializable metrics
             metrics_path = model_path.replace(".zip", "_metrics.json")
             with open(metrics_path, 'w') as f:
-                json.dump(result, f, indent=2)
+                json.dump(serializable_result, f, indent=2)
             
             result['saved_model'] = model_path
             
@@ -212,15 +223,26 @@ class ModelEvaluator:
             phase: Name of the evaluation phase (e.g. "Training", "Validation", "Test")
             timestep: Optional current timestep for progress tracking
         """
-        # Print metrics using the metrics tracker
-        metrics = data['metrics']  # This contains the flattened metrics now
-        monitor_env = metrics['env']  # This is the Monitor wrapper
-        metrics_tracker = monitor_env.env.metrics  # Access the actual TradingEnv's metrics
-        metrics_tracker.print_evaluation_metrics(
-            phase=phase,
-            timestep=timestep,
-            model=self.model if hasattr(self, 'model') else None
-        )
+        metrics = data['metrics']  # Get the metrics dictionary
+        
+        # Print metrics from performance data if env is not available
+        if 'env' not in metrics:
+            perf = metrics.get('performance', {})
+            print(f"\n=== {phase} Results ===")
+            print(f"Return: {metrics.get('return', 0)*100:.2f}%")
+            print(f"Win Rate: {metrics.get('win_rate', 0)*100:.2f}%")
+            print(f"Profit Factor: {metrics.get('profit_factor', 0):.2f}")
+            print(f"Max Drawdown: {metrics.get('max_balance_drawdown', 0)*100:.2f}%")
+            print(f"Total Trades: {len(metrics.get('trades', []))}")
+        else:
+            # Use metrics tracker if environment is available
+            monitor_env = metrics['env']  # This is the Monitor wrapper
+            metrics_tracker = monitor_env.env.metrics  # Access the actual TradingEnv's metrics
+            metrics_tracker.print_evaluation_metrics(
+                phase=phase,
+                timestep=timestep,
+                model=self.model if hasattr(self, 'model') else None
+            )
         
         # Print score separately since it's evaluator-specific
         print(f"Score: {data['score']:.4f}")
