@@ -1,0 +1,3 @@
+This project contains logic to train a RecurrentPPO DRL model using WFO to day-trade the forex market and consists of a train_ppo.py script which is the entry point for training, a backtest.py script which allows backtesting of said trained model against historical market data and a bot.py script that is used to integrate with the MT5 API to perform live trading with the trained model.
+
+Always keep this in mind when making code changes.
