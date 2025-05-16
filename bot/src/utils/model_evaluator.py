@@ -214,8 +214,8 @@ class ModelEvaluator:
         """
         # Print metrics using the metrics tracker
         metrics = data['metrics']  # This contains the flattened metrics now
-        env = metrics['env']  # Environment now directly accessible
-        metrics_tracker = env.metrics
+        monitor_env = metrics['env']  # This is the Monitor wrapper
+        metrics_tracker = monitor_env.env.metrics  # Access the actual TradingEnv's metrics
         metrics_tracker.print_evaluation_metrics(
             phase=phase,
             timestep=timestep,
