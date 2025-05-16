@@ -35,8 +35,8 @@ class TradingEnv(gym.Env, EzPickle):
         return self.initial_balance  # Fallback before metrics initialization
         
     def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
-                 balance_per_lot: float = 1000.0, random_start: bool = False,
-                 predict_mode: bool = False, currency_conversion: Optional[float] = None,
+                 balance_per_lot: float = 1000.0, predict_mode: bool = False, 
+                 currency_conversion: Optional[float] = None,
                  point_value: float = 0.001,
                  min_lots: float = 0.01, max_lots: float = 200.0,
                  contract_size: float = 100.0,
@@ -52,7 +52,6 @@ class TradingEnv(gym.Env, EzPickle):
             data: DataFrame with OHLCV data
             initial_balance: Starting account balance
             balance_per_lot: Account balance required per 0.01 lot
-            random_start: Whether to start from random positions
             predict_mode: Whether environment is being used for live prediction (True) or backtesting (False)
             currency_conversion: Optional conversion rate for account currency (e.g. USD/ZAR)
             point_value: Value of one price point movement (default: 0.001 for Gold)
@@ -125,10 +124,9 @@ class TradingEnv(gym.Env, EzPickle):
         
         # State variables
         self.initial_balance = initial_balance
-        self.random_start = random_start
         
         # Adjust start_step to ensure enough data for the window
-        self.start_step = max(self.feature_processor.lookback, self.window_size -1) # -1 because window includes current step
+        self.start_step = max(self.feature_processor.lookback, self.window_size - 1) # -1 because window includes current step
         self.current_step = self.start_step 
         self.episode_steps = 0
         self.completed_episodes = 0
@@ -247,16 +245,8 @@ class TradingEnv(gym.Env, EzPickle):
         if seed is not None:
             np.random.seed(seed)
             
-        if self.random_start:
-            # Ensure random start respects the new self.start_step requirement
-            min_random_step = self.start_step
-            max_random_step = max(self.start_step, self.data_length - 100) # Ensure at least 100 steps for an episode
-            if min_random_step >= max_random_step: # Fallback if data is too short
-                 self.current_step = self.start_step
-            else:
-                 self.current_step = np.random.randint(min_random_step, max_random_step)
-        else:
-            self.current_step = self.start_step
+        # Always start from the beginning of valid data range
+        self.current_step = self.start_step
             
         self.episode_steps = 0
         self.completed_episodes += 1

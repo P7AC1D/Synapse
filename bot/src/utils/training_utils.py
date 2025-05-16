@@ -206,12 +206,12 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             data=data,
             initial_balance=args.initial_balance,
             balance_per_lot=args.balance_per_lot,
-            random_start=False,
+            predict_mode=False,  
             point_value=args.point_value,
             min_lots=args.min_lots,
             max_lots=args.max_lots,
             contract_size=args.contract_size,
-            window_size=args.window_size # Added window_size
+            window_size=args.window_size
         )
 
         # Start progress indicator
@@ -491,18 +491,18 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             env_params = {
                 'initial_balance': args.initial_balance,
                 'balance_per_lot': args.balance_per_lot,
-                'random_start': args.random_start,
+                'predict_mode': False,
                 'point_value': args.point_value,
                 'min_lots': args.min_lots,
                 'max_lots': args.max_lots,
                 'contract_size': args.contract_size,
-                'window_size': args.window_size # Added window_size
+                'window_size': args.window_size
             }
         
             # Setup environments
             train_env = Monitor(TradingEnv(train_data, **env_params))
-            val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
-            test_env = Monitor(TradingEnv(test_data, **{**env_params, 'random_start': False}))
+            val_env = Monitor(TradingEnv(val_data, **env_params))
+            test_env = Monitor(TradingEnv(test_data, **env_params))
 
             # Handle warm starting from previous best model
             if model is None:
