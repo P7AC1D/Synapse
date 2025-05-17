@@ -11,9 +11,9 @@ import matplotlib.pyplot as plt
 from matplotlib import gridspec
 from typing import Dict, Any, Union, List, Optional, Tuple
 from pathlib import Path
-from trade_model import TradeModel
+from trade_model import TradeModel, ModelConfig
 from onnx_trade_model import OnnxTradeModel
-from trading.environment import TradingEnv
+from trading.environment import TradingEnv, TradingConfig
 from trading.trade_tracker import TradeTracker
 import time
 import sys
@@ -478,18 +478,24 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
         model.warmup_lstm_state(data.iloc[:-warmup_window], warmup_window)
         print(f"\nWarmed up LSTM states using {warmup_window} bars")
         
-    # Create a trading environment for tracking trades and metrics
-    env = TradingEnv(
-        data=data,
+    # Create trading environment config and initialize environment
+    config = TradingConfig(
         initial_balance=initial_balance,
         balance_per_lot=balance_per_lot,
-        random_start=False,
         point_value=point_value,
         min_lots=min_lots,
         max_lots=max_lots,
         contract_size=contract_size,
-        currency_conversion=currency_conversion,
-        window_size=window_size # Added window_size
+        window_size=window_size,
+        currency_conversion=currency_conversion if currency_conversion else 1.0,
+        spread_variation=spread_variation,
+        slippage_range=slippage_range
+    )
+    
+    env = TradingEnv(
+        data=data,
+        predict_mode=True,
+        config=config
     )
     obs, _ = env.reset()
     action_handler = env.action_handler
@@ -620,11 +626,7 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
             try:
                 discrete_action = action_value % 4
                 
-                # Force HOLD if trying to open new position while one exists
-                if env.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
-                    discrete_action = 0  # Force HOLD
-                
-                # Execute step and update stats
+                # Execute step and let environment handle action validation naturally
                 obs, reward, done, truncated, info = env.step(discrete_action)
                 total_reward += reward
                 total_steps += 1
@@ -867,15 +869,17 @@ def main():
             )
         else:
             print("Using standard PPO model")
-            model = TradeModel(
-                model_path=args.model_path,
+            config = ModelConfig(
+                model_path=Path(args.model_path),
                 balance_per_lot=args.balance_per_lot,
+                initial_balance=args.initial_balance,
                 point_value=args.point_value,
                 min_lots=args.min_lots,
                 max_lots=args.max_lots,
                 contract_size=args.contract_size,
-                window_size=args.window_size # Added window_size
+                window_size=args.window_size
             )
+            model = TradeModel(config)
           # Run backtest based on selected method
         if args.method == 'predict_single':
             # Use the method that simulates live trading
@@ -915,11 +919,8 @@ def main():
             try:    
                 results = model.evaluate(
                     data=df,
-                    initial_balance=args.initial_balance,
-                    balance_per_lot=args.balance_per_lot,
                     spread_variation=args.spread_variation,
-                    slippage_range=args.slippage_range,
-                    window_size=args.window_size # Added window_size
+                    slippage_range=args.slippage_range
                 )
             finally:
                 # Always stop the progress indicator

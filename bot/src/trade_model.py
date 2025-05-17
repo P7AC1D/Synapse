@@ -83,19 +83,64 @@ class TradeModel:
         self.logger.debug(f"Loading model from {self.config.model_path}")
         
         try:
+            # Load model
             self.model = RecurrentPPO.load(
                 self.config.model_path,
                 print_system_info=False,
                 device=self.config.device
             )
             
-            # Verify model architecture
-            if not hasattr(self.model, 'lstm_hidden_size'):
-                raise ValueError("Model does not have LSTM architecture")
-                
+            # Log model architecture details
+            self.logger.debug("Model architecture:")
+            self.logger.debug(f"- Model type: {type(self.model).__name__}")
+            self.logger.debug(f"- Policy type: {type(self.model.policy).__name__}")
+            if hasattr(self.model.policy, 'features_extractor'):
+                self.logger.debug(f"- Features extractor: {type(self.model.policy.features_extractor).__name__}")
+            self.logger.debug(f"- Device: {self.model.device}")
+            
+            # Verify policy exists and has LSTM architecture
+            if not hasattr(self.model, 'policy'):
+                raise ValueError(
+                    "Model does not have a policy attribute. Check if the model was loaded correctly."
+                )
+
+            # Check policy for LSTM architecture
+            if not (hasattr(self.model.policy, 'lstm_states') or
+                   'lstm_hidden_size' in self.model.policy.__init__.__code__.co_varnames):
+                policy_attrs = dir(self.model.policy)
+                model_attrs = dir(self.model)
+                init_args = self.model.policy.__init__.__code__.co_varnames
+                raise ValueError(
+                    f"Model policy does not have required LSTM architecture.\n"
+                    f"Available policy attributes: {[attr for attr in policy_attrs if not attr.startswith('_')]}\n"
+                    f"Available model attributes: {[attr for attr in model_attrs if not attr.startswith('_')]}\n"
+                    f"Policy init args: {[arg for arg in init_args if not arg.startswith('_')]}"
+                )
+
             # Reset LSTM states
-            self.lstm_states = None
-            self.logger.debug("Model loaded successfully")
+            # Test LSTM prediction with dummy observation
+            try:
+                # Get observation shape from policy
+                if not hasattr(self.model.policy, 'observation_space'):
+                    raise ValueError("Model policy does not have observation_space. Model may be corrupt.")
+                
+                # Create dummy observation and verify prediction
+                obs_shape = self.model.policy.observation_space.shape
+                self.logger.debug(f"Creating dummy observation with shape {obs_shape}")
+                dummy_obs = np.zeros(obs_shape)
+                
+                # Test prediction
+                _, lstm_states = self.model.predict(dummy_obs, deterministic=True)
+                if lstm_states is None:
+                    raise ValueError("Model prediction did not return LSTM states. Check model architecture.")
+                
+            except (AttributeError, ValueError) as e:
+                raise ValueError(f"Failed to verify LSTM functionality: {str(e)}")
+            except Exception as e:
+                raise ValueError(f"Unexpected error during LSTM verification: {str(e)}")
+                
+            self.lstm_states = None  # Will be properly initialized during warmup
+            self.logger.info("Model loaded and LSTM architecture verified successfully")
             
         except Exception as e:
             self.logger.error(f"Failed to load model: {str(e)}")
@@ -436,15 +481,12 @@ class TradeModel:
         
         return metrics
 
-    def evaluate(self, data: pd.DataFrame, initial_balance: Optional[float] = None,
-                balance_per_lot: Optional[float] = None, spread_variation: float = 0.0,
+    def evaluate(self, data: pd.DataFrame, spread_variation: float = 0.0,
                 slippage_range: float = 0.0) -> Dict[str, Any]:
         """Evaluate model performance with backtesting.
         
         Args:
             data: DataFrame with market data
-            initial_balance: Optional starting balance (defaults to config value)
-            balance_per_lot: Optional balance per lot (defaults to config value)
             spread_variation: Random spread variation range (default: 0.0)
             slippage_range: Maximum price slippage range in points (default: 0.0)
                 
@@ -460,13 +502,9 @@ class TradeModel:
             # Validate and prepare data
             data = self.prepare_data(data)
             
-            # Use config values if not overridden
-            initial_balance = initial_balance or self.config.initial_balance
-            balance_per_lot = balance_per_lot or self.config.balance_per_lot
-            
             self.logger.info(
-                f"Starting evaluation with balance=${initial_balance:.2f}, "
-                f"balance_per_lot=${balance_per_lot:.2f}"
+                f"Starting evaluation with balance=${self.config.initial_balance:.2f}, "
+                f"balance_per_lot=${self.config.balance_per_lot:.2f}"
             )
             
             # Perform LSTM warm-up
@@ -479,8 +517,8 @@ class TradeModel:
             env = TradingEnv(
                 data=data,
                 config=TradingConfig(
-                    initial_balance=initial_balance,
-                    balance_per_lot=balance_per_lot,
+                    initial_balance=self.config.initial_balance,
+                    balance_per_lot=self.config.balance_per_lot,
                     point_value=self.config.point_value,
                     min_lots=self.config.min_lots,
                     max_lots=self.config.max_lots,
@@ -672,4 +710,4 @@ class TradeModel:
         Returns:
             bool: True if model is recurrent LSTM, False otherwise
         """
-        return self.is_recurrent and hasattr(self.model, 'lstm_hidden_size')
+        return self.is_recurrent and hasattr(self.model.policy, 'lstm_states')

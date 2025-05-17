@@ -36,6 +36,7 @@ class TradingConfig:
     min_bars_per_episode: int = 240
     currency_conversion: float = 1.0
 
+
 class TradingEnv(gym.Env, EzPickle):
     """Trading environment for single-position trading with PPO-LSTM."""
     
@@ -295,18 +296,12 @@ class TradingEnv(gym.Env, EzPickle):
         """Reset the environment to initial state.
         
         Args:
-            seed: Optional random seed for reproducibility
+            seed: Optional random seed (ignored)
             options: Optional configuration dictionary
             
         Returns:
             Tuple of (initial observation, environment info)
         """
-        # Set random seed if provided
-        if seed is not None:
-            np.random.seed(seed)
-            self.action_space.seed(seed)
-            
-        # Reset environment state
         self._reset_state()
         self.completed_episodes += 1
         
