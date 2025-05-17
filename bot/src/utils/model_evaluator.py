@@ -210,7 +210,7 @@ class ModelEvaluator:
         
             # Save if performance improved
             if save_model:
-                iter_path = os.path.join(self.save_path, f"iteration_{iteration}")
+                iter_path = os.path.join(self.save_path, "iterations", f"iteration_{iteration}")
                 os.makedirs(iter_path, exist_ok=True)
                 
                 # Save model

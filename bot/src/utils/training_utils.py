@@ -439,9 +439,10 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     state_path = os.path.join(results_dir, "training_state.json")
     checkpoints_dir = os.path.join(results_dir, "checkpoints")
     plots_dir = os.path.join(results_dir, "plots")
+    iterations_dir = os.path.join(results_dir, "iterations")
     
     # Create all required directories
-    for directory in [checkpoints_dir, plots_dir]:
+    for directory in [checkpoints_dir, plots_dir, iterations_dir]:
         os.makedirs(directory, exist_ok=True)
 
     # Initialize model and state
@@ -520,7 +521,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         train_env = Monitor(TradingEnv(train_data, predict_mode=False, config=env_config))
         # Try loading models in order of preference
         model_paths = [
-            os.path.join(f"../results/{args.seed}/iteration_{last_completed_iter}", "best_test_model.zip"),
+            os.path.join(iterations_dir, f"iteration_{last_completed_iter}/best_test_model.zip"),
             os.path.join(checkpoints_dir, f"checkpoint_iter_{last_completed_iter}.zip"),
             os.path.join(checkpoints_dir, f"checkpoint_interrupt_iter_{last_completed_iter}.zip")
         ]
@@ -638,7 +639,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     if last_completed >= 0:
                         # Try last completed iteration's models
                         model_paths.extend([
-                            os.path.join(f"../results/{args.seed}/iteration_{last_completed}", "best_test_model.zip"),
+                            os.path.join(iterations_dir, f"iteration_{last_completed}/best_test_model.zip"),
                             os.path.join(checkpoints_dir, f"checkpoint_iter_{last_completed}.zip"),
                             os.path.join(checkpoints_dir, f"checkpoint_interrupt_iter_{last_completed}.zip")
                         ])
@@ -668,8 +669,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     if model is None:
                         print("\nCould not load any existing models. Starting fresh training...")
                 
-            # Setup iteration directories
-            iteration_dir = os.path.join(f"../results/{args.seed}", f"iteration_{iteration}")
+            # Setup iteration directory inside iterations/
+            iteration_dir = os.path.join(iterations_dir, f"iteration_{iteration}")
             os.makedirs(iteration_dir, exist_ok=True)
             
             # Initialize model evaluator for this iteration
