@@ -434,9 +434,15 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     print(f"Test Size: {test_window} bars")
     print(f"Step Size: {step_size} bars")
     
-    state_path = f"../results/{args.seed}/training_state.json"
-    checkpoints_dir = os.path.join(f"../results/{args.seed}", "checkpoints")
-    os.makedirs(checkpoints_dir, exist_ok=True)
+    # Setup directories
+    results_dir = f"../results/{args.seed}"
+    state_path = os.path.join(results_dir, "training_state.json")
+    checkpoints_dir = os.path.join(results_dir, "checkpoints")
+    plots_dir = os.path.join(results_dir, "plots")
+    
+    # Create all required directories
+    for directory in [checkpoints_dir, plots_dir]:
+        os.makedirs(directory, exist_ok=True)
 
     # Initialize model and state
     training_start, initial_model_path, state = load_training_state(state_path)

@@ -10,6 +10,7 @@ with comprehensive metrics tracking and model selection logic. It handles:
 import os
 import json
 import numpy as np
+from utils.trading_visualizer import TradingVisualizer
 from datetime import datetime
 from typing import Dict, Any, Optional
 import pandas as pd
@@ -141,6 +142,21 @@ class ModelEvaluator:
         historical_env = Monitor(TradingEnv(full_data, predict_mode=False, config=config))
         return self.evaluate_model(model, historical_env, eval_seed=eval_seed)
 
+    def plot_historical_results(self, results: Dict[str, Any], iteration: int) -> None:
+        """Plot historical evaluation results."""
+        if 'trades' not in results or not results['trades']:
+            return
+            
+        plots_dir = os.path.join(self.save_path, 'plots')
+        os.makedirs(plots_dir, exist_ok=True)
+        plot_path = os.path.join(plots_dir, f'iteration_{iteration}.png')
+        
+        TradingVisualizer.plot_results(
+            results=results,
+            save_path=plot_path,
+            title=f'Historical Performance - Iteration {iteration}'
+        )
+
     def select_best_model(self,
                          model: RecurrentPPO,
                          val_env: Monitor,
@@ -192,14 +208,18 @@ class ModelEvaluator:
                 save_model = True
                 save_name = "best_historical_model.zip"
         
-        # Save if performance improved
-        if save_model:
-            iter_path = os.path.join(self.save_path, f"iteration_{iteration}")
-            os.makedirs(iter_path, exist_ok=True)
-            
-            # Save model
-            model_path = os.path.join(iter_path, save_name)
-            model.save(model_path)
+            # Save if performance improved
+            if save_model:
+                iter_path = os.path.join(self.save_path, f"iteration_{iteration}")
+                os.makedirs(iter_path, exist_ok=True)
+                
+                # Save model
+                model_path = os.path.join(iter_path, save_name)
+                model.save(model_path)
+                
+                # Generate and save plot for historical evaluation
+                if is_final_eval:
+                    self.plot_historical_results(historical_metrics, iteration)
             
             # Create serializable metrics dictionary by removing env object
             serializable_result = {}
