@@ -220,28 +220,28 @@ class ModelEvaluator:
                 # Generate and save plot for historical evaluation
                 if is_final_eval:
                     self.plot_historical_results(historical_metrics, iteration)
-            
-            # Create serializable metrics dictionary by removing env object
-            serializable_result = {}
-            for phase in result:
-                serializable_result[phase] = {
-                    'score': result[phase]['score'],
-                    'metrics': {
-                        k: v for k, v in result[phase]['metrics'].items() 
-                        if k != 'env'  # Exclude env object
+                
+                # Create serializable metrics dictionary by removing env object
+                serializable_result = {}
+                for phase in result:
+                    serializable_result[phase] = {
+                        'score': result[phase]['score'],
+                        'metrics': {
+                            k: v for k, v in result[phase]['metrics'].items() 
+                            if k != 'env'  # Exclude env object
+                        }
                     }
-                }
-            
-            # Save serializable metrics
-            metrics_path = model_path.replace(".zip", "_metrics.json")
-            with open(metrics_path, 'w') as f:
-                json.dump(serializable_result, f, indent=2)
-            
-            result['saved_model'] = model_path
-            
-            if self.verbose > 0:
-                phase = "test" if is_final_eval else "validation"
-                print(f"\nNew best {phase} model saved at: {model_path}")
+                
+                # Save serializable metrics
+                metrics_path = model_path.replace(".zip", "_metrics.json")
+                with open(metrics_path, 'w') as f:
+                    json.dump(serializable_result, f, indent=2)
+                
+                result['saved_model'] = model_path
+                
+                if self.verbose > 0:
+                    phase = "test" if is_final_eval else "validation"
+                    print(f"\nNew best {phase} model saved at: {model_path}")
         
         return result
 

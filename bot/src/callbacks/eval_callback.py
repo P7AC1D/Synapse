@@ -92,8 +92,7 @@ class ValidationCallback(BaseCallback):
             'profit_factor': performance['profit_factor'],
             'unrealized_pnl': self.eval_env.env.metrics.current_unrealized_pnl,
             'metrics': {
-                'performance': performance,
-                'env': self.eval_env
+                'performance': performance
             },
             'regime_pnl': regime_pnl
         }
