@@ -38,8 +38,9 @@ class ValidationCallback(BaseCallback):
         self.last_time_trigger = 0
         self.iteration = iteration
         
-        # Initialize tracking
+        # Initialize validation tracking only (removed test tracking)
         self.best_val_score = -float("inf")
+        print("\nInitialized validation callback with validation-only tracking")
 
     def _evaluate_model(self, eval_seed: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
         """Run complete evaluation episode."""
@@ -117,15 +118,26 @@ class ValidationCallback(BaseCallback):
                 model=self.model
             )
             
-            # Save if improved
+            # Save if validation score improved
             if score > self.best_val_score:
                 self.best_val_score = score
                 if self.model_save_path:
-                    path = os.path.join(self.model_save_path, f"checkpoint_iter_{self.iteration}.zip")
+                    # Save as validation checkpoint
+                    path = os.path.join(self.model_save_path, f"best_validation_iter_{self.iteration}.zip")
                     self.model.save(path)
                     print(f"\nNew best validation model saved: {path}")
-                    print(f"\nValidation Score: {score:.4f}")
+                    print(f"Validation Score: {score:.4f}")
+                    
+                    # Save validation metrics
+                    metrics_path = path.replace(".zip", "_metrics.json")
+                    metrics = {
+                        'score': score,
+                        'metrics': metrics
+                    }
+                    with open(metrics_path, 'w') as f:
+                        json.dump(metrics, f, indent=2)
             
             self.last_time_trigger = self.n_calls
+            print(f"Completed validation evaluation at step {self.n_calls}")
             
         return True

@@ -751,20 +751,21 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             print(f"\nCompleted iteration {iteration}. Saved best model: {best_test_model_path}")
             print(f"Time taken: {iteration_time/60:.1f} minutes")
             
-            # Post-training evaluation on test set
-            print("\nPerforming final evaluation on test set...")
+            # Post-training evaluation on full historical dataset
+            print("\nPerforming evaluation on full historical dataset...")
             eval_results = evaluator.select_best_model(
                 model=model,
                 val_env=val_env,
-                test_env=test_env,
+                full_data=data,
+                config=env_config,
                 iteration=iteration,
                 is_final_eval=True
             )
             
-            if 'test' in eval_results:
+            if 'historical' in eval_results:
                 evaluator.print_evaluation_results(
-                    eval_results['test'],
-                    phase="Test",
+                    eval_results['historical'],
+                    phase="Historical",
                     timestep=model.num_timesteps
                 )
             

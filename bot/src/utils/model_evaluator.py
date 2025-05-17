@@ -132,10 +132,20 @@ class ModelEvaluator:
         
         return score
 
+    def evaluate_historical(self,
+                          model: RecurrentPPO,
+                          full_data: pd.DataFrame,
+                          config: Any,
+                          eval_seed: Optional[int] = None) -> Dict[str, float]:
+        """Evaluate model on full historical dataset."""
+        historical_env = Monitor(TradingEnv(full_data, predict_mode=False, config=config))
+        return self.evaluate_model(model, historical_env, eval_seed=eval_seed)
+
     def select_best_model(self,
                          model: RecurrentPPO,
                          val_env: Monitor,
-                         test_env: Monitor,
+                         full_data: pd.DataFrame,
+                         config: Any,
                          iteration: int,
                          is_final_eval: bool = False) -> Dict[str, Any]:
         """Evaluate and potentially select model as new best."""
@@ -165,22 +175,22 @@ class ModelEvaluator:
                 save_model = True
                 save_name = "curr_best_model.zip"
         
-        # For test phase
+        # For test phase (full historical evaluation)
         else:
-            test_metrics = self.evaluate_model(model, test_env, eval_seed=eval_seed)
-            test_score = self.calculate_score(test_metrics)
+            historical_metrics = self.evaluate_historical(model, full_data, config, eval_seed=eval_seed)
+            historical_score = self.calculate_score(historical_metrics)
             
-            result['test'] = {
-                'metrics': test_metrics,
-                'score': test_score
+            result['historical'] = {
+                'metrics': historical_metrics,
+                'score': historical_score
             }
             
             # Check for significant improvement (5%)
-            if test_score > self.best_test_score * 1.05:
-                self.best_test_score = test_score
+            if historical_score > self.best_test_score * 1.05:
+                self.best_test_score = historical_score
                 self.best_metrics = result
                 save_model = True
-                save_name = "best_test_model.zip"
+                save_name = "best_historical_model.zip"
         
         # Save if performance improved
         if save_model:
