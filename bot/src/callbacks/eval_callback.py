@@ -1,11 +1,11 @@
 """Enhanced evaluation callback with comprehensive balance and equity tracking.
 
-This callback provides:
-- Train/validation/test set evaluation
-- Separate balance and equity drawdown tracking
+This module provides:
+- Training and validation evaluation
+- Balance and equity drawdown tracking
 - Unrealized PnL monitoring
-- Enhanced model selection based on both equity and balance metrics
-- Comprehensive performance summary from MetricsTracker
+- Enhanced model selection based on comprehensive metrics
+- Full performance tracking using MetricsTracker
 """
 import os
 import json
@@ -18,18 +18,19 @@ from stable_baselines3.common.callbacks import BaseCallback
 from trading.environment import TradingEnv
 
 class ValidationCallback(BaseCallback):
-    """Specialized evaluation callback for monitoring training progress.
+    """
+    Specialized evaluation callback for monitoring training progress.
 
     Features:
     - Validation set evaluation during training
-    - Tracks balance and equity metrics
-    - Monitors training progress and convergence
-    - Provides detailed performance summaries
+    - Real-time balance and equity metrics tracking
+    - Comprehensive regime consistency analysis
+    - Robust model selection with multi-factor scoring
     """
     def __init__(self, eval_env, eval_freq=100000, model_save_path=None, log_path=None, 
                  deterministic=True, verbose=0, iteration=0):
         super(ValidationCallback, self).__init__(verbose=verbose)
-        self.eval_env = eval_env  # Validation environment
+        self.eval_env = eval_env
         self.eval_freq = eval_freq
         self.model_save_path = model_save_path
         self.log_path = log_path
@@ -38,18 +39,26 @@ class ValidationCallback(BaseCallback):
         self.last_time_trigger = 0
         self.iteration = iteration
         
-        # Initialize validation tracking only (removed test tracking)
         self.best_val_score = -float("inf")
-        print("\nInitialized validation callback with validation-only tracking")
+        print("\nInitialized validation callback with enhanced scoring system")
 
     def _evaluate_model(self, eval_seed: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
-        """Run complete evaluation episode."""
+        """Run complete evaluation episode with regime analysis."""
         obs, _ = self.eval_env.reset(seed=eval_seed)
         done = False
         episode_reward = 0
         lstm_states = None
         
+        # For regime consistency tracking
+        regime_pnl = {'trending': [], 'ranging': []}
+        last_balance = self.eval_env.env.balance
+        
         while not done:
+            # Get trend strength and volatility breakout from observation
+            trend_strength = obs[5]  # Index 5 is trend_strength
+            volatility_breakout = obs[4]  # Index 4 is volatility_breakout
+            is_trending = trend_strength > 0.3 and volatility_breakout > 0.7
+
             action, lstm_states = self.model.predict(
                 obs,
                 state=lstm_states,
@@ -58,6 +67,15 @@ class ValidationCallback(BaseCallback):
             obs, reward, terminated, truncated, info = self.eval_env.step(action)
             done = terminated or truncated        
             episode_reward += reward
+
+            # Track PnL per step for regime analysis
+            step_pnl = self.eval_env.env.balance - last_balance
+            last_balance = self.eval_env.env.balance
+
+            if is_trending:
+                regime_pnl['trending'].append(step_pnl)
+            else:
+                regime_pnl['ranging'].append(step_pnl)
         
         # Get metrics
         performance = self.eval_env.env.metrics.get_performance_summary()
@@ -76,38 +94,75 @@ class ValidationCallback(BaseCallback):
             'metrics': {
                 'performance': performance,
                 'env': self.eval_env
-            }
+            },
+            'regime_pnl': regime_pnl
         }
         return metrics
 
     def _calculate_score(self, metric_data: Dict[str, Any]) -> float:
-        """Calculate model score based on validation metrics."""
+        """
+        Calculate model score using enhanced scoring system that considers:
+        - Risk-adjusted returns (35%)
+        - Raw returns (25%)
+        - Regime consistency (20%)
+        - Profit factor (10%)
+        - Win rate (10%)
+        """
         # Extract core metrics
         returns = metric_data['return']  # Already in decimal form
-        max_dd = max(metric_data['max_balance_drawdown'], metric_data['max_equity_drawdown'])  # Already in decimal form
+        max_dd = max(metric_data['max_balance_drawdown'], metric_data['max_equity_drawdown'])
         profit_factor = metric_data['profit_factor']
         win_rate = metric_data['win_rate']  # Already in decimal form
-        trades = len(metric_data['trades'])
+        regime_pnl = metric_data['regime_pnl']
+        initial_balance = self.eval_env.env.initial_balance
+
+        # Calculate regime consistency bonus
+        total_trending_pnl = sum(regime_pnl['trending'])
+        total_ranging_pnl = sum(regime_pnl['ranging'])
         
-        # Simple scoring based on risk-adjusted returns
-        score = returns / (max_dd + 0.05)  # Add small constant to avoid division by zero
+        # Normalize PnL by initial balance
+        norm_trending_pnl = total_trending_pnl / initial_balance
+        norm_ranging_pnl = total_ranging_pnl / initial_balance
+
+        regime_consistency_bonus = 0.0
+        if norm_trending_pnl > 0 and norm_ranging_pnl > 0:
+            regime_consistency_bonus += 0.5  # Both regimes profitable
+            if min(abs(norm_trending_pnl), abs(norm_ranging_pnl)) / (max(abs(norm_trending_pnl), abs(norm_ranging_pnl)) + 1e-6) > 0.25:
+                regime_consistency_bonus += 0.5  # Balanced performance
+        elif (norm_trending_pnl > 0 and norm_ranging_pnl < -0.05 * abs(norm_trending_pnl)) or \
+             (norm_ranging_pnl > 0 and norm_trending_pnl < -0.05 * abs(norm_ranging_pnl)):
+            regime_consistency_bonus -= 0.5  # One regime subsidizing losses
+
+        # Calculate score components
+        risk_adj_return = returns / (max_dd + 0.05)  # Add small constant to avoid division by zero
+        scaled_regime_consistency = (regime_consistency_bonus + 0.5) / 1.5  # Scale to [0,1]
+        
+        # Profit factor bonus
+        pf_bonus = min(max(profit_factor - 1.0, 0.0), 2.0) / 2.0  # Scale to [0,1]
+
+        # Final weighted score
+        score = (
+            risk_adj_return * 0.35 +           # Risk-adjusted returns (35%)
+            returns * 0.25 +                    # Raw returns (25%)
+            scaled_regime_consistency * 0.20 +  # Regime consistency (20%)
+            pf_bonus * 0.10 +                  # Profit factor (10%)
+            win_rate * 0.10                    # Win rate (10%)
+        )
         
         if self.verbose > 0:
             print(f"\nScore components:")
-            print(f"  Returns: {returns:.2%}")
-            print(f"  Max DD: {max_dd:.2%}")
-            print(f"  Trades: {trades}")
+            print(f"  Risk-Adjusted Return: {risk_adj_return:.4f}")
+            print(f"  Raw Returns: {returns:.2%}")
+            print(f"  Regime Consistency: {scaled_regime_consistency:.4f}")
+            print(f"  Profit Factor Bonus: {pf_bonus:.4f}")
             print(f"  Win Rate: {win_rate:.2%}")
-            print(f"  Profit Factor: {profit_factor:.2f}")
             print(f"  Final Score: {score:.4f}")
         
         return score
     
-    
     def _on_step(self) -> bool:
         """Execute validation step."""
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
-            # Run validation
             metrics = self._evaluate_model(eval_seed=np.random.randint(0, 1000000))
             score = self._calculate_score(metrics)
             
@@ -122,17 +177,20 @@ class ValidationCallback(BaseCallback):
             if score > self.best_val_score:
                 self.best_val_score = score
                 if self.model_save_path:
-                    # Save as validation checkpoint
-                    path = os.path.join(self.model_save_path, f"best_validation_iter_{self.iteration}.zip")
+                    # Save best model
+                    path = os.path.join(self.model_save_path, "best_model.zip")
                     self.model.save(path)
-                    print(f"\nNew best validation model saved: {path}")
+                    print(f"\nNew best model saved: {path}")
                     print(f"Validation Score: {score:.4f}")
                     
                     # Save validation metrics
                     metrics_path = path.replace(".zip", "_metrics.json")
                     metrics = {
                         'score': score,
-                        'metrics': metrics
+                        'metrics': metrics,
+                        'iteration': self.iteration,
+                        'timesteps': self.num_timesteps,
+                        'timestamp': datetime.now().isoformat()
                     }
                     with open(metrics_path, 'w') as f:
                         json.dump(metrics, f, indent=2)
