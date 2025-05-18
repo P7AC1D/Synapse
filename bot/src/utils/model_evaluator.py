@@ -72,6 +72,7 @@ class ModelEvaluator:
         trade_metrics = env.env.trade_metrics
         
         return {
+            'initial_balance': env.env.initial_balance,
             'return': performance['return_pct'] / 100,
             'max_balance_drawdown': performance['max_drawdown_pct'] / 100,
             'max_equity_drawdown': performance['max_equity_drawdown_pct'] / 100,
