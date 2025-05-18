@@ -194,14 +194,8 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         try:
             obs, _ = env.reset()
             done = False
-            regime_pnl = {'trending': [], 'ranging': []}
-            last_balance = env.balance
 
             while not done:
-                trend_strength = obs[5]
-                volatility_breakout = obs[4]
-                is_trending = trend_strength > 0.3 and volatility_breakout > 0.7
-
                 action, lstm_states = model.predict(
                     obs,
                     state=lstm_states if 'lstm_states' in locals() else None,
@@ -210,52 +204,29 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
                 obs, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated
 
-                step_pnl = env.balance - last_balance
-                last_balance = env.balance
-
-                if is_trending:
-                    regime_pnl['trending'].append(step_pnl)
-                else:
-                    regime_pnl['ranging'].append(step_pnl)
-
             performance = env.metrics.get_performance_summary()
         finally:
             stop_progress_indicator()
         
+        # Extract core metrics
         score = 0.0
         returns = performance['return_pct'] / 100
         max_dd = max(performance['max_drawdown_pct'], performance['max_equity_drawdown_pct']) / 100
         profit_factor = performance['profit_factor']
         win_rate = performance['win_rate'] / 100
         
-        total_trending_pnl = sum(regime_pnl['trending'])
-        total_ranging_pnl = sum(regime_pnl['ranging'])
-
-        norm_trending_pnl = total_trending_pnl / args.initial_balance if args.initial_balance else 0
-        norm_ranging_pnl = total_ranging_pnl / args.initial_balance if args.initial_balance else 0
-
-        regime_consistency_bonus = 0.0
-        if norm_trending_pnl > 0 and norm_ranging_pnl > 0:
-            regime_consistency_bonus += 0.5
-            if min(abs(norm_trending_pnl), abs(norm_ranging_pnl)) / (max(abs(norm_trending_pnl), abs(norm_ranging_pnl)) + 1e-6) > 0.25:
-                 regime_consistency_bonus += 0.5
-        elif (norm_trending_pnl > 0 and norm_ranging_pnl < -0.05 * abs(norm_trending_pnl)) or \
-             (norm_ranging_pnl > 0 and norm_trending_pnl < -0.05 * abs(norm_ranging_pnl)):
-            regime_consistency_bonus -= 0.5
-
+        # Calculate score based on core metrics
         risk_adj_return = returns / (max_dd + 0.05)
-        score += risk_adj_return * 0.35
-        score += returns * 0.25
-
-        scaled_regime_consistency = (regime_consistency_bonus + 0.5) / 1.5
-        score += scaled_regime_consistency * 0.20
-
-        pf_bonus = 0.0
+        score += risk_adj_return * 0.40  # Increased weight for risk-adjusted returns
+        score += returns * 0.30  # Increased weight for raw returns
+        
+        # Add profit factor component
+        pf_score = 0.0
         if profit_factor > 1.0:
-            pf_bonus_raw = min(profit_factor - 1.0, 2.0) / 2.0
-            pf_bonus = pf_bonus_raw
-        score += pf_bonus * 0.10
-
+            pf_score = min((profit_factor - 1.0) / 2.0, 1.0)  # Cap at profit factor of 3.0
+        score += pf_score * 0.20
+        
+        # Add win rate component
         score += win_rate * 0.10
         
         return {
@@ -266,8 +237,7 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
             'profit_factor': profit_factor,
             'win_rate': win_rate,
             'total_trades': performance['total_trades'],
-            'metrics': performance,
-            'regime_consistency_metric': scaled_regime_consistency,
+            'metrics': performance
         }
         
     except Exception as e:

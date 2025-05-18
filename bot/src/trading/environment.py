@@ -14,11 +14,6 @@ from .metrics import MetricsTracker
 from .rendering import Renderer
 from .rewards import RewardCalculator
 
-# Feature indices for market state
-TREND_STRENGTH_IDX = 5
-VOLATILITY_BREAKOUT_IDX = 4
-TREND_THRESHOLD = 0.3
-VOLATILITY_THRESHOLD = 0.7
 
 @dataclass
 class TradingConfig:
