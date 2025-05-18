@@ -575,15 +575,47 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             print(f"\nCompleted iteration {iteration}. Saved best model: {best_model_path}")
             print(f"Time taken: {iteration_time/60:.1f} minutes")
             
-            print("\nPerforming evaluation on full historical dataset...")
-            eval_results = evaluator.select_best_model(
-                model=model,
-                val_env=val_env,
-                full_data=data,
-                config=env_config,
-                iteration=iteration,
-                is_final_eval=True
-            )
+            print("\nLoading best validation model for historical evaluation...")
+            best_model_path = os.path.join(iteration_dir, "best_model.zip")
+            if os.path.exists(best_model_path):
+                try:
+                    best_model = RecurrentPPO.load(
+                        best_model_path,
+                        env=train_env,
+                        device=args.device
+                    )
+                    print(f"Successfully loaded best validation model from: {best_model_path}")
+                    
+                    print("\nPerforming evaluation on full historical dataset...")
+                    eval_results = evaluator.select_best_model(
+                        model=best_model,
+                        val_env=val_env,
+                        full_data=data,
+                        config=env_config,
+                        iteration=iteration,
+                        is_final_eval=True
+                    )
+                except Exception as e:
+                    print(f"\nFailed to load best validation model: {e}")
+                    print("Falling back to current model for historical evaluation...")
+                    eval_results = evaluator.select_best_model(
+                        model=model,
+                        val_env=val_env,
+                        full_data=data,
+                        config=env_config,
+                        iteration=iteration,
+                        is_final_eval=True
+                    )
+            else:
+                print("\nNo best validation model found, using current model for historical evaluation...")
+                eval_results = evaluator.select_best_model(
+                    model=model,
+                    val_env=val_env,
+                    full_data=data,
+                    config=env_config,
+                    iteration=iteration,
+                    is_final_eval=True
+                )
             
             if 'historical' in eval_results:
                 evaluator.print_evaluation_results(
