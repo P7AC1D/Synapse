@@ -263,8 +263,9 @@ class TradingVisualizer:
             if save_path:
                 plt.savefig(save_path, bbox_inches='tight')
                 logging.info(f"Plot saved to {save_path}")
-            
-            plt.close()
+                plt.close()
+            else:
+                plt.show()
             
         except Exception as e:
             logging.error(f"Error in plotting: {str(e)}")
