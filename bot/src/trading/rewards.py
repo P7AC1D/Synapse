@@ -4,7 +4,7 @@ from typing import Union, Optional
 from .actions import Action
 
 class RewardCalculator:
-    """Handles sparse reward calculation for trading actions."""
+    """Handles enhanced reward calculation for trading actions with multiple components."""
     
     def __init__(self, env):
         """Initialize reward calculator.
@@ -15,17 +15,22 @@ class RewardCalculator:
         self.env = env
         self.trade_entry_balance = env.initial_balance  # Track balance at trade entry
         
-        # Reward constants
+        # Enhanced reward constants
         self.INVALID_ACTION_PENALTY = -1.0  # Penalty for invalid actions
-        self.TRANSACTION_COST = 0.0005  # 5 basis points per trade
-        self.TIME_STEP_COST = 0.00001  # Reduced time step cost (was 0.0001)
-        self.TIME_PRESSURE_THRESHOLD = 100  # Needed for environment observation scaling
+        self.TRANSACTION_COST = 0.001  # Increased from 0.0005 to limit overtrading
+        self.TIME_STEP_COST = 0.00001  # Time decay cost
+        self.TIME_PRESSURE_THRESHOLD = 100  # For observation scaling
+        self.PNL_SCALE = 2.0  # Increased from 1.5 for stronger profit signals
+        self.HOLD_REWARD_SCALE = 0.1  # Progressive holding reward
+        self.TREND_ALIGNMENT_BONUS = 0.2  # Trend following bonus
+        self.RISK_ADJUSTMENT_WINDOW = 20  # Window for Sharpe calculation
         
         # State tracking
         self.previous_balance_high = env.initial_balance
         self.last_direction = None
         self.max_unrealized_pnl = 0.0
         self.bars_since_consolidation = 0
+        self.returns_history = []  # For Sharpe ratio calculation
         
     def reset(self, initial_balance: float, min_bars: int = None) -> None:
         """Reset reward calculator state.
@@ -39,29 +44,70 @@ class RewardCalculator:
         self.last_direction = None
         self.max_unrealized_pnl = 0.0
         self.bars_since_consolidation = 0
+        self.returns_history = []
         
+    def _calculate_trend(self, window: int = 20) -> float:
+        """Calculate market trend direction using SMA."""
+        if len(self.env.features_df) < window:
+            return 0.0
+            
+        prices = self.env.prices['close'][max(0, self.env.current_step - window):self.env.current_step + 1]
+        sma = np.mean(prices)
+        current_price = prices[-1]
+        return (current_price - sma) / sma
+
+    def _calculate_rolling_sharpe(self) -> float:
+        """Calculate rolling Sharpe ratio for risk adjustment."""
+        if len(self.returns_history) < self.RISK_ADJUSTMENT_WINDOW:
+            return 0.0
+            
+        returns = np.array(self.returns_history[-self.RISK_ADJUSTMENT_WINDOW:])
+        if np.std(returns) == 0:
+            return 0.0
+            
+        return np.mean(returns) / (np.std(returns) + 1e-6) * np.sqrt(252 * 96)  # Annualized
+
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, current_hold: int,
                         optimal_hold: Optional[int] = None,
                         invalid_action: bool = False) -> float:
-        """Calculate rewards using a simplified approach focused on PnL."""
+        """Calculate enhanced rewards with multiple components."""
         # Handle invalid actions first
         if invalid_action:
             return self.INVALID_ACTION_PENALTY
             
-        reward = -self.TIME_STEP_COST  # Small negative reward per timestep
+        reward = -self.TIME_STEP_COST  # Base time decay
         
-        # Transaction cost for new trades
+        # Transaction costs
         if action in [Action.BUY, Action.SELL]:
             reward -= self.TRANSACTION_COST
             self.trade_entry_balance = self.env.balance
             
-        # Core PnL reward on position close
+            # Add trend alignment bonus
+            trend = self._calculate_trend()
+            if (action == Action.BUY and trend > 0) or (action == Action.SELL and trend < 0):
+                reward += self.TREND_ALIGNMENT_BONUS
+                
+        # Enhanced PnL rewards
         elif action == Action.CLOSE and position_type != 0:
-            # Scaled PnL component with slightly higher weight
-            reward += 1.5 * (pnl / self.trade_entry_balance)  # Increased from 1.0 to 1.5
-            # Transaction cost for closing
+            # Stronger PnL scaling
+            scaled_pnl = self.PNL_SCALE * (pnl / self.trade_entry_balance)
+            
+            # Risk-adjusted component
+            if pnl != 0:
+                self.returns_history.append(pnl / self.trade_entry_balance)
+                sharpe = self._calculate_rolling_sharpe()
+                risk_multiplier = 1.0 + max(0, sharpe) * 0.1
+                scaled_pnl *= risk_multiplier
+                
+            reward += scaled_pnl
             reward -= self.TRANSACTION_COST
+            
+        # Progressive hold reward for profitable positions
+        elif position_type != 0 and pnl > 0:
+            hold_factor = min(current_hold / self.TIME_PRESSURE_THRESHOLD, 1.0)
+            hold_reward = self.HOLD_REWARD_SCALE * hold_factor * (pnl / self.trade_entry_balance)
+            reward += hold_reward
         
         return float(reward)
 

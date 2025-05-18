@@ -13,6 +13,7 @@ with careful management of exploration strategies.
 """
 import os
 import json
+import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Tuple, Dict, Any, List, Optional
@@ -30,21 +31,33 @@ from callbacks.epsilon_callback import CustomEpsilonCallback
 from callbacks.eval_callback import ValidationCallback
 from utils.model_evaluator import ModelEvaluator
 
-# Model architecture configuration
+# Enhanced model architecture configuration
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
-    "lstm_hidden_size": 256,          # Larger LSTM for more temporal context
-    "n_lstm_layers": 2,               # Keep 2 layers
-    "shared_lstm": False,             # Separate LSTM architectures
-    "enable_critic_lstm": True,       # Enable LSTM for value estimation
+    "lstm_hidden_size": 512,         # Increased from 256 for better temporal patterns
+    "n_lstm_layers": 2,              # Keep 2 layers
+    "shared_lstm": False,            # Separate LSTM architectures
+    "enable_critic_lstm": True,      # Enable LSTM for value estimation
     "net_arch": {
-        "pi": [128, 64],              # Policy network
-        "vf": [128, 64]               # Value network
+        "pi": [
+            {"lstm": 512},
+            {"linear": 256},
+            {"skip": "input"},       # Skip connection
+            {"linear": 128},
+            {"linear": 64}
+        ],
+        "vf": [
+            {"lstm": 512},
+            {"linear": 256},
+            {"skip": "input"},       # Skip connection
+            {"linear": 128},
+            {"linear": 64}
+        ]
     },
-    "activation_fn": th.nn.Mish,      # Better activation function
+    "activation_fn": th.nn.Mish,     # Better activation function
     "optimizer_kwargs": {
         "eps": 1e-5,
-        "weight_decay": 1e-6          # Slightly reduced regularization
+        "weight_decay": 1e-6         # Maintain current regularization
     }
 }
 
@@ -55,37 +68,56 @@ def calculate_timesteps(window_size: int) -> int:
     """Calculate training timesteps for current window."""
     return window_size * TRAINING_PASSES
 
-# Initial training hyperparameters
+def market_regime_lr(initial_lr: float = 2.5e-4, max_lr: float = 5e-4, regime_window: int = 480) -> callable:
+    """Create market regime-based cyclic learning rate schedule.
+    
+    Args:
+        initial_lr: Base learning rate
+        max_lr: Maximum learning rate during cycle
+        regime_window: Window size for regime cycles (480 = 5 days of 15-min bars)
+    
+    Returns:
+        Learning rate schedule function
+    """
+    def schedule(progress_remaining: float) -> float:
+        # Slower cycles based on market regime changes
+        cycle = np.floor(1 + progress_remaining * (regime_window/1024))  # Using n_steps=1024
+        x = np.abs(progress_remaining * (regime_window/1024) - cycle)
+        lr = initial_lr + (max_lr - initial_lr) * max(0, (1 - x))
+        return lr
+    return schedule
+
+# Enhanced training hyperparameters
 INITIAL_MODEL_KWARGS = {
-    "learning_rate": 5e-4,        # Standard learning rate for initial training
-    "n_steps": 512,              # Shorter sequences with LSTM
-    "batch_size": 256,           # Larger batch for stable sparse reward learning
-    "gamma": 0.99,               # High gamma for sparse rewards
-    "gae_lambda": 0.98,          # Higher lambda for better advantage estimation
-    "clip_range": 0.1,           # Smaller clipping for stability
-    "clip_range_vf": 0.1,        # Match policy clipping
-    "ent_coef": 0.05,            # Lower entropy to focus on sparse signals
-    "vf_coef": 1.0,              # Higher value importance for sparse rewards
-    "max_grad_norm": 0.5,        # Conservative gradient clipping
-    "n_epochs": 12,              # More epochs for thorough learning
-    "use_sde": False             # No stochastic dynamics
+    "learning_rate": market_regime_lr(),  # Market regime-based cyclic learning rate
+    "n_steps": 1024,                     # Increased from 512 for better temporal context
+    "batch_size": 256,                   # Maintain batch size
+    "gamma": 0.99,                       # Keep high gamma for sparse rewards
+    "gae_lambda": 0.95,                  # Standard GAE lambda
+    "clip_range": 0.2,                   # Standard PPO clip
+    "clip_range_vf": 0.2,                # Match policy clipping
+    "ent_coef": 0.1,                     # Increased from 0.05 for better exploration
+    "vf_coef": 1.0,                      # Maintain value importance
+    "max_grad_norm": 0.5,                # Keep conservative gradient clipping
+    "n_epochs": 12,                      # Maintain training epochs
+    "use_sde": True                      # Enable state-dependent exploration
 }
 
-# Market regime adaptation hyperparameters
+# Enhanced adaptation hyperparameters
 ADAPTATION_MODEL_KWARGS = {
-    "learning_rate": 2.5e-4,     # Higher LR for faster adaptation
-    "batch_size": 256,           # Smaller batches for more frequent updates
-    "n_steps": 1024,             # Balance between stability and adaptability
-    "n_epochs": 10,              # More epochs for thorough regime learning
-    "clip_range": 0.2,           # Standard PPO clip for stability
-    "ent_coef": 0.01,           # Lower entropy to exploit learned strategies
-    "gae_lambda": 0.95,         # Higher lambda for better advantage estimation
-    "max_grad_norm": 0.5,       # Conservative gradient clipping
-    "gamma": 0.99,              # Standard discount for trading
-    "clip_range_vf": 0.2,       # Match policy clipping
-    "vf_coef": 0.5,            # Balance between value and policy learning
-    "use_sde": True,           # Enable state-dependent exploration for regime shifts
-    "sde_sample_freq": 4       # Sample new noise every 4 steps
+    "learning_rate": market_regime_lr(initial_lr=1.5e-4, max_lr=3e-4),  # Lower range for fine-tuning
+    "batch_size": 256,            # Maintain batch size
+    "n_steps": 1024,             # Match initial n_steps
+    "n_epochs": 10,              # Maintain epochs for regime learning
+    "clip_range": 0.2,           # Standard PPO clip
+    "ent_coef": 0.05,            # Reduced entropy for exploitation
+    "gae_lambda": 0.95,          # Standard lambda
+    "max_grad_norm": 0.5,        # Keep gradient clipping
+    "gamma": 0.99,               # High gamma for sparse rewards
+    "clip_range_vf": 0.2,        # Match policy clipping
+    "vf_coef": 1.0,             # Maintain value importance
+    "use_sde": True,            # Keep state-dependent exploration
+    "sde_sample_freq": 4        # Sample frequency unchanged
 }
 
 # Initialize with adaptation-ready parameters
