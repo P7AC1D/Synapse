@@ -39,20 +39,8 @@ POLICY_KWARGS = {
     "shared_lstm": False,            # Separate LSTM architectures
     "enable_critic_lstm": True,      # Enable LSTM for value estimation
     "net_arch": {
-        "pi": [
-            {"lstm": 512},
-            {"linear": 256},
-            {"skip": "input"},       # Skip connection
-            {"linear": 128},
-            {"linear": 64}
-        ],
-        "vf": [
-            {"lstm": 512},
-            {"linear": 256},
-            {"skip": "input"},       # Skip connection
-            {"linear": 128},
-            {"linear": 64}
-        ]
+        "pi": [256, 128, 64],       # Simple yet effective feedforward structure
+        "vf": [256, 128, 64]        # Mirror policy network structure
     },
     "activation_fn": th.nn.Mish,     # Better activation function
     "optimizer_kwargs": {
@@ -99,8 +87,7 @@ INITIAL_MODEL_KWARGS = {
     "ent_coef": 0.1,                     # Increased from 0.05 for better exploration
     "vf_coef": 1.0,                      # Maintain value importance
     "max_grad_norm": 0.5,                # Keep conservative gradient clipping
-    "n_epochs": 12,                      # Maintain training epochs
-    "use_sde": True                      # Enable state-dependent exploration
+    "n_epochs": 12                       # Maintain training epochs
 }
 
 # Enhanced adaptation hyperparameters
@@ -115,17 +102,13 @@ ADAPTATION_MODEL_KWARGS = {
     "max_grad_norm": 0.5,        # Keep gradient clipping
     "gamma": 0.99,               # High gamma for sparse rewards
     "clip_range_vf": 0.2,        # Match policy clipping
-    "vf_coef": 1.0,             # Maintain value importance
-    "use_sde": True,            # Keep state-dependent exploration
-    "sde_sample_freq": 4        # Sample frequency unchanged
+    "vf_coef": 1.0              # Maintain value importance
 }
 
 # Initialize with adaptation-ready parameters
 MODEL_KWARGS = {
     **INITIAL_MODEL_KWARGS,
-    "use_sde": True,           # Enable state-dependent exploration from start
-    "sde_sample_freq": 4,      # Sample new noise every 4 steps
-    "ent_coef": 0.05          # Start with higher entropy for better exploration
+    "ent_coef": 0.05            # Start with higher entropy for better exploration
 }
 
 def format_time_remaining(seconds: float) -> str:
