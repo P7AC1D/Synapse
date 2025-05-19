@@ -101,6 +101,7 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Drop rows from the start of price data to align with features
         data = data.iloc[dropped_rows:]
+        self.index = data.index  # Store timestamps for tracking
         self.data_length = len(self.raw_data)  # Set length after dropping rows
         
         # Store aligned price data

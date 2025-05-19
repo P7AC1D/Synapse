@@ -511,23 +511,6 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                 progress = (total_steps / env.data_length) * 100
                 print(f"\rProgress: {progress:.1f}% (step {total_steps}/{env.data_length})", end="")
             
-            # Log raw features periodically if verbose
-            if verbose:
-                current_index = env.original_index[total_steps]  # Use aligned index
-                current_data = data.loc[:current_index]
-                feature_processor = env.feature_processor
-                atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
-                    current_data['high'].values,
-                    current_data['low'].values,
-                    current_data['close'].values
-                )
-                print(f"\nRaw features at step {total_steps}:")
-                print(f"ATR: {atr[-1]:.6f}")
-                print(f"RSI: {rsi[-1]:.6f}")
-                print(f"BB Upper: {upper_band[-1]:.6f}")
-                print(f"BB Lower: {lower_band[-1]:.6f}")
-                print(f"Trend Strength: {trend_strength[-1]:.6f}")
-            
             # Recheck balance if configured
             if balance_recheck_bars > 0 and total_steps % balance_recheck_bars == 0:
                 env.metrics.balance = env.metrics.get_current_balance()
@@ -543,8 +526,8 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
             if reset_states_on_gap and hasattr(model, 'is_recurrent') and model.is_recurrent:
                 # Get current and previous timestamp
                 if total_steps > 0:
-                    current_time = env.original_index[total_steps]
-                    prev_time = env.original_index[total_steps-1]
+                    current_time = env.index[total_steps]
+                    prev_time = env.index[total_steps-1]
                     time_diff = (current_time - prev_time).total_seconds() / 60
                     expected_diff = 15  # For 15-minute data
                     
@@ -622,8 +605,8 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
 
                 # Track trade events
                 try:
-                    # Get current timestamp from the data index
-                    current_timestamp = env.original_index[total_steps] if total_steps < env.data_length else env.original_index[-1]
+                    # Get current timestamp from the stored timestamps
+                    current_timestamp = env.timestamps[total_steps] if total_steps < env.data_length else env.timestamps[-1]
 
                     # Check for position changes
                     if env.current_position and not current_position:  # New position opened
