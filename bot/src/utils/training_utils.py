@@ -305,6 +305,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     - State saving for resumable training
     - Adaptive exploration decay
     - Best model tracking and comparison
+    - Iteration-specific model saving and loading
     
     Args:
         data: Full dataset for training
@@ -317,7 +318,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         
     Notes:
         - Uses 'validation_size' from args to split training/validation
-        - Saves checkpoints and best models in ../results/{seed}/
+        - Saves iteration-specific models in ../results/{seed}/iterations/
+        - Saves overall best model in ../results/{seed}/best_model.zip
         - Maintains training state for resumption
         - Adapts exploration and learning rates over iterations
         
@@ -330,13 +332,19 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     # Calculate total number of iterations
     total_iterations = (total_periods - initial_window) // step_size + 1
     
+    # Create iterations directory
+    iterations_dir = os.path.join(f"../results/{args.seed}", "iterations")
+    os.makedirs(iterations_dir, exist_ok=True)
+    
     state_path = f"../results/{args.seed}/training_state.json"
     training_start, _, state = load_training_state(state_path)
     
-    best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
-    if os.path.exists(best_model_path):
-        print(f"Resuming training from step {training_start} with best model")
-        model = PPO.load(best_model_path, device=args.device)
+    iteration = training_start // step_size
+    prev_iteration_path = os.path.join(iterations_dir, f"iteration_{iteration-1}_best.zip") if iteration > 0 else None
+    
+    if prev_iteration_path and os.path.exists(prev_iteration_path):
+        print(f"Resuming training from step {training_start} with previous iteration's model")
+        model = PPO.load(prev_iteration_path, device=args.device)
     else:
         print("Starting new training")
         training_start = 0
@@ -452,23 +460,25 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 # Check if we found a best model during training
                 curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
                 best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
+                iteration_best_path = os.path.join(iterations_dir, f"iteration_{iteration}_best.zip")
                 
-                # Update best model if better curr_best was found
+                # Save current iteration's best model if found
                 if os.path.exists(curr_best_path):
+                    # Load and save as iteration's best model
+                    model = PPO.load(curr_best_path, device=args.device)
+                    model.save(iteration_best_path)
+                    print(f"\nSaved current iteration's best model to {iteration_best_path}")
+                    
+                    # Compare against overall best model (for reference)
                     if os.path.exists(best_model_path):
                         if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
-                            model = PPO.load(curr_best_path, device=args.device)
                             model.save(best_model_path)
-                            print("\nCurrent best model outperformed previous - saved as best model")
-                        else:
-                            model = PPO.load(best_model_path, device=args.device)
-                            print("\nKeeping previous best model")
+                            print("Current model outperformed overall best - updated reference model")
                     else:
-                        model = PPO.load(curr_best_path, device=args.device)
                         model.save(best_model_path)
-                        print("\nNo previous best model - using current best as first best model")
+                        print("No previous best model - saving as first reference model")
                         
-                save_training_state(state_path, training_start + step_size, best_model_path)
+                save_training_state(state_path, training_start + step_size, iteration_best_path)
             else:
                 print(f"\nContinuing training with existing model...")
                 print(f"Training timesteps: {period_timesteps}")
@@ -515,23 +525,25 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 for result in unified_callback.eval_results:
                     result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
 
-            # Compare curr_best against best_model if it exists
+            # Save current iteration's best model and compare against overall best
             curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
             best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
+            iteration_best_path = os.path.join(iterations_dir, f"iteration_{iteration}_best.zip")
             
             if os.path.exists(curr_best_path):
+                # Load and save current iteration's best model
+                model = PPO.load(curr_best_path, device=args.device)
+                model.save(iteration_best_path)
+                print(f"\nSaved current iteration's best model to {iteration_best_path}")
+                
+                # Compare against overall best (for reference)
                 if os.path.exists(best_model_path):
                     if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
-                        model = PPO.load(curr_best_path, device=args.device)
                         model.save(best_model_path)
-                        print("\nCurrent best model outperformed previous - saved as best model")
-                    else:
-                        model = PPO.load(best_model_path, device=args.device)
-                        print("\nKeeping previous best model")
+                        print("Current model outperformed overall best - updated reference model")
                 else:
-                    model = PPO.load(curr_best_path, device=args.device)
                     model.save(best_model_path)
-                    print("\nNo previous best model - using current best as first best model")
+                    print("No previous best model - saving as first reference model")
                     
                 # Clean up curr_best files
                 os.remove(curr_best_path)
@@ -539,16 +551,17 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 if os.path.exists(metrics_path):
                     os.remove(metrics_path)
             else:
-                print("\nNo curr_best model found - reloading best model for next iteration")
-                if os.path.exists(best_model_path):
-                    model = PPO.load(best_model_path, device=args.device)
-                    print("Loaded best model from previous iterations")
+                print("\nNo curr_best model found - loading previous iteration's best model")
+                prev_iteration_path = os.path.join(iterations_dir, f"iteration_{iteration-1}_best.zip")
+                if os.path.exists(prev_iteration_path):
+                    model = PPO.load(prev_iteration_path, device=args.device)
+                    print(f"Loaded previous iteration's best model from {prev_iteration_path}")
                 else:
-                    print("No best model found - continuing with current model")
+                    print("No previous iteration model found - continuing with current model")
                 
             # Calculate iteration time and save state
             iteration_time = time.time() - iteration_start_time
-            save_training_state(state_path, training_start + step_size, best_model_path,
+            save_training_state(state_path, training_start + step_size, iteration_best_path,
                           iteration_time=iteration_time, total_iterations=total_iterations,
                           step_size=step_size)
             
