@@ -95,20 +95,20 @@ class TradingEnv(gym.Env, EzPickle):
             data['volume'] = np.ones(len(data))
             
         # Process data and setup spaces
-        self.raw_data, self.atr_values, aligned_index = self.feature_processor.preprocess_data(data)
+        self.raw_data, self.atr_values, dropped_rows = self.feature_processor.preprocess_data(data)
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.feature_processor.setup_observation_space()
         
-        # Save aligned datetime index and data length
-        self.original_index = aligned_index
-        self.data_length = len(self.raw_data)
+        # Drop rows from the start of price data to align with features
+        data = data.iloc[dropped_rows:]
+        self.data_length = len(self.raw_data)  # Set length after dropping rows
         
         # Store aligned price data
         self.prices = {
-            'close': data.loc[aligned_index, 'close'].values,
-            'high': data.loc[aligned_index, 'high'].values,
-            'low': data.loc[aligned_index, 'low'].values,
-            'spread': data.loc[aligned_index, 'spread'].values,
+            'close': data['close'].values,
+            'high': data['high'].values,
+            'low': data['low'].values,
+            'spread': data['spread'].values,
             'atr': self.atr_values
         }
         

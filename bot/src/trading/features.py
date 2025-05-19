@@ -73,14 +73,14 @@ class FeatureProcessor:
         
         return atr, rsi, (upper, lower), adx
 
-    def preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray, pd.Index]:
+    def preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray, int]:
         """Preprocess market data and calculate features.
         
         Args:
             data: DataFrame with OHLCV data
             
         Returns:
-            Tuple of (features DataFrame, ATR values)
+            Tuple of (features DataFrame, ATR values, number of rows dropped)
         """
         
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -180,7 +180,7 @@ class FeatureProcessor:
             # Validation
             if len(features_df) < 100:
                 raise ValueError("Insufficient data after preprocessing: need at least 100 bars")
-            return features_df, atr, features_df.index
+            return features_df, atr, dropped_rows
         
     def get_feature_names(self) -> list:
         """Get list of feature names."""
