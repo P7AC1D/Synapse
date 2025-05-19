@@ -34,13 +34,13 @@ from utils.model_evaluator import ModelEvaluator
 # Enhanced model architecture configuration
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
-    "lstm_hidden_size": 512,         # Increased from 256 for better temporal patterns
+    "lstm_hidden_size": 256,         # Reduced for faster training while maintaining performance
     "n_lstm_layers": 2,              # Keep 2 layers
     "shared_lstm": False,            # Separate LSTM architectures
     "enable_critic_lstm": True,      # Enable LSTM for value estimation
     "net_arch": {
-        "pi": [256, 128, 64],       # Simple yet effective feedforward structure
-        "vf": [256, 128, 64]        # Mirror policy network structure
+        "pi": [128, 64],            # Simplified feedforward layers
+        "vf": [128, 64]             # Mirror policy network structure
     },
     "activation_fn": th.nn.Mish,     # Better activation function
     "optimizer_kwargs": {

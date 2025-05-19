@@ -67,8 +67,8 @@ def main():
                       help='Maximum lot size (default: 200.0)')
     parser.add_argument('--contract_size', type=float, default=100.0,
                       help='Standard contract size (default: 100.0)')
-    parser.add_argument('--window_size', type=int, default=50,
-                        help='Number of past timesteps for market features in observation (default: 50)')
+    parser.add_argument('--window_size', type=int, default=30,
+                        help='Number of past timesteps for market features in observation (default: 30)')
     parser.add_argument('--verbose', type=int, default=1,
                         help='Verbosity level for training output (0: minimal, 1: normal, 2: debug)')
     

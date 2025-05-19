@@ -15,7 +15,7 @@ class FeatureProcessor:
         self.boll_period = 20
         self.lookback = max(self.boll_period, self.atr_period)
 
-    def setup_observation_space(self, window_size: int = 50) -> spaces.Box:
+    def setup_observation_space(self, window_size: int = 30) -> spaces.Box:
         """Setup observation space with proper feature bounds for windowed input.
         
         Args:
