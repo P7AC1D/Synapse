@@ -388,7 +388,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             train_start = training_start
             print(f"Resuming training at index: {train_start}")
         
-        val_start = train_start + 2880
+        val_start = train_start + train_size
         train_data = data.iloc[train_start:val_start].copy()
         train_env = Monitor(TradingEnv(train_data, predict_mode=False, config=env_config))
         
@@ -444,8 +444,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 print(f"Completed iterations: {state.get('completed_iterations', 0) - 1}/{total_iterations}")
             
             train_start = training_start
-            val_start = train_start + 2880  # 6 weeks of 15min bars
-            val_end = val_start + 960       # 2 weeks validation
+            val_start = train_start + train_size  # Use calculated training window
+            val_end = val_start + val_size        # Use calculated validation window
             
             train_data = data.iloc[train_start:val_start].copy()
             val_data = data.iloc[val_start:val_end].copy()
@@ -462,8 +462,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             train_env = Monitor(TradingEnv(train_data, predict_mode=False, config=env_config))
             val_env = Monitor(TradingEnv(val_data, predict_mode=False, config=env_config))
 
-            train_window_size = val_start - train_start
-            period_timesteps = calculate_timesteps(train_window_size)
+            period_timesteps = calculate_timesteps(train_size)
             
             if model is None:
                 print("\nPerforming initial training...")

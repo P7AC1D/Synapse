@@ -31,13 +31,11 @@ def main():
     # Training window parameters
     parser.add_argument('--initial_balance', type=float, default=10000.0,
                       help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=4320,
+    parser.add_argument('--initial_window', type=int, default=2000,
                       help='Initial window size in bars (default: 9 weeks of 15-min bars)')
-    parser.add_argument('--test_window', type=int, default=480,
-                      help='Test window size in bars (default: 1 week of 15-min bars)')
     parser.add_argument('--validation_size', type=float, default=0.25,
                       help='Fraction of window to use for validation (default: 0.25)')
-    parser.add_argument('--step_size', type=int, default=240,
+    parser.add_argument('--step_size', type=int, default=500,
                       help='Walk-forward step size in bars (default: 1 week of 15-min bars)')
     parser.add_argument('--balance_per_lot', type=float, default=500.0,
                       help='Account balance required per 0.01 lot')
@@ -100,7 +98,6 @@ def main():
     print(f"\nWindow Configuration (15-min bars):")
     print(f"Training Window: {train_size} bars ({train_size/bars_per_day:.1f} days)")
     print(f"Validation Window: {val_size} bars ({val_size/bars_per_day:.1f} days)")
-    print(f"Test Window: {args.test_window} bars ({args.test_window/bars_per_day:.1f} days)")
     print(f"Step Size: {args.step_size} bars ({args.step_size/bars_per_day:.1f} days)\n")
         
     # Set training passes from args or default
