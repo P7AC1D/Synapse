@@ -107,7 +107,7 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
             
             # Log raw features periodically if verbose
             if verbose:
-                current_index = env.original_index[total_steps]  # Use aligned index
+                current_index = env.index[total_steps]  # Use aligned index
                 current_data = data.loc[:current_index]
                 feature_processor = env.feature_processor
                 atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
@@ -137,8 +137,8 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
             if reset_states_on_gap and hasattr(model, 'is_recurrent') and model.is_recurrent:
                 # Get current and previous timestamp
                 if total_steps > 0:
-                    current_time = env.original_index[total_steps]
-                    prev_time = env.original_index[total_steps-1]
+                    current_time = env.index[total_steps]
+                    prev_time = env.index[total_steps-1]
                     time_diff = (current_time - prev_time).total_seconds() / 60
                     expected_diff = 15  # For 15-minute data
                     
@@ -214,7 +214,7 @@ def backtest_with_predictions(model: Union[TradeModel, OnnxTradeModel], data: pd
                 # Track trade events
                 try:
                     # Get current timestamp from the data index
-                    current_timestamp = env.original_index[total_steps] if total_steps < env.data_length else env.original_index[-1]
+                    current_timestamp = env.index[total_steps] if total_steps < env.data_length else env.index[-1]
 
                     # Check for position changes
                     if env.current_position and not current_position:  # New position opened

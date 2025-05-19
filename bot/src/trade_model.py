@@ -501,12 +501,7 @@ class TradeModel:
         try:
             # Validate and prepare data
             data = self.prepare_data(data)
-            
-            self.logger.info(
-                f"Starting evaluation with balance=${self.config.initial_balance:.2f}, "
-                f"balance_per_lot=${self.config.balance_per_lot:.2f}"
-            )
-            
+
             # Perform LSTM warm-up
             if self.is_lstm_model():
                 warmup_window = min(self.config.warmup_window, len(data) // 10)

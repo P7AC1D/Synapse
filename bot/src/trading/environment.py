@@ -119,21 +119,22 @@ class TradingEnv(gym.Env, EzPickle):
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
             
-        # Process data and setup spaces
-        self.features_df, self.atr_values, aligned_index = self.feature_processor.preprocess_data(data)
+        # Process data and get dropped rows count
+        self.features_df, self.atr_values, dropped_rows = self.feature_processor.preprocess_data(data)
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.feature_processor.setup_observation_space(window_size=self.window_size)
         
-        # Save aligned datetime index and data length
-        self.original_index = aligned_index
+        # Drop rows and store aligned index for timestamping
+        data = data.iloc[dropped_rows:]
+        self.index = data.index
         self.data_length = len(self.features_df)
         
         # Store aligned price data
         self.prices = {
-            'close': data.loc[aligned_index, 'close'].values,
-            'high': data.loc[aligned_index, 'high'].values,
-            'low': data.loc[aligned_index, 'low'].values,
-            'spread': data.loc[aligned_index, 'spread'].values,
+            'close': data['close'].values,
+            'high': data['high'].values,
+            'low': data['low'].values,
+            'spread': data['spread'].values,
             'atr': self.atr_values
         }
         
