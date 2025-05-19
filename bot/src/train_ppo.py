@@ -49,8 +49,8 @@ def main():
                       help='Path to pre-trained model to start the first iteration (only used if warm_start=True)')
     
     # Training iteration control
-    parser.add_argument('--train_passes', type=int, default=30,
-                      help='Number of passes through each training window (default: 30)')
+    parser.add_argument('--train_passes', type=int, default=50,
+                      help='Number of passes through each training window (default: 50)')
     parser.add_argument('--learning_rate', type=float, default=1e-3,
                       help='Initial learning rate')
     parser.add_argument('--final_learning_rate', type=float, default=5e-5,

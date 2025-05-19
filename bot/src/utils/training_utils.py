@@ -31,30 +31,30 @@ from callbacks.epsilon_callback import CustomEpsilonCallback
 from callbacks.eval_callback import ValidationCallback
 from utils.model_evaluator import ModelEvaluator
 
-# Enhanced model architecture configuration
+# Optimized model architecture configuration
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
-    "lstm_hidden_size": 512,         # Increased from 256 for better temporal patterns
-    "n_lstm_layers": 2,              # Keep 2 layers
-    "shared_lstm": False,            # Separate LSTM architectures
-    "enable_critic_lstm": True,      # Enable LSTM for value estimation
+    "lstm_hidden_size": 256,         # Reduced for faster training while maintaining pattern recognition
+    "n_lstm_layers": 1,              # Single layer for efficiency
+    "shared_lstm": True,             # Share LSTM between actor/critic to reduce parameters
+    "enable_critic_lstm": False,     # Use shared LSTM instead of separate critic LSTM
     "net_arch": {
-        "pi": [256, 128, 64],       # Simple yet effective feedforward structure
-        "vf": [256, 128, 64]        # Mirror policy network structure
+        "pi": [128, 64],            # Simplified feedforward structure
+        "vf": [128, 64]             # Mirror policy network structure
     },
-    "activation_fn": th.nn.Mish,     # Better activation function
+    "activation_fn": th.nn.Mish,     # Keep effective activation function
     "optimizer_kwargs": {
         "eps": 1e-5,
-        "weight_decay": 1e-6         # Maintain current regularization
+        "weight_decay": 1e-6         # Keep current regularization
     }
 }
 
 # Walk-forward optimization configuration
 TRAINING_PASSES = 30    # Number of passes through each window's data during training
 
-def calculate_timesteps(window_size: int) -> int:
+def calculate_timesteps(window_size: int, training_passes: int) -> int:
     """Calculate training timesteps for current window."""
-    return window_size * TRAINING_PASSES
+    return window_size * training_passes
 
 def market_regime_lr(initial_lr: float = 2.5e-4, max_lr: float = 5e-4, regime_window: int = 480) -> callable:
     """Create market regime-based cyclic learning rate schedule.
@@ -75,34 +75,34 @@ def market_regime_lr(initial_lr: float = 2.5e-4, max_lr: float = 5e-4, regime_wi
         return lr
     return schedule
 
-# Enhanced training hyperparameters
+# Optimized training hyperparameters
 INITIAL_MODEL_KWARGS = {
-    "learning_rate": market_regime_lr(),  # Market regime-based cyclic learning rate
-    "n_steps": 1024,                     # Increased from 512 for better temporal context
-    "batch_size": 256,                   # Maintain batch size
+    "learning_rate": market_regime_lr(),  # Keep market regime-based cyclic learning rate
+    "n_steps": 512,                      # Reduced for faster updates while maintaining context
+    "batch_size": 256,                   # Keep batch size for stability
     "gamma": 0.99,                       # Keep high gamma for sparse rewards
-    "gae_lambda": 0.95,                  # Standard GAE lambda
-    "clip_range": 0.2,                   # Standard PPO clip
-    "clip_range_vf": 0.2,                # Match policy clipping
-    "ent_coef": 0.1,                     # Increased from 0.05 for better exploration
-    "vf_coef": 1.0,                      # Maintain value importance
+    "gae_lambda": 0.95,                  # Keep standard GAE lambda
+    "clip_range": 0.2,                   # Keep standard PPO clip
+    "clip_range_vf": 0.2,                # Keep policy clipping match
+    "ent_coef": 0.1,                     # Keep exploration coefficient
+    "vf_coef": 1.0,                      # Keep value importance
     "max_grad_norm": 0.5,                # Keep conservative gradient clipping
-    "n_epochs": 12                       # Maintain training epochs
+    "n_epochs": 8                        # Reduced epochs for faster training
 }
 
-# Enhanced adaptation hyperparameters
+# Optimized adaptation hyperparameters
 ADAPTATION_MODEL_KWARGS = {
     "learning_rate": market_regime_lr(initial_lr=1.5e-4, max_lr=3e-4),  # Lower range for fine-tuning
-    "batch_size": 256,            # Maintain batch size
-    "n_steps": 1024,             # Match initial n_steps
-    "n_epochs": 10,              # Maintain epochs for regime learning
-    "clip_range": 0.2,           # Standard PPO clip
-    "ent_coef": 0.05,            # Reduced entropy for exploitation
-    "gae_lambda": 0.95,          # Standard lambda
+    "batch_size": 256,            # Keep batch size for stability
+    "n_steps": 512,              # Match optimized initial n_steps
+    "n_epochs": 8,               # Match optimized epochs count
+    "clip_range": 0.2,           # Keep standard PPO clip
+    "ent_coef": 0.05,            # Keep reduced entropy for exploitation
+    "gae_lambda": 0.95,          # Keep standard lambda
     "max_grad_norm": 0.5,        # Keep gradient clipping
-    "gamma": 0.99,               # High gamma for sparse rewards
-    "clip_range_vf": 0.2,        # Match policy clipping
-    "vf_coef": 1.0              # Maintain value importance
+    "gamma": 0.99,               # Keep high gamma for sparse rewards
+    "clip_range_vf": 0.2,        # Keep policy clipping match
+    "vf_coef": 1.0               # Keep value importance
 }
 
 # Initialize with adaptation-ready parameters
@@ -300,7 +300,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
 
     total_iterations = (total_periods - initial_window) // step_size + 1
     train_window_size = initial_window - int(initial_window * args.validation_size)
-    timesteps_per_iteration = calculate_timesteps(train_window_size)
+    timesteps_per_iteration = calculate_timesteps(train_window_size, training_passes)
     total_timesteps = timesteps_per_iteration * total_iterations
     
     print(f"Training Configuration:")
@@ -462,7 +462,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             train_env = Monitor(TradingEnv(train_data, predict_mode=False, config=env_config))
             val_env = Monitor(TradingEnv(val_data, predict_mode=False, config=env_config))
 
-            period_timesteps = calculate_timesteps(train_size)
+            period_timesteps = calculate_timesteps(train_size, training_passes)
             
             if model is None:
                 print("\nPerforming initial training...")
