@@ -31,16 +31,16 @@ from callbacks.epsilon_callback import CustomEpsilonCallback
 from callbacks.eval_callback import ValidationCallback
 from utils.model_evaluator import ModelEvaluator
 
-# Optimized model architecture configuration
+# Optimized model architecture configuration with separate LSTMs
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
-    "lstm_hidden_size": 256,         # Reduced for faster training while maintaining pattern recognition
+    "lstm_hidden_size": 256,         # Maintained size for temporal pattern recognition
     "n_lstm_layers": 1,              # Single layer for efficiency
-    "shared_lstm": True,             # Share LSTM between actor/critic to reduce parameters
-    "enable_critic_lstm": False,     # Use shared LSTM instead of separate critic LSTM
+    "shared_lstm": False,            # Separate LSTM for actor and critic
+    "enable_critic_lstm": True,      # Enable critic's own LSTM
     "net_arch": {
-        "pi": [128, 64],            # Simplified feedforward structure
-        "vf": [128, 64]             # Mirror policy network structure
+        "pi": [128, 64],            # Actor feedforward structure
+        "vf": [128, 64]             # Critic feedforward structure
     },
     "activation_fn": th.nn.Mish,     # Keep effective activation function
     "optimizer_kwargs": {
@@ -75,19 +75,19 @@ def market_regime_lr(initial_lr: float = 2.5e-4, max_lr: float = 5e-4, regime_wi
         return lr
     return schedule
 
-# Optimized training hyperparameters
+# Enhanced training hyperparameters for separate LSTMs
 INITIAL_MODEL_KWARGS = {
-    "learning_rate": market_regime_lr(),  # Keep market regime-based cyclic learning rate
-    "n_steps": 512,                      # Reduced for faster updates while maintaining context
+    "learning_rate": market_regime_lr(initial_lr=3e-4, max_lr=6e-4),  # Higher learning rate for exploration
+    "n_steps": 512,                      # Keep reduced steps for efficiency
     "batch_size": 256,                   # Keep batch size for stability
     "gamma": 0.99,                       # Keep high gamma for sparse rewards
     "gae_lambda": 0.95,                  # Keep standard GAE lambda
     "clip_range": 0.2,                   # Keep standard PPO clip
     "clip_range_vf": 0.2,                # Keep policy clipping match
-    "ent_coef": 0.1,                     # Keep exploration coefficient
+    "ent_coef": 0.2,                     # Increased exploration coefficient
     "vf_coef": 1.0,                      # Keep value importance
     "max_grad_norm": 0.5,                # Keep conservative gradient clipping
-    "n_epochs": 8                        # Reduced epochs for faster training
+    "n_epochs": 8                        # Keep reduced epochs for efficiency
 }
 
 # Optimized adaptation hyperparameters
