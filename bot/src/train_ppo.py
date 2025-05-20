@@ -1,6 +1,6 @@
 """
-Recurrent PPO-LSTM training script for trading model with walk-forward optimization.
-Implements continuous sequential learning with LSTM state management and dynamic exploration.
+Recurrent PPO-GRU training script for trading model with walk-forward optimization.
+Implements continuous sequential learning with GRU state management and dynamic exploration.
 """
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
@@ -19,58 +19,41 @@ from utils.training_utils import (
 )
 
 def main():
-    parser = argparse.ArgumentParser(description='Train a Recurrent PPO-LSTM model for trading with walk-forward optimization')    
+    parser = argparse.ArgumentParser(description='Train a PPO-GRU model for trading with walk-forward optimization')    
+    
+    # Required arguments
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the input dataset CSV file')
     
+    # Hardware/system arguments
     parser.add_argument('--device', type=str, choices=['cuda', 'cpu'], default='cpu',
                       help='Device to use for training (default: cpu)')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
+    parser.add_argument('--verbose', type=int, default=1,
+                      help='Verbosity level (0: minimal, 1: normal, 2: debug)')
     
-    # Training window parameters
-    parser.add_argument('--initial_balance', type=float, default=10000.0,
-                      help='Initial balance for trading')
-    parser.add_argument('--initial_window', type=int, default=2000,
-                      help='Initial window size in bars (default: 9 weeks of 15-min bars)')
+    # Window configuration
+    parser.add_argument('--initial_window', type=int, default=960,
+                      help='Initial window size in bars (2 weeks of 15-min data)')
     parser.add_argument('--validation_size', type=float, default=0.25,
-                      help='Fraction of window to use for validation (default: 0.25)')
-    parser.add_argument('--step_size', type=int, default=500,
-                      help='Walk-forward step size in bars (default: 1 week of 15-min bars)')
-    parser.add_argument('--balance_per_lot', type=float, default=500.0,
-                      help='Account balance required per 0.01 lot')
-    parser.add_argument('--random_start', action='store_true',
-                      help='Start training from random positions in the dataset')
-    
-    # Warm start parameters
-    parser.add_argument('--warm_start', action='store_true',
-                      help='Enable continuous learning across walk-forward iterations by using the best performing model from previous test window')
-    parser.add_argument('--initial_model', type=str,
-                      help='Path to pre-trained model to start the first iteration (only used if warm_start=True)')
-    
-    # Training iteration control
-    parser.add_argument('--train_passes', type=int, default=50,
-                      help='Number of passes through each training window (default: 50)')
-    parser.add_argument('--learning_rate', type=float, default=1e-3,
-                      help='Initial learning rate')
-    parser.add_argument('--final_learning_rate', type=float, default=5e-5,
-                      help='Final learning rate')
+                      help='Fraction of window for validation (2.5 days)')
+    parser.add_argument('--step_size', type=int, default=96,
+                      help='Walk-forward step size in bars (1 trading day)')
     parser.add_argument('--eval_freq', type=int, default=10000,
                       help='Evaluation frequency in timesteps')
     
-    # Trading environment parameters
-    parser.add_argument('--point_value', type=float, default=0.01,
-                      help='Value of one price point movement (default: 0.01)')
-    parser.add_argument('--min_lots', type=float, default=0.01,
-                      help='Minimum lot size (default: 0.01)')
-    parser.add_argument('--max_lots', type=float, default=200.0,
-                      help='Maximum lot size (default: 200.0)')
-    parser.add_argument('--contract_size', type=float, default=100.0,
-                      help='Standard contract size (default: 100.0)')
-    parser.add_argument('--window_size', type=int, default=30,
-                        help='Number of past timesteps for market features in observation (default: 30)')
-    parser.add_argument('--verbose', type=int, default=1,
-                        help='Verbosity level for training output (0: minimal, 1: normal, 2: debug)')
+    # Trading environment configuration
+    parser.add_argument('--initial_balance', type=float, default=10000.0,
+                      help='Initial account balance')
+    parser.add_argument('--balance_per_lot', type=float, default=500.0,
+                      help='Account balance required per 0.01 lot')
+    
+    # Training options
+    parser.add_argument('--warm_start', action='store_true',
+                      help='Enable continuous learning and load initial model if specified')
+    parser.add_argument('--initial_model', type=str,
+                      help='Optional path to pre-trained model for warm start')
     
     args = parser.parse_args()
     
@@ -81,7 +64,7 @@ def main():
     th.manual_seed(args.seed)
     if args.device == 'cuda':
         th.cuda.manual_seed(args.seed)
-        print("Note: Training PPO-LSTM on GPU requires sufficient memory for sequence processing.")
+        print("Note: Training PPO-GRU on GPU requires sufficient memory for sequence processing.")
     
     data = pd.read_csv(args.data_path)
     data.set_index('time', inplace=True)
@@ -99,9 +82,6 @@ def main():
     print(f"Training Window: {train_size} bars ({train_size/bars_per_day:.1f} days)")
     print(f"Validation Window: {val_size} bars ({val_size/bars_per_day:.1f} days)")
     print(f"Step Size: {args.step_size} bars ({args.step_size/bars_per_day:.1f} days)\n")
-        
-    # Set training passes from args or default
-    args.train_passes = args.train_passes or TRAINING_PASSES
 
     try:
         model = train_walk_forward(
@@ -115,12 +95,10 @@ def main():
         return
     
     print("\nWalk-forward optimization completed.")
-    # The returned model is the continuously evolved one.
-    # The overall best performing model on the full dataset is saved as best_model.zip by train_walk_forward.
-    final_evolved_model_path = f"../results/{args.seed}/model_final_evolved.zip"
-    if model: # model could be None if training was interrupted very early
+    final_evolved_model_path = f"../results/{args.seed}/final_evolved_model.zip"
+    if model:
         model.save(final_evolved_model_path)
-        print(f"Final state of continuously evolved model saved at: {final_evolved_model_path}")
+        print(f"Final evolved model saved to: {final_evolved_model_path}")
     else:
         print("No model was returned from training, possibly due to early interruption.")
 

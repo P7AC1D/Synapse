@@ -30,6 +30,7 @@ class TradingConfig:
     max_drawdown: float = 0.4
     min_bars_per_episode: int = 240
     currency_conversion: float = 1.0
+    hold_time_normalization: int = 150  # For normalizing hold time in observations
 
 
 class TradingEnv(gym.Env, EzPickle):
@@ -359,7 +360,7 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Normalized hold time
         normalized_hold_time = (
-            min(self.current_hold_time / self.reward_calculator.TIME_PRESSURE_THRESHOLD, 1.0)
+            min(self.current_hold_time / self.config.hold_time_normalization, 1.0)
             if self.current_position else 0.0
         )
         
