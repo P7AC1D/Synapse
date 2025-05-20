@@ -34,10 +34,10 @@ def main():
                       help='Verbosity level (0: minimal, 1: normal, 2: debug)')
     
     # Window configuration
-    parser.add_argument('--initial_window', type=int, default=960,
-                      help='Initial window size in bars (2 weeks of 15-min data)')
+    parser.add_argument('--initial_window', type=int, default=1920,
+                      help='Initial window size in bars (20 days of 15-min data)')
     parser.add_argument('--validation_size', type=float, default=0.25,
-                      help='Fraction of window for validation (2.5 days)')
+                      help='Fraction of window for validation (5 days)')
     parser.add_argument('--step_size', type=int, default=96,
                       help='Walk-forward step size in bars (1 trading day)')
     parser.add_argument('--eval_freq', type=int, default=10000,
