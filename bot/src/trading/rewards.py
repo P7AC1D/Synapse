@@ -4,7 +4,7 @@ from typing import Union, Optional
 from .actions import Action
 
 class RewardCalculator:
-    """Handles enhanced reward calculation for trading actions with multiple components."""
+    """Handles sparse reward calculation for trading actions."""
     
     def __init__(self, env):
         """Initialize reward calculator.
@@ -13,24 +13,21 @@ class RewardCalculator:
             env: Trading environment instance
         """
         self.env = env
-        self.trade_entry_balance = env.initial_balance  # Track balance at trade entry
-        
-        # Enhanced reward constants
-        self.INVALID_ACTION_PENALTY = -1.0  # Penalty for invalid actions
-        self.TRANSACTION_COST = 0.001  # Increased from 0.0005 to limit overtrading
-        self.TIME_STEP_COST = 0.00001  # Time decay cost
-        self.TIME_PRESSURE_THRESHOLD = 100  # For observation scaling
-        self.PNL_SCALE = 2.0  # Increased from 1.5 for stronger profit signals
-        self.HOLD_REWARD_SCALE = 0.1  # Progressive holding reward
-        self.TREND_ALIGNMENT_BONUS = 0.2  # Trend following bonus
-        self.RISK_ADJUSTMENT_WINDOW = 20  # Window for Sharpe calculation
-        
-        # State tracking
         self.previous_balance_high = env.initial_balance
-        self.last_direction = None
-        self.max_unrealized_pnl = 0.0
+        self.trade_entry_balance = env.initial_balance  # Track balance at trade entry
+        self.last_direction = None  # Track trade direction for reversals
         self.bars_since_consolidation = 0
-        self.returns_history = []  # For Sharpe ratio calculation
+        self.min_hold_bars = 20  # Minimum bars for long hold reward
+        self.consolidation_threshold = 0.0015  # BB width threshold for consolidation
+        
+        # Track max unrealized profit for each trade
+        self.max_unrealized_pnl = 0.0
+        
+        # Reward constants
+        self.INVALID_ACTION_PENALTY = -0.5  # Less punitive for exploration
+        self.GOOD_HOLD_REWARD = 0.3    # More encouragement for profitable trades
+        self.LOSING_HOLD_PENALTY = -0.05  # Reduced penalty for holding losses
+        self.TIME_PRESSURE_THRESHOLD = 150  # Extended time before pressure kicks in
         
     def reset(self, initial_balance: float, min_bars: int = None) -> None:
         """Reset reward calculator state.
@@ -44,77 +41,126 @@ class RewardCalculator:
         self.last_direction = None
         self.max_unrealized_pnl = 0.0
         self.bars_since_consolidation = 0
-        self.returns_history = []
         
-    def _calculate_trend(self, window: int = 20) -> float:
-        """Calculate market trend direction using SMA."""
-        if len(self.env.features_df) < window:
-            return 0.0
+    def _is_market_flat(self) -> bool:
+        """Check if market is in consolidation based on volatility breakout."""
+        current_idx = self.env.current_step
+        # volatility_breakout close to 0.5 indicates price near middle of range
+        # values between 0.4-0.6 suggest consolidation
+        volatility_breakout = self.env.features_df['volatility_breakout'].iloc[current_idx]
+        return 0.4 <= volatility_breakout <= 0.6
+        
+    def _is_successful_reversal(self, position_type: int, pnl: float) -> bool:
+        """Check if a trade reversal was successful."""
+        if self.last_direction is None or position_type == 0:
+            return False
             
-        prices = self.env.prices['close'][max(0, self.env.current_step - window):self.env.current_step + 1]
-        sma = np.mean(prices)
-        current_price = prices[-1]
-        return (current_price - sma) / sma
-
-    def _calculate_rolling_sharpe(self) -> float:
-        """Calculate rolling Sharpe ratio for risk adjustment."""
-        if len(self.returns_history) < self.RISK_ADJUSTMENT_WINDOW:
-            return 0.0
-            
-        returns = np.array(self.returns_history[-self.RISK_ADJUSTMENT_WINDOW:])
-        if np.std(returns) == 0:
-            return 0.0
-            
-        return np.mean(returns) / (np.std(returns) + 1e-6) * np.sqrt(252 * 96)  # Annualized
+        is_reversal = (
+            (position_type == 1 and self.last_direction == 2) or
+            (position_type == 2 and self.last_direction == 1)
+        )
+        
+        return is_reversal and pnl > 0
 
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, current_hold: int,
                         optimal_hold: Optional[int] = None,
                         invalid_action: bool = False) -> float:
-        """Calculate enhanced rewards with multiple components."""
+        """Calculate rewards combining sparse and scaled components.
+        
+        Args:
+            action: Current action taken
+            position_type: Current position type (0: none, 1: long, 2: short)
+            pnl: Current profit/loss for the position
+            atr: Average True Range value
+            current_hold: Number of bars position has been held
+            optimal_hold: Optional optimal holding period
+            invalid_action: Whether the action was invalid
+            
+        Returns:
+            float: Calculated reward value
+        """
         # Handle invalid actions first
         if invalid_action:
             return self.INVALID_ACTION_PENALTY
             
-        reward = -self.TIME_STEP_COST  # Base time decay
+        reward = 0.0
         
-        # Transaction costs
-        if action in [Action.BUY, Action.SELL]:
-            reward -= self.TRANSACTION_COST
-            self.trade_entry_balance = self.env.balance
+        # Position management rewards
+        if position_type != 0:  # If we have an open position
+            # Update max unrealized PnL
+            if pnl > self.max_unrealized_pnl:
+                self.max_unrealized_pnl = pnl
+            else:
+                # Penalty for giving back profits
+                profit_drawdown = (self.max_unrealized_pnl - pnl) / self.trade_entry_balance
+                reward -= profit_drawdown * 0.5
             
-            # Add trend alignment bonus
-            trend = self._calculate_trend()
-            if (action == Action.BUY and trend > 0) or (action == Action.SELL and trend < 0):
-                reward += self.TREND_ALIGNMENT_BONUS
+            if action == Action.HOLD:
+                if pnl > 0:
+                    # Decay the hold reward over time
+                    hold_decay = max(0.2, 1.0 - (current_hold / 100))
+                    reward += self.GOOD_HOLD_REWARD * hold_decay
+                else:
+                    # Penalty for holding losing positions
+                    reward += self.LOSING_HOLD_PENALTY
+                    
+                # Add time pressure after threshold
+                if current_hold > self.TIME_PRESSURE_THRESHOLD:
+                    reward -= 0.01 * (current_hold - self.TIME_PRESSURE_THRESHOLD) / 100
+                    
+            elif action == Action.CLOSE:
+                # Sparse direction reward
+                reward += 1.0 if pnl > 0 else -1.0
                 
-        # Enhanced PnL rewards
-        elif action == Action.CLOSE and position_type != 0:
-            # Stronger PnL scaling
-            scaled_pnl = self.PNL_SCALE * (pnl / self.trade_entry_balance)
-            
-            # Risk-adjusted component
-            if pnl != 0:
-                self.returns_history.append(pnl / self.trade_entry_balance)
-                sharpe = self._calculate_rolling_sharpe()
-                risk_multiplier = 1.0 + max(0, sharpe) * 0.1
-                scaled_pnl *= risk_multiplier
+                # Scaled PnL component
+                reward += pnl / self.trade_entry_balance
                 
-            reward += scaled_pnl
-            reward -= self.TRANSACTION_COST
-            
-        # Progressive hold reward for profitable positions
-        elif position_type != 0 and pnl > 0:
-            hold_factor = min(current_hold / self.TIME_PRESSURE_THRESHOLD, 1.0)
-            hold_reward = self.HOLD_REWARD_SCALE * hold_factor * (pnl / self.trade_entry_balance)
-            reward += hold_reward
+                # Track direction for reversals
+                self.last_direction = position_type
+                
+                # Reset max unrealized PnL
+                self.max_unrealized_pnl = 0.0
+                
+                # Reversal bonus
+                if self._is_successful_reversal(position_type, pnl):
+                    reward += 1.0
+        else:  # No position open
+            # Update trade entry balance and reset max unrealized PnL for new positions
+            if action in [Action.BUY, Action.SELL]:
+                self.trade_entry_balance = self.env.balance
+                self.max_unrealized_pnl = 0.0
+                
+            # Reward for staying out during consolidation
+            if action == Action.HOLD:
+                if self._is_market_flat():
+                    reward += 0.1
+                    self.bars_since_consolidation = 0
+                else:
+                    self.bars_since_consolidation += 1
+                    
+        # New Balance High bonus (applies to all situations)
+        if self.env.balance > self.previous_balance_high:
+            reward += 1.0
+            self.previous_balance_high = self.env.balance
         
         return float(reward)
 
     def calculate_terminal_reward(self, balance: float, initial_balance: float) -> float:
-        """Calculate reward for terminal state."""
-        if balance <= 0:
-            return -5.0  # Bankruptcy penalty
+        """Calculate reward for terminal state.
         
-        # End of episode reward based on total return
-        return (balance - initial_balance) / initial_balance
+        Args:
+            balance: Final account balance
+            initial_balance: Initial account balance
+            
+        Returns:
+            float: Terminal reward value
+        """
+        if balance <= 0:
+            return -10.0  # Significant but less extreme bankruptcy penalty
+        
+        # End of episode bonus
+        if balance > initial_balance:
+            return 10.0
+        
+        return 0.0

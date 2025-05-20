@@ -34,23 +34,23 @@ from utils.model_evaluator import ModelEvaluator
 # Optimized model architecture configuration with separate LSTMs
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
-    "lstm_hidden_size": 256,         # Maintained size for temporal pattern recognition
-    "n_lstm_layers": 1,              # Single layer for efficiency
-    "shared_lstm": False,            # Separate LSTM for actor and critic
-    "enable_critic_lstm": True,      # Enable critic's own LSTM
+    "lstm_hidden_size": 256,          # Larger LSTM for more temporal context
+    "n_lstm_layers": 2,               # Keep 2 layers
+    "shared_lstm": False,             # Separate LSTM architectures
+    "enable_critic_lstm": True,       # Enable LSTM for value estimation
     "net_arch": {
-        "pi": [128, 64],            # Actor feedforward structure
-        "vf": [128, 64]             # Critic feedforward structure
+        "pi": [256, 128, 64],              # Deeper policy network
+        "vf": [256, 128, 64]               # Matching value network
     },
-    "activation_fn": th.nn.Mish,     # Keep effective activation function
+    "activation_fn": th.nn.Mish,      # Better activation function
     "optimizer_kwargs": {
         "eps": 1e-5,
-        "weight_decay": 1e-6         # Keep current regularization
+        "weight_decay": 1e-6          # Slightly reduced regularization
     }
 }
 
 # Walk-forward optimization configuration
-TRAINING_PASSES = 30    # Number of passes through each window's data during training
+TRAINING_PASSES = 50    # Increased passes for better exploration with new reward structure
 
 def calculate_timesteps(window_size: int, training_passes: int) -> int:
     """Calculate training timesteps for current window."""
@@ -82,9 +82,9 @@ INITIAL_MODEL_KWARGS = {
     "batch_size": 256,                   # Keep batch size for stability
     "gamma": 0.99,                       # Keep high gamma for sparse rewards
     "gae_lambda": 0.95,                  # Keep standard GAE lambda
-    "clip_range": 0.2,                   # Keep standard PPO clip
-    "clip_range_vf": 0.2,                # Keep policy clipping match
-    "ent_coef": 0.2,                     # Increased exploration coefficient
+    "clip_range": 0.3,                   # Increased clip range for more policy updates
+    "clip_range_vf": 0.3,                # Match policy clipping
+    "ent_coef": 0.25,                    # Higher entropy coefficient for exploration
     "vf_coef": 1.0,                      # Keep value importance
     "max_grad_norm": 0.5,                # Keep conservative gradient clipping
     "n_epochs": 8                        # Keep reduced epochs for efficiency
@@ -97,7 +97,7 @@ ADAPTATION_MODEL_KWARGS = {
     "n_steps": 512,              # Match optimized initial n_steps
     "n_epochs": 8,               # Match optimized epochs count
     "clip_range": 0.2,           # Keep standard PPO clip
-    "ent_coef": 0.05,            # Keep reduced entropy for exploitation
+    "ent_coef": 0.1,             # Maintain higher entropy for adaptation
     "gae_lambda": 0.95,          # Keep standard lambda
     "max_grad_norm": 0.5,        # Keep gradient clipping
     "gamma": 0.99,               # Keep high gamma for sparse rewards
