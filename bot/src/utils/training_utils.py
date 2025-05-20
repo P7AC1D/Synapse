@@ -32,12 +32,6 @@ from utils.model_evaluator import ModelEvaluator
 
 # Training configuration
 TRAINING_PASSES = 50    # Number of passes through each training window
-
-# Trading environment configuration
-POINT_VALUE = 0.01     # Value of one price point movement
-MIN_LOTS = 0.01        # Minimum lot size
-MAX_LOTS = 200.0       # Maximum lot size
-CONTRACT_SIZE = 100.0   # Standard contract size
 WINDOW_SIZE = 30       # Number of past timesteps for market features
 
 # Model architecture configuration with separate GRUs for policy and value
@@ -162,14 +156,14 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
         return 0, None, {}
 
 def create_env_config(args) -> TradingConfig:
-    """Create TradingConfig from args using standard settings."""
+    """Create TradingConfig from args."""
     return TradingConfig(
         initial_balance=args.initial_balance,
         balance_per_lot=args.balance_per_lot,
-        point_value=POINT_VALUE,
-        min_lots=MIN_LOTS,
-        max_lots=MAX_LOTS,
-        contract_size=CONTRACT_SIZE,
+        point_value=args.point_value,
+        min_lots=args.min_lots,
+        max_lots=args.max_lots,
+        contract_size=args.contract_size,
         window_size=WINDOW_SIZE
     )
 

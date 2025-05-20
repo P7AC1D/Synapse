@@ -49,6 +49,16 @@ def main():
     parser.add_argument('--balance_per_lot', type=float, default=500.0,
                       help='Account balance required per 0.01 lot')
     
+    # Symbol-specific parameters
+    parser.add_argument('--point_value', type=float, default=0.01,
+                      help='Value of one price point movement')
+    parser.add_argument('--min_lots', type=float, default=0.01,
+                      help='Minimum trading lot size')
+    parser.add_argument('--max_lots', type=float, default=200.0,
+                      help='Maximum trading lot size')
+    parser.add_argument('--contract_size', type=float, default=100.0,
+                      help='Standard contract size')
+    
     # Training options
     parser.add_argument('--warm_start', action='store_true',
                       help='Enable continuous learning and load initial model if specified')
