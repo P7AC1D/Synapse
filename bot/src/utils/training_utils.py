@@ -389,6 +389,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 is_final_eval=True  # Enable full evaluation including historical data
             )
             
+            # Calculate timing first
+            iteration_time = time.time() - iteration_start_time
+            
             # Save iteration checkpoint
             current_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{iteration}.zip")
             print(f"\n=== Saving Model ===")
@@ -408,8 +411,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 print(f"Win Rate: {hist_metrics['win_rate']*100:.2f}%")
                 print(f"Profit Factor: {hist_metrics['profit_factor']:.2f}")
                 print(f"Max Drawdown: {hist_metrics['max_balance_drawdown']*100:.2f}%")
-            
-            iteration_time = time.time() - iteration_start_time
             save_training_state(
                 state_path, 
                 training_start + step_size,
