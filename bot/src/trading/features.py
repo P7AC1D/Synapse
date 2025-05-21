@@ -14,6 +14,25 @@ class FeatureProcessor:
         self.rsi_period = 14
         self.boll_period = 20
         self.lookback = max(self.boll_period, self.atr_period)
+        
+        # Trading session configurations in UTC
+        self.session_times = {
+            'asian': {
+                'start': 0,     # 00:00 UTC
+                'end': 8,       # 08:00 UTC
+                'weight': 0.6
+            },
+            'london': {
+                'start': 7,     # 07:00 UTC
+                'end': 16,      # 16:00 UTC
+                'weight': 0.8
+            },
+            'ny': {
+                'start': 12,    # 12:00 UTC
+                'end': 21,      # 21:00 UTC
+                'weight': 1.0
+            }
+        }
 
     def setup_observation_space(self, window_size: int = 30) -> spaces.Box:
         """Setup observation space with proper feature bounds for windowed input.
@@ -33,6 +52,34 @@ class FeatureProcessor:
         return spaces.Box(
             low=-1, high=1, shape=(total_features,), dtype=np.float32
         )
+
+    def _calculate_session_features(self, timestamp: pd.Timestamp) -> np.ndarray:
+        """Calculate trading session activity levels.
+        
+        Args:
+            timestamp: UTC timestamp
+            
+        Returns:
+            ndarray: [asian, london, ny] session strengths
+        """
+        hour = timestamp.hour
+        features = []
+        
+        # Calculate session overlap weights
+        for session in ['asian', 'london', 'ny']:
+            config = self.session_times[session]
+            if config['start'] <= hour < config['end']:
+                strength = config['weight']
+                # Decay at session boundaries
+                hours_from_start = min(hour - config['start'], 
+                                   config['end'] - hour)
+                if hours_from_start < 1:
+                    strength *= hours_from_start
+            else:
+                strength = 0.0
+            features.append(strength)
+        
+        return np.array(features)
 
     def _calculate_indicators(self, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> Tuple[np.ndarray, np.ndarray, Tuple[np.ndarray, np.ndarray], np.ndarray]:
         """Calculate technical indicators using ta package.
@@ -171,6 +218,12 @@ class FeatureProcessor:
                 where=volume[:-1] != 0
             )
             volume_pct = np.clip(volume_pct, -1, 1)            # Create features DataFrame with exact ordering to match get_feature_names
+            # Calculate session features
+            session_strengths = np.array([
+                self._calculate_session_features(ts) 
+                for ts in pd.to_datetime(aligned_index, utc=True)
+            ])
+            
             features = {
                 'returns': returns,
                 'rsi': rsi / 50 - 1,
@@ -183,6 +236,9 @@ class FeatureProcessor:
                 'lower_wick_pct': lower_wick_pct / 0.05,  # Scale [0, 0.05] to [0, 1]
                 'cos_time': cos_time,
                 'sin_time': sin_time,
+                'asian_session': session_strengths[:, 0],    # [0, 0.6] Asian session activity
+                'london_session': session_strengths[:, 1],   # [0, 0.8] London session activity
+                'ny_session': session_strengths[:, 2],       # [0, 1.0] NY session activity
                 # position_type and unrealized_pnl are added by the environment
             }
             features_df = pd.DataFrame(features, index=aligned_index)
@@ -205,9 +261,12 @@ class FeatureProcessor:
             'range_pct',       # [0, 1] Relative candle size
             'upper_wick_pct',  # [0, 1] Upper rejection
             'lower_wick_pct',  # [0, 1] Lower rejection
-            'cos_time',        # [-1, 1] Cosine encoding of time
-            'sin_time',        # [-1, 1] Sine encoding of time
+            'cos_time',         # [-1, 1] Cosine encoding of time
+            'sin_time',         # [-1, 1] Sine encoding of time
+            'asian_session',    # [0, 0.6] Asian session activity
+            'london_session',   # [0, 0.8] London session activity
+            'ny_session',       # [0, 1.0] NY session activity
             'position_type',    # [-1, 0, 1] Current position
             'unrealized_pnl',   # [-1, 1] Current position P&L
-            'hold_time'        # [0, 1] Normalized hold time
+            'hold_time'         # [0, 1] Normalized hold time
         ]
