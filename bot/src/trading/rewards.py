@@ -16,8 +16,9 @@ class RewardCalculator:
         self.trade_entry_balance = env.initial_balance
         
         # Core reward constants
-        self.INVALID_ACTION_PENALTY = -0.5
-        self.DRAWDOWN_PENALTY_FACTOR = 1.0  # Scale factor for drawdown penalty
+        self.INVALID_ACTION_PENALTY = -0.2  # Reduced penalty to encourage exploration
+        self.DRAWDOWN_PENALTY_FACTOR = 0.8  # Reduced drawdown penalty
+        self.ENTRY_REWARD_SCALE = 0.1      # Scale factor for entry rewards
         
     def reset(self, initial_balance: float, min_bars: int = None) -> None:
         """Reset reward calculator state.
@@ -53,18 +54,26 @@ class RewardCalculator:
         reward = 0.0
         
         if position_type != 0:  # If we have an open position
+            # Intermediate reward for unrealized profits
+            if pnl > 0:
+                reward += (pnl / self.trade_entry_balance) * 0.1  # Small reward for positive positions
+            
             if action == Action.CLOSE:
                 # Pure returns reward on position close
                 reward = pnl / self.trade_entry_balance
                 
-                # Add drawdown penalty
+                # Add drawdown penalty (reduced impact)
                 current_drawdown = self.env.metrics.get_equity_drawdown()
                 drawdown_penalty = -current_drawdown * self.DRAWDOWN_PENALTY_FACTOR
                 reward += drawdown_penalty
+                
         else:  # No position open
-            # Update trade entry balance for new positions
+            # Reward for taking entry actions based on market volatility
             if action in [Action.BUY, Action.SELL]:
                 self.trade_entry_balance = self.env.balance
+                # Reward entry actions proportional to market volatility (ATR)
+                entry_quality = min(1.0, atr / self.env.prices['close'][self.env.current_step])
+                reward += entry_quality * self.ENTRY_REWARD_SCALE
         
         return float(reward)
 

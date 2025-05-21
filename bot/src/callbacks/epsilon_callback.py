@@ -16,7 +16,8 @@ class CustomEpsilonCallback(BaseCallback):
         self.iteration = iteration
         self.original_forward = None
         self.setup_done = False
-        self.min_exploration_rate = 0.4  # Higher minimum exploration rate
+        self.min_exploration_rate = 0.5  # Increased minimum exploration rate
+        self.decay_power = 0.8  # Smoother decay curve
         
     def _setup_exploration(self) -> None:
         """Setup exploration by modifying the policy's forward pass"""
@@ -28,15 +29,18 @@ class CustomEpsilonCallback(BaseCallback):
                 dist = self.original_forward(*args, **kwargs)
                 
                 # Calculate current epsilon with minimum exploration rate
+                raw_progress = self.num_timesteps / self.decay_timesteps
+                # Use power function for smoother decay
+                progress = min(1.0, raw_progress ** self.decay_power)
+                
                 if self.iteration <= 1:
-                    progress = min(1.0, (self.num_timesteps / self.decay_timesteps) ** 1.1)  # Slower decay
-                    current_eps = max(
-                        self.start_eps + progress * (self.end_eps - self.start_eps),
-                        self.min_exploration_rate
-                    )
+                    # Higher exploration for initial training
+                    base_eps = self.start_eps + progress * (self.end_eps - self.start_eps)
+                    current_eps = max(base_eps, self.min_exploration_rate + 0.1)
                 else:
-                    progress = min(1.0, self.num_timesteps / self.decay_timesteps)
-                    current_eps = self.start_eps + progress * (self.end_eps - self.start_eps)
+                    # Maintain minimum exploration for later iterations
+                    base_eps = self.start_eps + progress * (self.end_eps - self.start_eps)
+                    current_eps = max(base_eps, self.min_exploration_rate)
                 
                 # Random exploration
                 if np.random.random() < current_eps:

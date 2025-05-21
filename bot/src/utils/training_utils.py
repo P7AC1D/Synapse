@@ -1,7 +1,7 @@
 """
-Training utilities for PPO-GRU model with walk-forward optimization.
+Training utilities for PPO-LSTM model with walk-forward optimization.
 
-This module provides functions and configurations for training a PPO-GRU model
+This module provides functions and configurations for training a PPO-LSTM model
 using walk-forward optimization. It includes:
 - Model architecture and hyperparameter configurations 
 - Training state management
@@ -31,40 +31,40 @@ from callbacks.eval_callback import ValidationCallback
 from utils.model_evaluator import ModelEvaluator
 
 # Training configuration
-TRAINING_PASSES = 50    # Number of passes through each training window
+TRAINING_PASSES = 100   # Doubled number of passes for better learning
 WINDOW_SIZE = 30       # Number of past timesteps for market features
 
-# Model architecture configuration with separate GRUs for policy and value
+# Model architecture configuration with LSTM networks for policy and value
 POLICY_KWARGS = {
     "optimizer_class": th.optim.AdamW,
-    "gru_hidden_size": 512,          # Standard size for capturing intraday patterns
-    "n_gru_layers": 2,               # Two layers for complex temporal dependencies
-    "shared_gru": False,             # Separate GRU architectures
-    "enable_critic_gru": True,       # Enable GRU for value estimation
+    "lstm_hidden_size": 256,         # Reduced size for faster learning
+    "n_lstm_layers": 2,              # Keep two layers for temporal dependencies
+    "shared_lstm": True,             # Share LSTM for better feature extraction
+    "enable_critic_lstm": False,     # Disable separate critic LSTM since we're using shared
     "net_arch": {
-        "pi": [256, 128],           # Research-aligned policy network
-        "vf": [256, 128]            # Matching value network
+        "pi": [128, 64],            # Simplified policy network
+        "vf": [128, 64]             # Matching value network
     },
     "activation_fn": th.nn.Mish,     # Modern activation function
     "optimizer_kwargs": {
         "eps": 1e-5,
-        "weight_decay": 1e-6         # Light regularization for stability
+        "weight_decay": 1e-5         # Increased regularization
     }
 }
 
-# Standard model hyperparameters for consistent training
+# Model hyperparameters optimized for exploration
 MODEL_KWARGS = {
-    "learning_rate": 3e-4,           # Standard stable learning rate
-    "n_steps": 256,                  # Keep faster training steps
-    "batch_size": 128,               # Keep smaller batches
-    "gamma": 0.99,                   # Standard discount
-    "gae_lambda": 0.95,              # Standard GAE
-    "clip_range": 0.2,               # Standard PPO clip
+    "learning_rate": 2.5e-4,         # Slightly lower for stability
+    "n_steps": 512,                  # Longer sequences for better temporal learning
+    "batch_size": 256,               # Larger batches for stable gradients
+    "gamma": 0.99,                   # Keep standard discount
+    "gae_lambda": 0.95,              # Keep standard GAE
+    "clip_range": 0.2,               # Keep standard PPO clip
     "clip_range_vf": 0.2,            # Match policy clip
-    "ent_coef": 0.15,                # Balanced exploration
-    "vf_coef": 1.0,                  # Standard value weight
-    "max_grad_norm": 0.5,            # Standard gradient clip
-    "n_epochs": 4                    # Keep faster epochs
+    "ent_coef": 0.3,                 # Increased exploration
+    "vf_coef": 0.8,                  # Reduced value emphasis
+    "max_grad_norm": 0.5,            # Keep standard gradient clip
+    "n_epochs": 6                    # More epochs per update
 }
 
 def calculate_timesteps(window_size: int, training_passes: int) -> int:
@@ -191,12 +191,12 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         try:
             obs, _ = env.reset()
             done = False
-            gru_states = None
+            lstm_states = None
 
             while not done:
-                action, gru_states = model.predict(
+                action, lstm_states = model.predict(
                     obs,
-                    state=gru_states,
+                    state=lstm_states,
                     deterministic=True
                 )
                 obs, reward, terminated, truncated, info = env.step(action)
@@ -283,9 +283,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             # Setup callbacks
             callbacks = [
                 CustomEpsilonCallback(
-                    start_eps=1.0 if model is None else 0.25,
-                    end_eps=0.1 if model is None else 0.01,
-                    decay_timesteps=int(timesteps_per_iteration * 0.7),
+                    start_eps=1.0 if model is None else 0.4,  # Higher start epsilon for continued exploration
+                    end_eps=0.2 if model is None else 0.1,    # Higher end epsilon
+                    decay_timesteps=int(timesteps_per_iteration * 0.9),  # Slower decay
                     iteration=iteration
                 ),
                 ValidationCallback(
@@ -301,7 +301,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             # Create or update model
             if model is None:
                 model = RecurrentPPO(
-                    "MlpGruPolicy",
+                    "MlpLstmPolicy",
                     train_env,
                     policy_kwargs=POLICY_KWARGS,
                     verbose=0,
