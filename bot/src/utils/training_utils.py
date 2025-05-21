@@ -255,6 +255,13 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     
     for directory in [checkpoints_dir, plots_dir, iterations_dir]:
         os.makedirs(directory, exist_ok=True)
+        
+    # Initialize model evaluator
+    evaluator = ModelEvaluator(
+        save_path=results_dir,
+        device=args.device,
+        verbose=args.verbose
+    )
 
     # Load or initialize training state
     training_start, initial_model_path, state = load_training_state(state_path)
@@ -314,10 +321,30 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 reset_num_timesteps=model is None
             )
 
-            # Save checkpoints
+            # Run post-iteration evaluation and save results
+            # This includes historical evaluation, plot generation, and metrics saving
+            evaluation_results = evaluator.select_best_model(
+                model=model,
+                val_env=val_env,
+                full_data=data,
+                config=env_config,
+                iteration=iteration,
+                is_final_eval=True  # Enable full evaluation including historical data
+            )
+            
+            # Save iteration checkpoint
             current_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{iteration}.zip")
             model.save(current_checkpoint_path)
-
+            
+            # Print evaluation summary
+            if args.verbose > 0 and 'historical' in evaluation_results:
+                hist_metrics = evaluation_results['historical']['metrics']
+                print(f"\nIteration {iteration} Historical Performance:")
+                print(f"Return: {hist_metrics['return']*100:.2f}%")
+                print(f"Win Rate: {hist_metrics['win_rate']*100:.2f}%")
+                print(f"Profit Factor: {hist_metrics['profit_factor']:.2f}")
+                print(f"Max Drawdown: {hist_metrics['max_balance_drawdown']*100:.2f}%")
+            
             iteration_time = time.time() - iteration_start_time
             save_training_state(
                 state_path, 
