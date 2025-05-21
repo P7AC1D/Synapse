@@ -245,6 +245,20 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     total_iterations = (total_periods - initial_window) // step_size + 1
     train_window_size = initial_window - int(initial_window * args.validation_size)
     timesteps_per_iteration = calculate_timesteps(train_window_size, training_passes)
+    total_timesteps = timesteps_per_iteration * total_iterations
+
+    print(f"\nTraining Configuration:")
+    print(f"Training passes per window: {training_passes}")
+    print(f"Timesteps per iteration: {timesteps_per_iteration:,d}")
+    print(f"Total training iterations: {total_iterations}")
+    print(f"Total training timesteps: {total_timesteps:,d}")
+
+    val_size = int(initial_window * args.validation_size)
+    train_size = initial_window - val_size
+    print(f"\nWindow Configuration (15-min bars):")
+    print(f"Training Size: {train_size} bars")
+    print(f"Validation Size: {val_size} bars")
+    print(f"Step Size: {step_size} bars")
     
     # Setup directories
     results_dir = f"../results/{args.seed}"
@@ -273,14 +287,31 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             iteration = training_start // step_size
             iteration_start_time = time.time()
             
+            # Load state for time estimates
+            _, _, state = load_training_state(state_path)
+            if state.get('avg_iteration_time'):
+                remaining_iterations = total_iterations - state.get('completed_iterations', 0)
+                estimated_time = remaining_iterations * state['avg_iteration_time']
+                print(f"\nEstimated time remaining: {format_time_remaining(estimated_time)}")
+                print(f"Average iteration time: {state['avg_iteration_time']/60:.1f} minutes")
+                print(f"Completed iterations: {state.get('completed_iterations', 0) - 1}/{total_iterations}")
+            
             # Calculate data windows
             train_start = training_start
             val_start = train_start + train_window_size
             val_end = val_start + int(initial_window * args.validation_size)
             
-            # Prepare data
+            # Prepare data with time information
             train_data = data.iloc[train_start:val_start].copy()
             val_data = data.iloc[val_start:val_end].copy()
+            
+            # Add index for time tracking
+            train_data.index = data.index[train_start:val_start]
+            val_data.index = data.index[val_start:val_end]
+
+            print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
+            print(f"=== Validation Period: {val_data.index[0]} to {val_data.index[-1]} ===")
+            print(f"=== Walk-forward Iteration: {iteration}/{total_iterations} ===")
             
             # Create environments
             train_env = Monitor(TradingEnv(train_data, predict_mode=False, config=env_config))
@@ -335,6 +366,12 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             # Save iteration checkpoint
             current_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{iteration}.zip")
             model.save(current_checkpoint_path)
+            print(f"\nSaved iteration checkpoint: {current_checkpoint_path}")
+            
+            if args.verbose > 0:
+                print(f"\nModel is learning:")
+                print(f"- Last training took: {iteration_time/60:.1f} minutes")
+                print(f"- Total training hours: {(time.time() - iteration_start_time)/3600:.1f}")
             
             # Print evaluation summary
             if args.verbose > 0 and 'historical' in evaluation_results:
@@ -364,10 +401,13 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             model.save(interrupt_checkpoint_path)
             save_interrupt_state(state_path, iteration, interrupt_checkpoint_path)
 
+    print(f"\nWalk-forward optimization completed successfully.")
+    
     # Save final model
     if model:
         final_model_path = os.path.join(results_dir, "final_evolved_model.zip")
         model.save(final_model_path)
-        print(f"Final evolved model saved to: {final_model_path}")
+        print(f"\nFinal evolved model saved to: {final_model_path}")
+        print(f"You can now use this model for inference and trading.")
 
     return model
