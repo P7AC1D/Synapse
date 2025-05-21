@@ -336,16 +336,20 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{prev_iter}.zip")
                 
                 if os.path.exists(checkpoint_path):
+                    print(f"\n=== Attempting to load model ===")
+                    print(f"Checkpoint path: {checkpoint_path}")
                     try:
                         model = RecurrentPPO.load(checkpoint_path, env=train_env)
-                        print(f"Continuing training from checkpoint: {checkpoint_path}")
+                        print(f"Successfully loaded checkpoint")
                     except Exception as e:
                         print(f"Failed to load checkpoint: {e}")
                         model = None
                 elif args.initial_model and os.path.exists(args.initial_model):
+                    print(f"\n=== Attempting to load initial model ===")
+                    print(f"Initial model path: {args.initial_model}")
                     try:
                         model = RecurrentPPO.load(args.initial_model, env=train_env)
-                        print(f"Starting with initial model: {args.initial_model}")
+                        print(f"Successfully loaded initial model")
                     except Exception as e:
                         print(f"Failed to load initial model: {e}")
                         model = None
@@ -388,8 +392,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             
             # Save iteration checkpoint
             current_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{iteration}.zip")
+            print(f"\n=== Saving Model ===")
+            print(f"Path: {current_checkpoint_path}")
             model.save(current_checkpoint_path)
-            print(f"\nSaved iteration checkpoint: {current_checkpoint_path}")
             
             if args.verbose > 0:
                 print(f"\nModel is learning:")
@@ -421,6 +426,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         print("\nTraining interrupted. Progress saved - use same command to resume.")
         if model:
             interrupt_checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_interrupt_iter_{iteration}.zip")
+            print(f"\n=== Saving Interrupt Checkpoint ===")
+            print(f"Path: {interrupt_checkpoint_path}")
             model.save(interrupt_checkpoint_path)
             save_interrupt_state(state_path, iteration, interrupt_checkpoint_path)
 
@@ -429,6 +436,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     # Save final model
     if model:
         final_model_path = os.path.join(results_dir, "final_evolved_model.zip")
+        print(f"\n=== Saving Final Model ===")
+        print(f"Path: {final_model_path}")
         model.save(final_model_path)
         print(f"\nFinal evolved model saved to: {final_model_path}")
         print(f"You can now use this model for inference and trading.")
