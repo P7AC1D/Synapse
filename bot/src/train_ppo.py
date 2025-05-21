@@ -1,6 +1,6 @@
 """
 Recurrent PPO-GRU training script for trading model with walk-forward optimization.
-Implements continuous sequential learning with GRU state management and dynamic exploration.
+Implements sequential learning with standard PPO exploration and GRU state management.
 """
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
