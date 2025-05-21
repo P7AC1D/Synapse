@@ -87,8 +87,9 @@ def format_time_remaining(seconds: float) -> str:
     return " ".join(parts)
 
 def save_training_state(path: str, training_start: int, model_path: str,
-                       iteration_time: float = None, total_iterations: int = None, 
-                       step_size: int = None, is_completed: bool = True) -> None:
+                       iteration: int = None, iteration_time: float = None, 
+                       total_iterations: int = None, step_size: int = None, 
+                       is_completed: bool = True) -> None:
     """Save current training state to file."""
     try:
         with open(path, 'r') as f:
@@ -113,8 +114,8 @@ def save_training_state(path: str, training_start: int, model_path: str,
         state['iteration_times'] = state['iteration_times'][-5:]
         state['avg_iteration_time'] = sum(state['iteration_times']) / len(state['iteration_times'])
     
-        if step_size is not None:
-            state['completed_iterations'] = iteration - 1 if iteration > 0 else 0
+    if iteration is not None:
+        state['completed_iterations'] = iteration - 1 if iteration > 0 else 0
     
     if total_iterations is not None:
         state['total_iterations'] = total_iterations
@@ -415,6 +416,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 state_path, 
                 training_start + step_size,
                 current_checkpoint_path,
+                iteration=iteration,
                 iteration_time=iteration_time,
                 total_iterations=total_iterations,
                 step_size=step_size
