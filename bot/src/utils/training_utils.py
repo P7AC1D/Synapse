@@ -329,8 +329,31 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 )
             ]
 
-            # Create or update model
+            # Load or create model
+            if model is None and args.warm_start:
+                # Try loading from previous checkpoint
+                prev_iter = iteration - 1
+                checkpoint_path = os.path.join(checkpoints_dir, f"checkpoint_iter_{prev_iter}.zip")
+                
+                if os.path.exists(checkpoint_path):
+                    try:
+                        model = RecurrentPPO.load(checkpoint_path, env=train_env)
+                        print(f"Continuing training from checkpoint: {checkpoint_path}")
+                    except Exception as e:
+                        print(f"Failed to load checkpoint: {e}")
+                        model = None
+                elif args.initial_model and os.path.exists(args.initial_model):
+                    try:
+                        model = RecurrentPPO.load(args.initial_model, env=train_env)
+                        print(f"Starting with initial model: {args.initial_model}")
+                    except Exception as e:
+                        print(f"Failed to load initial model: {e}")
+                        model = None
+
+            # Create new model if needed
             if model is None:
+                if args.warm_start:
+                    print("No valid model found for warm start. Creating new model...")
                 model = RecurrentPPO(
                     "MlpLstmPolicy",
                     train_env,
