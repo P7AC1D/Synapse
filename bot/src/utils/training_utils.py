@@ -32,13 +32,12 @@ from utils.model_evaluator import ModelEvaluator
 
 # Training configuration
 TRAINING_PASSES = 50    # Standard number of passes
-WINDOW_SIZE = 30       # Number of past timesteps for market features
 
 # Model architecture configuration with GRU networks for policy and value
 POLICY_KWARGS = {
     "optimizer_class": th.optim.Adam,
-    "lstm_hidden_size": 64,        # Standard size
-    "n_lstm_layers": 1,           # Single layer for baseline
+    "lstm_hidden_size": 256,        # Standard size
+    "n_lstm_layers": 2,           # Single layer for baseline
     "shared_lstm": True,          # Share GRU for efficiency
     "enable_critic_lstm": False,  # Use shared architecture
     "net_arch": {
@@ -162,8 +161,7 @@ def create_env_config(args) -> TradingConfig:
         point_value=args.point_value,
         min_lots=args.min_lots,
         max_lots=args.max_lots,
-        contract_size=args.contract_size,
-        window_size=WINDOW_SIZE
+        contract_size=args.contract_size
     )
 
 def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict[str, Any]:

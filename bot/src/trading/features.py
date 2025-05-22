@@ -34,11 +34,8 @@ class FeatureProcessor:
             }
         }
 
-    def setup_observation_space(self, window_size: int = 30) -> spaces.Box:
-        """Setup observation space with proper feature bounds for windowed input.
-        
-        Args:
-            window_size: Number of past timesteps to include for market features.
+    def setup_observation_space(self) -> spaces.Box:
+        """Setup observation space with proper feature bounds for single timestep input.
 
         Returns:
             Box space with feature bounds
@@ -47,7 +44,7 @@ class FeatureProcessor:
         num_market_features = len(self.get_feature_names()) - 3
         num_position_features = 3
         
-        total_features = (window_size * num_market_features) + num_position_features
+        total_features = num_market_features + num_position_features
         
         return spaces.Box(
             low=-1, high=1, shape=(total_features,), dtype=np.float32

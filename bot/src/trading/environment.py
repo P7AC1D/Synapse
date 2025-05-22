@@ -26,7 +26,6 @@ class TradingConfig:
     contract_size: float = 100.0
     spread_variation: float = 0.0
     slippage_range: float = 0.0
-    window_size: int = 50
     max_drawdown: float = 0.4
     min_bars_per_episode: int = 240
     currency_conversion: float = 1.0
@@ -78,19 +77,16 @@ class TradingEnv(gym.Env, EzPickle):
         # Validate configuration
         if self.config.initial_balance <= 0:
             raise ValueError("Initial balance must be positive")
-        if self.config.window_size <= 0:
-            raise ValueError("Window size must be positive")
         if self.config.min_bars_per_episode <= 0:
             raise ValueError("Minimum bars per episode must be positive")
             
         # Initialize core variables
         self.predict_context = predict_mode
-        self.window_size = self.config.window_size
         self.initial_balance = self.config.initial_balance
         
         self.logger.debug(
             f"Configuration: balance=${self.initial_balance:.2f}, "
-            f"window={self.window_size}, mode={'prediction' if predict_mode else 'training'}"
+            f"mode={'prediction' if predict_mode else 'training'}"
         )
         
         # Initialize environment components
@@ -101,7 +97,7 @@ class TradingEnv(gym.Env, EzPickle):
         
         # Set up spaces
         self.action_space = spaces.Discrete(4)
-        self.observation_space = self.feature_processor.setup_observation_space(window_size=self.window_size)
+        self.observation_space = self.feature_processor.setup_observation_space()
 
     def _init_components(self) -> None:
         """Initialize environment components."""
@@ -122,8 +118,6 @@ class TradingEnv(gym.Env, EzPickle):
             
         # Process data and get dropped rows count
         self.features_df, self.atr_values, dropped_rows = self.feature_processor.preprocess_data(data)
-        self.action_space = spaces.Discrete(4)
-        self.observation_space = self.feature_processor.setup_observation_space(window_size=self.window_size)
         
         # Drop rows and store aligned index for timestamping
         data = data.iloc[dropped_rows:]
@@ -144,13 +138,13 @@ class TradingEnv(gym.Env, EzPickle):
             raise ValueError("Price data arrays must have same length as feature data")
         
         # Calculate starting point ensuring enough historical data
-        self.start_step = max(self.feature_processor.lookback, self.window_size - 1)
+        self.start_step = self.feature_processor.lookback
         min_data_required = self.start_step + self.config.min_bars_per_episode
         
         if self.data_length < min_data_required:
             raise ValueError(
                 f"Insufficient data: got {self.data_length} bars, need at least {min_data_required} "
-                f"(lookback: {self.feature_processor.lookback}, window: {self.window_size}, "
+                f"(lookback: {self.feature_processor.lookback}, "
                 f"min episode: {self.config.min_bars_per_episode})"
             )
             
@@ -324,22 +318,9 @@ class TradingEnv(gym.Env, EzPickle):
         self.renderer.render_episode_stats(self)
         
     def _get_market_features(self) -> np.ndarray:
-        """Get market features window."""
+        """Get current market features."""
         market_feature_names = self.feature_processor.get_feature_names()[:-3]
-        
-        if self.predict_context:
-            # For live prediction
-            features = self.features_df[market_feature_names].values[-self.window_size:]
-            if len(features) < self.window_size:
-                padding = np.zeros((self.window_size - len(features), len(market_feature_names)))
-                features = np.vstack((padding, features))
-        else:
-            # For backtesting/training
-            start_idx = self.current_step - self.window_size + 1
-            end_idx = self.current_step + 1
-            features = self.features_df[market_feature_names].iloc[start_idx:end_idx].values
-            
-        return features.flatten()
+        return self.features_df[market_feature_names].iloc[self.current_step].values
         
     def _get_position_features(self) -> np.ndarray:
         """Get current position state features."""
