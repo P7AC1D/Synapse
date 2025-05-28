@@ -97,7 +97,9 @@ class TradingEnv(gym.Env, EzPickle):
         # Process data and setup spaces
         self.raw_data, self.atr_values = self.feature_processor.preprocess_data(data)
         self.action_space = spaces.Discrete(4)
-        self.observation_space = self.feature_processor.setup_observation_space()
+        # Observation space = features + position_type + unrealized_pnl
+        feature_count = len(self.raw_data.columns) + 2  # +2 for position_type and unrealized_pnl
+        self.observation_space = self.feature_processor.setup_observation_space(feature_count)
         
         # Save original index for reference
         self.original_index = data.index

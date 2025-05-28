@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import torch
 from datetime import datetime
-from stable_baselines3 import PPO
+from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
 from trading.environment import TradingEnv
@@ -69,7 +69,7 @@ def train_enhanced_model():
     # Create model with enhanced architecture for more features
     print(f"\n🤖 Creating PPO model...")
     
-    model = PPO(
+    model = RecurrentPPO(
         policy="MlpLstmPolicy",
         env=train_env,
         learning_rate=3e-4,

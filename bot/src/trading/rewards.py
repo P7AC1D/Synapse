@@ -34,8 +34,14 @@ class RewardCalculator:
         current_idx = self.env.current_step
         # volatility_breakout close to 0.5 indicates price near middle of range
         # values between 0.4-0.6 suggest consolidation
-        volatility_breakout = self.env.raw_data['volatility_breakout'].iloc[current_idx]
-        return 0.4 <= volatility_breakout <= 0.6
+        # Use ATR-based consolidation detection
+        if current_idx < 10:
+            return False
+        current_atr = self.env.prices['atr'][current_idx]
+        recent_atr_avg = np.mean(self.env.prices['atr'][max(0, current_idx-10):current_idx+1])
+        return current_atr < recent_atr_avg * 0.8
+        # volatility_breakout = self.env.raw_data['volatility_breakout'].iloc[current_idx]
+
         
     def _is_successful_reversal(self, position_type: int, pnl: float) -> bool:
         """Check if a trade reversal was successful."""
