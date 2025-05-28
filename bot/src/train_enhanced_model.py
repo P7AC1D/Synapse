@@ -83,7 +83,7 @@ def train_enhanced_model():
         vf_coef=0.5,
         max_grad_norm=0.5,
         verbose=1,
-        device="auto",
+        device="cuda" if torch.cuda.is_available() else "cpu",
         policy_kwargs=dict(
             lstm_hidden_size=256,  # Increased for more features
             n_lstm_layers=2,
