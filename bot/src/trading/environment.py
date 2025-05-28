@@ -7,7 +7,7 @@ from gymnasium.utils import EzPickle
 import gymnasium as gym
 
 from .actions import Action, ActionHandler
-from .features import FeatureProcessor
+from .enhanced_features import EnhancedFeatureProcessor as FeatureProcessor
 from .metrics import MetricsTracker
 from .rendering import Renderer
 from .rewards import RewardCalculator

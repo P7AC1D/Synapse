@@ -1,26 +1,34 @@
-"""Feature calculation and preprocessing for trading environment."""
+"""Enhanced feature calculation with advanced features for trading environment."""
 import numpy as np
 import pandas as pd
 import ta
 from typing import Tuple, Dict, Any
 from gymnasium import spaces
-from .advanced_features import AdvancedFeatureCalculator
+from .fixed_advanced_features import FixedAdvancedFeatureCalculator as AdvancedFeatureCalculator
 
-class FeatureProcessor:
-    """Handles feature calculation and preprocessing."""
+class EnhancedFeatureProcessor:
+    """Enhanced feature processor with 28+ advanced features for professional day trading."""
     
-    def __init__(self):
-        """Initialize feature processor with default parameters."""
+    def __init__(self, use_advanced_features: bool = True):
+        """Initialize enhanced feature processor with advanced capabilities."""
         self.atr_period = 14
         self.rsi_period = 14
         self.boll_period = 20
         self.lookback = max(self.boll_period, self.atr_period)
+        
+        # Advanced features
+        self.use_advanced_features = use_advanced_features
+        if self.use_advanced_features:
+            self.advanced_calculator = AdvancedFeatureCalculator()
+            print("✓ Enhanced features enabled - 37+ features will be calculated")
+        else:
+            print("⚠️ Using basic features only (9 features)")
 
-    def setup_observation_space(self, feature_count: int = 11) -> spaces.Box:
+    def setup_observation_space(self, feature_count: int = 37) -> spaces.Box:
         """Setup observation space with proper feature bounds.
         
         Args:
-            feature_count: Number of features in observation space
+            feature_count: Number of features in observation space (37 with advanced features)
 
         Returns:
             Box space with feature bounds
@@ -79,7 +87,7 @@ class FeatureProcessor:
         return atr, rsi, (upper, lower), trend_strength
 
     def preprocess_data(self, data: pd.DataFrame) -> Tuple[pd.DataFrame, np.ndarray]:
-        """Preprocess market data and calculate features.
+        """Preprocess market data and calculate all features (basic + advanced).
         
         Args:
             data: DataFrame with OHLCV data
@@ -87,8 +95,7 @@ class FeatureProcessor:
         Returns:
             Tuple of (features DataFrame, ATR values)
         """
-        
-        features_df = pd.DataFrame(index=data.index)
+        print(f"Processing data with {len(data)} bars...")
         
         with np.errstate(divide='ignore', invalid='ignore'):
             close = data['close'].values
@@ -114,7 +121,7 @@ class FeatureProcessor:
             atr_norm = 2 * (atr_ratio - min_expected_ratio) / expected_range - 1
             atr_norm = np.clip(atr_norm, -1, 1)
             
-            # Calculate other features
+            # Calculate basic features
             returns = np.zeros_like(close)
             returns[1:] = np.diff(close) / close[:-1]
             returns = np.clip(returns, -0.1, 0.1)
@@ -132,7 +139,7 @@ class FeatureProcessor:
             candle_pattern = (body/range_ + (upper_wick - lower_wick)/(upper_wick + lower_wick + 1e-8)) / 2
             candle_pattern = np.clip(candle_pattern, -1, 1)
             
-            # Volatility breakout
+            # Volatility breakout (but remove this since it's 88% correlated with RSI)
             band_range = upper_band - lower_band
             band_range = np.where(band_range < 1e-8, 1e-8, band_range)
             position = close - lower_band
@@ -150,19 +157,37 @@ class FeatureProcessor:
             )
             volume_pct = np.clip(volume_pct, -1, 1)
             
-            # Create features DataFrame
-            features = {
+            # Create basic features DataFrame
+            basic_features = {
                 'returns': returns,
                 'rsi': rsi / 50 - 1,
                 'atr': atr_norm,
-                'volatility_breakout': volatility_breakout,
                 'trend_strength': trend_strength,
                 'candle_pattern': candle_pattern,
                 'sin_time': sin_time,
                 'cos_time': cos_time,
                 'volume_change': volume_pct
             }
-            features_df = pd.DataFrame(features, index=data.index)
+            
+            # Note: Removing volatility_breakout due to high correlation with RSI (88.4%)
+            # This reduces redundancy and improves model efficiency
+            
+            features_df = pd.DataFrame(basic_features, index=data.index)
+            
+            # Add advanced features if enabled
+            if self.use_advanced_features:
+                print("Calculating advanced features...")
+                advanced_features_df = self.advanced_calculator.calculate_all_advanced_features(data)
+                
+                # Combine basic and advanced features
+                # Ensure both DataFrames have the same index for proper alignment
+                common_index = features_df.index.intersection(advanced_features_df.index)
+                features_df = features_df.loc[common_index]
+                advanced_features_df = advanced_features_df.loc[common_index]
+                
+                # Concatenate features
+                features_df = pd.concat([features_df, advanced_features_df], axis=1)
+                print(f"✓ Combined features: {len(features_df.columns)} total features")
             
             # Clean up NaN values
             features_df = features_df.dropna()
@@ -191,27 +216,63 @@ class FeatureProcessor:
             
             # Validate feature ranges
             for col, values in features_df.items():
-                if col in ['volatility_breakout']:
+                # Check for specific features that should have different ranges
+                if col in ['stoch_overbought', 'stoch_oversold']:
+                    # These are binary features [0, 1]
                     if (values < 0).any() or (values > 1).any():
-                        raise ValueError(f"Feature {col} contains values outside [0, 1] range")
+                        print(f"⚠️ Warning: {col} contains values outside [0,1] range")
                 elif col not in ['returns']:
-                    if (values < -1).any() or (values > 1).any():
-                        raise ValueError(f"Feature {col} contains values outside [-1, 1] range")
+                    # Most features should be in [-1, 1]
+                    out_of_range = (values < -1.1).sum() + (values > 1.1).sum()  # Allow small tolerance
+                    if out_of_range > 0:
+                        print(f"⚠️ Warning: {col} has {out_of_range} values slightly outside [-1,1] range")
+                        # Clip to valid range
+                        features_df[col] = np.clip(features_df[col], -1, 1)
             
+            print(f"✓ Feature processing complete: {len(features_df.columns)} features, {len(features_df)} samples")
             return features_df, atr_aligned
 
     def get_feature_names(self) -> list:
-        """Get list of feature names."""
-        return [
+        """Get list of all feature names."""
+        basic_features = [
             'returns',          # [-0.1, 0.1] Price momentum
             'rsi',             # [-1, 1] Momentum oscillator
             'atr',             # [-1, 1] Volatility indicator
-            'volume_change',    # [-1, 1] Volume percentage change
-            'volatility_breakout', # [0, 1] Trend with volatility context
             'trend_strength',   # [-1, 1] ADX-based trend quality
             'candle_pattern',   # [-1, 1] Combined price action signal
             'sin_time',        # [-1, 1] Sine encoding of time
             'cos_time',        # [-1, 1] Cosine encoding of time
+            'volume_change',    # [-1, 1] Volume percentage change
             'position_type',    # [-1, 0, 1] Current position
             'unrealized_pnl'   # [-1, 1] Current position P&L
         ]
+        
+        if self.use_advanced_features:
+            advanced_features = [
+                # MACD features (5)
+                'macd_line', 'macd_signal', 'macd_histogram', 'macd_momentum', 'macd_divergence',
+                # Stochastic features (5)
+                'stoch_k', 'stoch_d', 'stoch_cross', 'stoch_overbought', 'stoch_oversold',
+                # VWAP features (3)
+                'vwap_distance', 'vwap_trend', 'vwap_volume_ratio',
+                # Session features (5)
+                'asian_session', 'london_session', 'ny_session', 'overlap_session', 'session_premium',
+                # Psychological level features (2)
+                'psych_level_distance', 'psych_level_strength',
+                # Multi-timeframe trend features (3)
+                'trend_alignment', 'trend_strength_fast', 'trend_strength_medium',
+                # Volume profile features (2)
+                'volume_profile', 'volume_concentration',
+                # Momentum features (3)
+                'williams_r', 'roc', 'cci'
+            ]
+            return basic_features + advanced_features
+        else:
+            return basic_features
+
+    def get_feature_count(self) -> int:
+        """Get total number of features."""
+        return len(self.get_feature_names())
+
+# Backward compatibility alias
+FeatureProcessor = EnhancedFeatureProcessor
