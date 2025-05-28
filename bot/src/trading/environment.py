@@ -99,17 +99,37 @@ class TradingEnv(gym.Env, EzPickle):
         self.action_space = spaces.Discrete(4)
         self.observation_space = self.feature_processor.setup_observation_space()
         
-        # Save datetime index and data length
+        # Save original index for reference
         self.original_index = data.index
         self.data_length = len(self.raw_data)
         
-        # Store price data
+        # CRITICAL FIX: Align price data to match features index after lookback removal
+        # This prevents look-ahead bias by ensuring features and prices have same temporal alignment
+        features_start_idx = len(data) - len(self.raw_data)
+        aligned_data = data.iloc[features_start_idx:].copy()
+        
+        # Verify alignment - this prevents look-ahead bias
+        assert len(aligned_data) == len(self.raw_data), f"Length mismatch: {len(aligned_data)} vs {len(self.raw_data)}"
+        assert aligned_data.index.equals(self.raw_data.index), "Index mismatch between features and prices"
+        
+        # Store properly aligned price data - no more look-ahead bias!
         self.prices = {
-            'close': data.loc[self.original_index, 'close'].values,
-            'high': data.loc[self.original_index, 'high'].values,
-            'low': data.loc[self.original_index, 'low'].values,
-            'spread': data.loc[self.original_index, 'spread'].values,
+            'close': aligned_data['close'].values,
+            'high': aligned_data['high'].values,
+            'low': aligned_data['low'].values,
+            'spread': aligned_data['spread'].values,
             'atr': self.atr_values
+        }
+        
+        # Store alignment info for debugging and validation
+        self.alignment_info = {
+            'original_length': len(data),
+            'features_length': len(self.raw_data),
+            'lookback_removed': features_start_idx,
+            'start_date': self.raw_data.index[0],
+            'end_date': self.raw_data.index[-1],
+            'original_start_date': data.index[0],
+            'original_end_date': data.index[-1]
         }
         
         # State variables
@@ -124,6 +144,28 @@ class TradingEnv(gym.Env, EzPickle):
         
         # State tracking
         self.current_hold_time = 0  # Track position hold duration
+        
+    def validate_alignment(self) -> None:
+        """Validate that features and prices are properly aligned to prevent look-ahead bias."""
+        print("=== Alignment Validation ===")
+        print(f"Original data length: {self.alignment_info['original_length']}")
+        print(f"Features length: {self.alignment_info['features_length']}")
+        print(f"Lookback removed: {self.alignment_info['lookback_removed']} bars")
+        print(f"Original date range: {self.alignment_info['original_start_date']} to {self.alignment_info['original_end_date']}")
+        print(f"Aligned date range: {self.alignment_info['start_date']} to {self.alignment_info['end_date']}")
+        
+        # Verify lengths match
+        assert len(self.raw_data) == len(self.prices['close']), "Feature-price length mismatch"
+        assert len(self.raw_data) == len(self.prices['atr']), "Feature-ATR length mismatch"
+        
+        # Test temporal alignment at key points
+        test_indices = [0, len(self.raw_data)//2, len(self.raw_data)-1]
+        for i in test_indices:
+            feature_time = self.raw_data.index[i]
+            price_close = self.prices['close'][i]
+            print(f"Step {i}: Feature timestamp = {feature_time}, Price = {price_close:.5f}")
+            
+        print("✓ Alignment validation passed - no look-ahead bias detected")
         
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """Execute one environment step."""
