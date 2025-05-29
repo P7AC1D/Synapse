@@ -211,7 +211,7 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict
         score += returns * 0.6
         
         # Drawdown penalty (30% weight)
-        max_dd = max(performance['max_drawdown_pct'], performance['max_equity_drawdown_pct']) / 100
+        max_dd = performance['max_equity_drawdown_pct'] / 100
         drawdown_penalty = max(0, 1 - max_dd * 2)
         score += drawdown_penalty * 0.3
         
