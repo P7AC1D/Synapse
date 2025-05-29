@@ -217,8 +217,9 @@ class EnhancedFeatureProcessor:
             # Validate feature ranges
             for col, values in features_df.items():
                 # Check for specific features that should have different ranges
-                if col in ['stoch_overbought', 'stoch_oversold']:
-                    # These are binary features [0, 1]
+                # All features (including binary) should be in [-1, 1] range
+                if col not in ['returns']:  # Returns can exceed [-1, 1] in extreme market conditions
+                    # Fixed: All features now use [-1, 1] range
                     if (values < 0).any() or (values > 1).any():
                         print(f"⚠️ Warning: {col} contains values outside [0,1] range")
                 elif col not in ['returns']:

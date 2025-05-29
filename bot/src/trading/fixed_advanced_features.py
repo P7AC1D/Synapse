@@ -81,8 +81,8 @@ class FixedAdvancedFeatureCalculator:
         
         # Stochastic features
         stoch_cross = np.where(stoch_k.values > stoch_d.values, 1, -1)
-        stoch_overbought = np.where(stoch_k.values > 80, 1, 0)
-        stoch_oversold = np.where(stoch_k.values < 20, 1, 0)
+        stoch_overbought = np.where(stoch_k.values > 80, 1, -1)  # Fixed: [-1, 1] range
+        stoch_oversold = np.where(stoch_k.values < 20, 1, -1)    # Fixed: [-1, 1] range
         
         # Normalize
         stoch_k_norm = (stoch_k.values - 50) / 50  # Convert to [-1, 1]
