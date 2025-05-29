@@ -26,11 +26,18 @@ class FixedAdvancedFeatureCalculator:
             'overlap': (13, 16)    # London/NY overlap
         }
         
-        # XAU/USD psychological levels (major round numbers)
-        self.psychological_levels = [
-            1950, 1975, 2000, 2025, 2050, 2075, 2100, 2125, 2150,
-            2175, 2200, 2225, 2250, 2275, 2300, 2325, 2350, 2375, 2400
-        ]
+        # Dynamic psychological level parameters (symbol-agnostic)
+        self.psych_level_params = {
+            'major_round_factor': 0.05,    # Major levels every 5% of price range
+            'minor_round_factor': 0.025,   # Minor levels every 2.5% of price range
+            'lookback_period': 500,        # Bars to analyze for price range
+            'extension_factor': 0.2        # Extend levels 20% beyond current range
+        }
+        
+        # Cache for psychological levels to improve performance
+        self._psych_levels_cache = {}
+        self._cache_update_interval = 50  # Update cache every 50 bars
+
         
     def calculate_macd_features(self, close: np.ndarray) -> Dict[str, np.ndarray]:
         """Calculate MACD and related features."""
@@ -172,29 +179,64 @@ class FixedAdvancedFeatureCalculator:
         }
     
     def calculate_psychological_levels(self, close: np.ndarray) -> Dict[str, np.ndarray]:
-        """Calculate psychological level proximity features."""
+        """Calculate dynamic psychological level proximity features."""
+        # Initialize cache if not exists
+        if not hasattr(self, '_psych_levels_cache'):
+            self._psych_levels_cache = {}
+            self._cache_update_interval = 50
+        
         # Find nearest psychological level for each price
         nearest_level_distance = np.zeros_like(close)
         level_strength = np.zeros_like(close)
         
         for i, price in enumerate(close):
+            # Get dynamic psychological levels for this price point
+            psychological_levels = self._get_psychological_levels(close, i)
+            
+            if not psychological_levels:
+                # Fallback if no levels generated
+                nearest_level_distance[i] = 0.0
+                level_strength[i] = 0.0
+                continue
+            
             # Find nearest level
-            distances = [abs(price - level) for level in self.psychological_levels]
+            distances = [abs(price - level) for level in psychological_levels]
             min_distance = min(distances)
-            nearest_level = self.psychological_levels[distances.index(min_distance)]
+            nearest_level = psychological_levels[distances.index(min_distance)]
             
             # Distance as percentage of price
-            nearest_level_distance[i] = (price - nearest_level) / price
+            nearest_level_distance[i] = (price - nearest_level) / price if price != 0 else 0.0
             
-            # Level strength (stronger for round numbers)
-            if nearest_level % 100 == 0:  # $2000, $2100, etc.
-                level_strength[i] = 1.0
-            elif nearest_level % 50 == 0:  # $2050, $2150, etc.
-                level_strength[i] = 0.7
-            elif nearest_level % 25 == 0:  # $2025, $2075, etc.
-                level_strength[i] = 0.4
-            else:
-                level_strength[i] = 0.2
+            # Level strength based on round number characteristics
+            # More adaptive to different price ranges
+            if price > 1000:  # Gold-like prices
+                if nearest_level % 100 == 0:  # $2000, $2100, etc.
+                    level_strength[i] = 1.0
+                elif nearest_level % 50 == 0:  # $2050, $2150, etc.
+                    level_strength[i] = 0.7
+                elif nearest_level % 25 == 0:  # $2025, $2075, etc.
+                    level_strength[i] = 0.4
+                else:
+                    level_strength[i] = 0.2
+            elif price > 100:  # Stock-like prices
+                if nearest_level % 10 == 0:  # $100, $110, etc.
+                    level_strength[i] = 1.0
+                elif nearest_level % 5 == 0:  # $105, $115, etc.
+                    level_strength[i] = 0.7
+                else:
+                    level_strength[i] = 0.4
+            elif price > 1:  # Forex major pairs
+                if abs(nearest_level - round(nearest_level, 2)) < 1e-6:  # Round to cent
+                    level_strength[i] = 1.0
+                elif abs(nearest_level - round(nearest_level, 3)) < 1e-6:  # Round to 0.1 cent
+                    level_strength[i] = 0.7
+                else:
+                    level_strength[i] = 0.4
+            else:  # Small value pairs
+                if abs(nearest_level - round(nearest_level, 4)) < 1e-6:  # 4 decimal places
+                    level_strength[i] = 1.0
+                else:
+                    level_strength[i] = 0.5
         
         # Normalize
         distance_norm = self._normalize_feature(nearest_level_distance, method='robust')
@@ -282,6 +324,107 @@ class FixedAdvancedFeatureCalculator:
             'roc': roc_norm,
             'cci': cci_norm
         }
+    
+    def _generate_dynamic_psychological_levels(self, close: np.ndarray, current_idx: int) -> list:
+        """Generate dynamic psychological levels based on recent price action."""
+        # Use lookback period to analyze price range
+        lookback = self.psych_level_params['lookback_period']
+        start_idx = max(0, current_idx - lookback)
+        price_data = close[start_idx:current_idx+1]
+        
+        if len(price_data) < 10:  # Not enough data
+            # Fallback to simple round number generation
+            current_price = close[current_idx]
+            base_level = round(current_price / 100) * 100
+            return [base_level - 200, base_level - 100, base_level, base_level + 100, base_level + 200]
+        
+        # Calculate price range and statistics
+        price_min = np.min(price_data)
+        price_max = np.max(price_data)
+        price_range = price_max - price_min
+        price_center = (price_min + price_max) / 2
+        
+        # Extend range for future support/resistance
+        extension = price_range * self.psych_level_params['extension_factor']
+        extended_min = price_min - extension
+        extended_max = price_max + extension
+        extended_range = extended_max - extended_min
+        
+        # Generate major levels (every 5% of extended range)
+        major_step = extended_range * self.psych_level_params['major_round_factor']
+        minor_step = extended_range * self.psych_level_params['minor_round_factor']
+        
+        # Find appropriate round number step based on price magnitude
+        current_price = close[current_idx]
+        if current_price > 1000:  # Gold-like prices
+            round_factor = 25  # $25 increments
+        elif current_price > 100:  # Stock-like prices
+            round_factor = 5   # $5 increments  
+        elif current_price > 10:  # Some forex pairs
+            round_factor = 0.5 # 50 cent increments
+        elif current_price > 1:   # Major forex pairs
+            round_factor = 0.01 # 1 cent increments
+        else:  # Minor pairs with small values
+            round_factor = 0.001 # 0.1 cent increments
+            
+        # Adjust step sizes to align with round numbers
+        major_step = max(major_step, round_factor * 2)
+        minor_step = max(minor_step, round_factor)
+        
+        # Round step sizes to nice numbers
+        major_step = round(major_step / round_factor) * round_factor
+        minor_step = round(minor_step / round_factor) * round_factor
+        
+        # Generate levels
+        levels = set()
+        
+        # Major levels
+        start_major = round(extended_min / major_step) * major_step
+        level = start_major
+        while level <= extended_max:
+            levels.add(level)
+            level += major_step
+            
+        # Minor levels (only add if not too close to major levels)
+        start_minor = round(extended_min / minor_step) * minor_step
+        level = start_minor
+        while level <= extended_max:
+            # Check if this minor level is too close to any major level
+            too_close = any(abs(level - major_level) < minor_step * 0.5 for major_level in levels)
+            if not too_close:
+                levels.add(level)
+            level += minor_step
+            
+        # Convert to sorted list and ensure reasonable number of levels
+        levels_list = sorted(list(levels))
+        
+        # Limit to reasonable number of levels (max 50)
+        if len(levels_list) > 50:
+            # Keep levels closest to current price range
+            levels_list = [l for l in levels_list if price_min <= l <= price_max]
+            if len(levels_list) > 50:
+                # Further reduce by taking every nth level
+                step = len(levels_list) // 50
+                levels_list = levels_list[::max(1, step)]
+                
+        return levels_list
+    
+    def _get_psychological_levels(self, close: np.ndarray, current_idx: int) -> list:
+        """Get psychological levels with caching for performance."""
+        # Check if we need to update cache
+        cache_key = current_idx // self._cache_update_interval
+        
+        if cache_key not in self._psych_levels_cache:
+            # Generate new levels
+            levels = self._generate_dynamic_psychological_levels(close, current_idx)
+            self._psych_levels_cache[cache_key] = levels
+            
+            # Clean old cache entries to prevent memory growth
+            if len(self._psych_levels_cache) > 10:
+                oldest_key = min(self._psych_levels_cache.keys())
+                del self._psych_levels_cache[oldest_key]
+                
+        return self._psych_levels_cache.get(cache_key, [])
     
     def _normalize_feature(self, values: np.ndarray, method: str = 'robust') -> np.ndarray:
         """Normalize feature values to [-1, 1] range."""
