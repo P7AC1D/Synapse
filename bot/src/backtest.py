@@ -538,8 +538,8 @@ def main():
                       help='Initial account balance in account currency (default: 190,000 ZAR)')
     parser.add_argument('--balance_per_lot', type=float, default=default_balance_per_lot,
                       help='Account balance required per 0.01 lot in account currency (default: 19,000 ZAR)')
-    parser.add_argument('--currency_conversion', type=float, default=19.0,
-                      help='Conversion rate from USD to account currency (default: 19.0 ZAR/USD)')
+    parser.add_argument('--currency_conversion', type=float, default=1.0,
+                      help='Conversion rate from USD to account currency (default: 1.0)')
                       
     # Market simulation settings
     parser.add_argument('--reset_states_on_gap', action='store_true',
