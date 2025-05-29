@@ -1,5 +1,5 @@
 """
-Training script for enhanced model with 34+ features.
+Training script for enhanced model with 34+ features and comprehensive trading metrics.
 This will train a new PPO-LSTM model using the enhanced feature set.
 """
 
@@ -10,7 +10,8 @@ import torch
 from datetime import datetime
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback
+from callbacks.trading_eval_callback import TradingEvalCallback
 from trading.environment import TradingEnv
 import warnings
 warnings.filterwarnings('ignore')
@@ -100,6 +101,7 @@ def train_enhanced_model():
     print(f"   Policy: MlpLstmPolicy")
     print(f"   LSTM hidden size: 256")
     print(f"   Network architecture: [512, 256, 128]")
+    print(f"   Device: {model.device}")
     
     # Setup callbacks
     model_dir = "models/enhanced"
@@ -111,11 +113,12 @@ def train_enhanced_model():
         name_prefix="enhanced_model"
     )
     
-    eval_callback = EvalCallback(
-        val_env,
+    eval_callback = TradingEvalCallback(
+        eval_env=val_env,
         best_model_save_path=model_dir,
         log_path=f"{model_dir}/logs",
         eval_freq=5000,
+        n_eval_episodes=1,
         deterministic=True,
         render=False,
         verbose=1
@@ -126,6 +129,7 @@ def train_enhanced_model():
     print(f"   Checkpoint frequency: 10,000 steps")
     print(f"   Evaluation frequency: 5,000 steps")
     print(f"   Model save path: {model_dir}")
+    print(f"   Enhanced trading metrics: ✅ ENABLED")
     
     # Train model
     print(f"\n🎯 Starting training...")
@@ -146,24 +150,20 @@ def train_enhanced_model():
         print(f"   End time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"   Final model saved: {final_model_path}")
         
-        # Quick evaluation
-        print(f"\n📊 Quick evaluation on validation data...")
-        obs = val_env.reset()
-        total_reward = 0
-        steps = 0
-        
-        for _ in range(100):  # Quick 100-step test
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, done, info = val_env.step(action)
-            total_reward += reward[0]
-            steps += 1
+        # Get trading metrics history from callback
+        metrics_history = eval_callback.get_trading_metrics_history()
+        if metrics_history:
+            print(f"\n📊 Trading metrics logged for {len(metrics_history)} evaluations")
             
-            if done[0]:
-                break
-                
-        print(f"   Test steps: {steps}")
-        print(f"   Total reward: {total_reward:.4f}")
-        print(f"   Average reward: {total_reward/steps:.4f}")
+            # Show final evaluation metrics
+            final_metrics = metrics_history[-1]
+            print(f"\n🏆 FINAL EVALUATION RESULTS:")
+            print(f"   Total PnL: ${final_metrics.get('total_pnl', 0):.2f}")
+            print(f"   Return: {final_metrics.get('return_pct', 0):.2f}%")
+            print(f"   Win Rate: {final_metrics.get('win_rate', 0):.1f}%")
+            print(f"   Total Trades: {int(final_metrics.get('total_trades', 0))}")
+            print(f"   Max Drawdown: {final_metrics.get('max_drawdown_pct', 0):.2f}%")
+            print(f"   Profit Factor: {final_metrics.get('profit_factor', 0):.2f}")
         
         return True
         
@@ -175,21 +175,23 @@ def train_enhanced_model():
 
 def main():
     """Main training function."""
-    print("Enhanced Model Training")
-    print("=" * 40)
+    print("Enhanced Model Training with Trading Metrics")
+    print("=" * 50)
     
     success = train_enhanced_model()
     
     if success:
         print(f"\n🎉 TRAINING SUCCESS!")
         print(f"✅ Enhanced model with 34+ features trained successfully")
+        print(f"📊 Comprehensive trading metrics logged during training")
         print(f"📈 Ready for performance comparison with baseline")
         print(f"")
         print(f"🔥 NEXT STEPS:")
         print(f"   1. Compare enhanced model vs baseline performance")
         print(f"   2. Analyze feature importance")
-        print(f"   3. Fine-tune hyperparameters if needed")
-        print(f"   4. Deploy for live testing")
+        print(f"   3. Review trading metrics evolution")
+        print(f"   4. Fine-tune hyperparameters if needed")
+        print(f"   5. Deploy for live testing")
     else:
         print(f"\n❌ TRAINING FAILED!")
         print(f"Please check the error messages above and fix issues.")
