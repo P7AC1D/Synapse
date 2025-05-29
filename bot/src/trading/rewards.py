@@ -1,138 +1,300 @@
-"""Reward calculation for trading environment with sparse rewards."""
+"""
+Overhauled reward system for active trading with proper risk management.
+This version eliminates the "do nothing" strategy and encourages profitable trading.
+"""
 import numpy as np
 from typing import Union, Optional
 from .actions import Action
 
 class RewardCalculator:
-    """Handles sparse reward calculation for trading actions."""
+    """Handles reward calculation optimized for active trading strategies."""
     
     def __init__(self, env):
-        """Initialize reward calculator.
+        """Initialize reward calculator with trading-focused incentives.
         
         Args:
             env: Trading environment instance
         """
         self.env = env
         self.previous_balance_high = env.initial_balance
-        self.trade_entry_balance = env.initial_balance  # Track balance at trade entry
-        self.last_direction = None  # Track trade direction for reversals
-        self.bars_since_consolidation = 0
-        self.min_hold_bars = 20  # Minimum bars for long hold reward
-        self.consolidation_threshold = 0.0015  # BB width threshold for consolidation
+        self.trade_entry_balance = env.initial_balance
+        self.last_direction = None
+        self.consecutive_holds = 0  # Track consecutive hold actions
+        self.trades_in_episode = 0  # Track trading activity
+        self.last_action = None
         
-        # Track max unrealized profit for each trade
+        # Track position metrics
         self.max_unrealized_pnl = 0.0
+        self.position_opened_at_step = None
+        self.total_hold_steps = 0
         
-        # Reward constants
-        self.INVALID_ACTION_PENALTY = -1.0  # Penalty for invalid actions
-        self.GOOD_HOLD_REWARD = 0.2   # Base reward for holding profitable positions
-        self.LOSING_HOLD_PENALTY = -0.1  # Penalty for holding losing positions
-        self.TIME_PRESSURE_THRESHOLD = 100  # Bars before time pressure kicks in
+        # === REWARD CONFIGURATION ===
+        # Core trading rewards
+        self.PROFITABLE_TRADE_REWARD = 5.0      # Strong reward for winning trades
+        self.LOSING_TRADE_PENALTY = -2.0        # Moderate penalty for losing trades
+        self.MARKET_ENGAGEMENT_BONUS = 1.0      # Bonus for taking positions
         
-    def _is_market_flat(self) -> bool:
-        """Check if market is in consolidation based on volatility breakout."""
-        current_idx = self.env.current_step
-        # volatility_breakout close to 0.5 indicates price near middle of range
-        # values between 0.4-0.6 suggest consolidation
-        # Use ATR-based consolidation detection
-        if current_idx < 10:
-            return False
-        current_atr = self.env.prices['atr'][current_idx]
-        recent_atr_avg = np.mean(self.env.prices['atr'][max(0, current_idx-10):current_idx+1])
-        return current_atr < recent_atr_avg * 0.8
-        # volatility_breakout = self.env.raw_data['volatility_breakout'].iloc[current_idx]
-
+        # Position management
+        self.PROFIT_HOLD_REWARD = 0.5           # Strong reward for holding profitable positions
+        self.LOSS_HOLD_PENALTY = -0.2           # Penalty for holding losing positions
+        self.PROFIT_PROTECTION_BONUS = 0.5      # Bonus for protecting unrealized profits
+        self.SIGNIFICANT_PROFIT_THRESHOLD = 0.01 # 1% profit threshold for bonus rewards
+        self.SIGNIFICANT_PROFIT_BONUS = 0.2     # Extra bonus for significantly profitable positions
         
-    def _is_successful_reversal(self, position_type: int, pnl: float) -> bool:
-        """Check if a trade reversal was successful."""
-        if self.last_direction is None or position_type == 0:
-            return False
+        # Activity incentives
+        self.HOLD_COST = -0.005                 # Small cost for inaction (accumulates)
+        self.EXCESSIVE_HOLD_PENALTY = -0.02     # Penalty for excessive holding
+        self.INACTIVITY_THRESHOLD = 50          # Steps before inactivity penalty
+        
+        # Risk management
+        self.INVALID_ACTION_PENALTY = -2.0      # Penalty for invalid actions
+        self.OVERTRADING_PENALTY = -0.5         # Penalty for too frequent trading
+        self.MIN_POSITION_HOLD = 3              # Minimum bars to hold position
+        
+        # Performance bonuses
+        self.NEW_HIGH_BONUS = 2.0               # Bonus for new equity highs
+        self.CONSISTENCY_BONUS = 0.3            # Bonus for consistent performance
+        self.RISK_ADJUSTED_MULTIPLIER = 1.5     # Multiplier for risk-adjusted returns
+        
+    def _calculate_position_quality_score(self, pnl: float, hold_time: int, atr: float) -> float:
+        """Calculate quality score for position management."""
+        if hold_time == 0:
+            return 0.0
             
-        is_reversal = (
-            (position_type == 1 and self.last_direction == 2) or
-            (position_type == 2 and self.last_direction == 1)
-        )
+        # Base score from PnL relative to ATR (market volatility)
+        pnl_atr_ratio = pnl / (atr * self.trade_entry_balance) if atr > 0 else 0
         
-        return is_reversal and pnl > 0
+        # Time efficiency score (reward quicker profitable trades)
+        time_efficiency = max(0.1, 1.0 - (hold_time / 100.0))
+        
+        # Combine scores
+        quality_score = pnl_atr_ratio * time_efficiency
+        return np.clip(quality_score, -2.0, 2.0)
+        
+    def _calculate_market_timing_bonus(self, action: int, atr: float) -> float:
+        """Reward good market timing based on volatility."""
+        if action not in [Action.BUY, Action.SELL]:
+            return 0.0
+            
+        # Check recent ATR trend
+        current_idx = self.env.current_step
+        if current_idx < 20:
+            return 0.0
+            
+        recent_atr = np.mean(self.env.prices['atr'][max(0, current_idx-10):current_idx+1])
+        longer_atr = np.mean(self.env.prices['atr'][max(0, current_idx-20):current_idx-10])
+        
+        # Bonus for entering positions when volatility is increasing
+        if recent_atr > longer_atr * 1.1:
+            return 0.3
+        elif recent_atr < longer_atr * 0.9:
+            return -0.1  # Small penalty for entering during low volatility
+            
+        return 0.0
+        
+    def _calculate_risk_management_score(self, action: int, pnl: float, hold_time: int) -> float:
+        """Calculate risk management component of reward."""
+        score = 0.0
+        
+        # Reward profit protection
+        if action == Action.CLOSE and pnl > 0:
+            # Bonus for taking profits at good levels
+            profit_ratio = pnl / self.trade_entry_balance
+            if profit_ratio > 0.01:  # > 1% profit
+                score += self.PROFIT_PROTECTION_BONUS * min(profit_ratio * 10, 2.0)
+                
+        # Penalty for holding losing positions too long
+        if pnl < 0 and hold_time > 30:
+            loss_ratio = abs(pnl) / self.trade_entry_balance
+            score -= loss_ratio * 2.0  # Escalating penalty
+            
+        # Reward cutting losses quickly
+        if action == Action.CLOSE and pnl < 0 and hold_time < 10:
+            score += 0.2  # Small bonus for quick loss cutting
+            
+        return score
 
     def calculate_reward(self, action: int, position_type: int, 
                         pnl: float, atr: float, current_hold: int,
                         optimal_hold: Optional[int] = None,
                         invalid_action: bool = False) -> float:
-        """Calculate rewards combining sparse and scaled components."""
-        # Handle invalid actions first
+        """Calculate comprehensive reward encouraging active profitable trading."""
+        
+        # Handle invalid actions with strong penalty
         if invalid_action:
             return self.INVALID_ACTION_PENALTY
             
-        reward = 0.0
+        total_reward = 0.0
         
-        # Position management rewards
-        if position_type != 0:  # If we have an open position
-            # Update max unrealized PnL
+        # Track consecutive actions
+        if action == Action.HOLD:
+            self.consecutive_holds += 1
+        else:
+            self.consecutive_holds = 0
+            
+        # === CORE ACTION REWARDS ===
+        
+        if position_type != 0:  # We have an open position
+            # Update max unrealized PnL tracking
             if pnl > self.max_unrealized_pnl:
                 self.max_unrealized_pnl = pnl
+                # Small bonus for increasing unrealized profits
+                total_reward += 0.1
             else:
-                # Penalty for giving back profits
-                profit_drawdown = (self.max_unrealized_pnl - pnl) / self.trade_entry_balance
-                reward -= profit_drawdown * 0.5
+                # Penalty for giving back significant profits
+                profit_drawdown = (self.max_unrealized_pnl - pnl) / max(self.trade_entry_balance, 1)
+                if profit_drawdown > 0.005:  # > 0.5% drawdown from peak
+                    total_reward -= profit_drawdown * 5.0
             
             if action == Action.HOLD:
+                # Position holding rewards/penalties
                 if pnl > 0:
-                    # Decay the hold reward over time
-                    hold_decay = max(0.2, 1.0 - (current_hold / 100))
-                    reward += self.GOOD_HOLD_REWARD * hold_decay
-                else:
-                    # Penalty for holding losing positions
-                    reward += self.LOSING_HOLD_PENALTY
+                    # Diminishing returns for holding profitable positions
+                    # Enhanced hold decay for profitable positions
+                    profit_ratio = pnl / self.trade_entry_balance
+                    hold_decay = max(0.3, 1.0 - (current_hold / 80.0))  # Slower decay, higher minimum
                     
-                # Add time pressure after threshold
-                if current_hold > self.TIME_PRESSURE_THRESHOLD:
-                    reward -= 0.01 * (current_hold - self.TIME_PRESSURE_THRESHOLD) / 100
+                    # Add significant profit bonus
+                    profit_bonus = 0.0
+                    if profit_ratio > self.SIGNIFICANT_PROFIT_THRESHOLD:
+                        profit_bonus = self.SIGNIFICANT_PROFIT_BONUS * min(profit_ratio * 20, 3.0)
+                    total_reward += (self.PROFIT_HOLD_REWARD * hold_decay) + profit_bonus
+                else:
+                    # Increasing penalty for holding losing positions
+                    loss_penalty_multiplier = min(2.0, 1.0 + (current_hold / 20.0))
+                    total_reward += self.LOSS_HOLD_PENALTY * loss_penalty_multiplier
+                    
+                # Add risk management score
+                total_reward += self._calculate_risk_management_score(action, pnl, current_hold)
                     
             elif action == Action.CLOSE:
-                # Sparse direction reward
-                reward += 1.0 if pnl > 0 else -1.0
+                # Trade completion rewards
+                hold_time = current_hold
                 
-                # Scaled PnL component
-                reward += pnl / self.trade_entry_balance
+                if pnl > 0:
+                    # Profitable trade - strong positive reward
+                    total_reward += self.PROFITABLE_TRADE_REWARD
+                    
+                    # Quality bonus based on position management
+                    quality_score = self._calculate_position_quality_score(pnl, hold_time, atr)
+                    total_reward += quality_score
+                    
+                    # Risk-adjusted return bonus
+                    risk_adjusted_return = (pnl / self.trade_entry_balance) * self.RISK_ADJUSTED_MULTIPLIER
+                    total_reward += risk_adjusted_return * 10.0  # Scale up
+                    
+                else:
+                    # Losing trade - moderate penalty
+                    total_reward += self.LOSING_TRADE_PENALTY
+                    
+                    # Reduce penalty for quick loss cutting
+                    if hold_time < self.MIN_POSITION_HOLD * 2:
+                        total_reward += 0.5  # Partial penalty reduction
                 
-                # Track direction for reversals
+                # Add risk management score
+                total_reward += self._calculate_risk_management_score(action, pnl, hold_time)
+                
+                # Update tracking
+                self.trades_in_episode += 1
                 self.last_direction = position_type
-                
-                # Reset max unrealized PnL
                 self.max_unrealized_pnl = 0.0
                 
-                # Reversal bonus (removed long hold bonus to discourage excessive holding)
-                if self._is_successful_reversal(position_type, pnl):
-                    reward += 1.0
         else:  # No position open
-            # Update trade entry balance and reset max unrealized PnL for new positions
             if action in [Action.BUY, Action.SELL]:
+                # Opening new position
                 self.trade_entry_balance = self.env.balance
                 self.max_unrealized_pnl = 0.0
+                self.position_opened_at_step = self.env.current_step
                 
-            # Reward for staying out during consolidation
-            if action == Action.HOLD:
-                if self._is_market_flat():
-                    reward += 0.1
-                    self.bars_since_consolidation = 0
-                else:
-                    self.bars_since_consolidation += 1
+                # Market engagement bonus
+                total_reward += self.MARKET_ENGAGEMENT_BONUS
+                
+                # Market timing bonus
+                timing_bonus = self._calculate_market_timing_bonus(action, atr)
+                total_reward += timing_bonus
+                
+                # Prevent overtrading
+                if self.trades_in_episode > 5:  # More than 5 trades in episode
+                    total_reward += self.OVERTRADING_PENALTY
                     
-        # New Balance High bonus (applies to all situations)
-        if self.env.balance > self.previous_balance_high:
-            reward += 1.0
-            self.previous_balance_high = self.env.balance
+            elif action == Action.HOLD:
+                # No position, holding - apply inactivity cost
+                total_reward += self.HOLD_COST
+                
+                # Escalating penalty for excessive inactivity
+                if self.consecutive_holds > self.INACTIVITY_THRESHOLD:
+                    excess_holds = self.consecutive_holds - self.INACTIVITY_THRESHOLD
+                    total_reward += self.EXCESSIVE_HOLD_PENALTY * (excess_holds / 10.0)
         
-        return float(reward)
+        # === PERFORMANCE BONUSES ===
+        
+        # New equity high bonus
+        current_equity = self.env.balance + (pnl if position_type != 0 else 0)
+        if current_equity > self.previous_balance_high:
+            total_reward += self.NEW_HIGH_BONUS
+            self.previous_balance_high = current_equity
+            
+        # Consistency bonus for maintaining profitable trading
+        if self.trades_in_episode >= 3:
+            win_rate = self.env.metrics.win_count / max(self.env.metrics.total_trades, 1)
+            if win_rate >= 0.6:  # 60%+ win rate
+                total_reward += self.CONSISTENCY_BONUS
+        
+        # Update tracking
+        self.last_action = action
+        self.total_hold_steps += 1 if action == Action.HOLD else 0
+        
+        return float(total_reward)
 
     def calculate_terminal_reward(self, balance: float, initial_balance: float) -> float:
-        """Calculate reward for terminal state."""
+        """Calculate comprehensive terminal reward based on overall performance."""
+        
+        # Bankruptcy penalty
         if balance <= 0:
-            return -20.0  # Severe bankruptcy penalty
+            return -50.0  # Severe penalty for account blow-up
         
-        # End of episode bonus
-        if balance > initial_balance:
-            return 10.0
+        # Calculate overall performance metrics
+        total_return = (balance - initial_balance) / initial_balance
         
-        return 0.0
+        # Base terminal reward
+        if total_return > 0.1:  # > 10% return
+            base_reward = 20.0
+        elif total_return > 0.05:  # > 5% return
+            base_reward = 10.0
+        elif total_return > 0:  # Profitable
+            base_reward = 5.0
+        elif total_return > -0.05:  # Small loss
+            base_reward = -2.0
+        else:  # Significant loss
+            base_reward = -10.0
+            
+        # Performance multipliers
+        performance_multiplier = 1.0
+        
+        # Trading activity bonus/penalty
+        activity_ratio = self.trades_in_episode / max(self.total_hold_steps / 100, 1)
+        if activity_ratio > 0.1:  # Active trading
+            performance_multiplier += 0.5
+        elif activity_ratio < 0.02:  # Too passive
+            performance_multiplier -= 0.3
+            
+        # Risk management bonus
+        if hasattr(self.env.metrics, 'max_drawdown'):
+            max_dd = self.env.metrics.max_drawdown
+            if max_dd < 0.1:  # < 10% max drawdown
+                performance_multiplier += 0.3
+            elif max_dd > 0.3:  # > 30% max drawdown
+                performance_multiplier -= 0.5
+                
+        final_reward = base_reward * max(0.1, performance_multiplier)
+        
+        return float(final_reward)
+        
+    def reset_episode_tracking(self):
+        """Reset episode-specific tracking variables."""
+        self.consecutive_holds = 0
+        self.trades_in_episode = 0
+        self.last_action = None
+        self.total_hold_steps = 0
+        self.max_unrealized_pnl = 0.0
+        self.position_opened_at_step = None

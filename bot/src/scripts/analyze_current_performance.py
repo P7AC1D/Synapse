@@ -342,7 +342,7 @@ def main():
     """Run comprehensive diagnostic analysis."""
     
     # Configuration
-    model_path = "../model/XAUUSDm.zip"
+    model_path = "../results/75/best_model.zip"
     data_path = "../data/XAUUSDm_15min.csv"
     
     try:

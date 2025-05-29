@@ -214,19 +214,19 @@ class EnhancedFeatureProcessor:
                 features_df = features_df.iloc[-min_len:]
                 atr_aligned = atr_aligned[-min_len:]
             
-            # Validate feature ranges
+            # Validate feature ranges - all features should be in [-1, 1] range
             for col, values in features_df.items():
-                # Check for specific features that should have different ranges
-                # All features (including binary) should be in [-1, 1] range
-                if col not in ['returns']:  # Returns can exceed [-1, 1] in extreme market conditions
-                    # Fixed: All features now use [-1, 1] range
-                    if (values < 0).any() or (values > 1).any():
-                        print(f"⚠️ Warning: {col} contains values outside [0,1] range")
-                elif col not in ['returns']:
-                    # Most features should be in [-1, 1]
-                    out_of_range = (values < -1.1).sum() + (values > 1.1).sum()  # Allow small tolerance
-                    if out_of_range > 0:
-                        print(f"⚠️ Warning: {col} has {out_of_range} values slightly outside [-1,1] range")
+                if col == 'returns':
+                    # Returns can exceed [-1, 1] in extreme market conditions (already clipped to [-0.1, 0.1])
+                    continue
+                else:
+                    # Check for features outside [-1, 1] range with small tolerance for floating-point precision
+                    out_of_range_low = (values < -1.01).sum()  # Allow small tolerance
+                    out_of_range_high = (values > 1.01).sum()
+                    
+                    if out_of_range_low > 0 or out_of_range_high > 0:
+                        print(f"⚠️ Warning: {col} has {out_of_range_low + out_of_range_high} values outside [-1,1] range")
+                        print(f"    Range: [{values.min():.4f}, {values.max():.4f}]")
                         # Clip to valid range
                         features_df[col] = np.clip(features_df[col], -1, 1)
             

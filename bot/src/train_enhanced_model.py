@@ -73,14 +73,14 @@ def train_enhanced_model():
     model = RecurrentPPO(
         policy="MlpLstmPolicy",
         env=train_env,
-        learning_rate=3e-4,
+        learning_rate=5e-4,  # Increased for faster adaptation to new reward system
         n_steps=2048,
         batch_size=64,
         n_epochs=10,
         gamma=0.99,
         gae_lambda=0.95,
         clip_range=0.2,
-        ent_coef=0.01,
+        ent_coef=0.05,  # Increased entropy for more exploration with new reward system
         vf_coef=0.5,
         max_grad_norm=0.5,
         verbose=1,
