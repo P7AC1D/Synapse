@@ -236,7 +236,7 @@ class RewardCalculator:
             
         # Consistency bonus for maintaining profitable trading
         if self.trades_in_episode >= 3:
-            win_rate = self.env.metrics.win_count / max(self.env.metrics.total_trades, 1)
+            win_rate = self.env.metrics.win_count / max(len(self.env.metrics.trades), 1)
             if win_rate >= 0.6:  # 60%+ win rate
                 total_reward += self.CONSISTENCY_BONUS
         
