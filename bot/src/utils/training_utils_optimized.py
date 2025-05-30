@@ -75,8 +75,8 @@ MODEL_KWARGS_OPTIMIZED = {
     "batch_size": 128,               # Smaller batch size
     "gamma": 0.99,                   # Standard gamma
     "gae_lambda": 0.95,              # Standard GAE
-    "clip_range": 0.15,              # Slightly more aggressive clipping
-    "clip_range_vf": 0.15,           # Match policy clipping
+    "clip_range": get_linear_fn(0.15, 0.15, 1.0),  # Constant clipping function
+    "clip_range_vf": get_linear_fn(0.15, 0.15, 1.0),  # Match policy clipping
     "ent_coef": 0.02,               # Lower entropy for faster convergence
     "vf_coef": 0.8,                 # Standard value coefficient
     "max_grad_norm": 0.5,           # Conservative gradient clipping
@@ -90,19 +90,19 @@ TRAINING_SCHEDULES = {
         'learning_rate': 2e-3,
         'n_epochs': 4,
         'ent_coef': 0.05,
-        'clip_range': 0.2
+        'clip_range': get_linear_fn(0.2, 0.2, 1.0)
     },
     'balanced': {    # For middle iterations
         'learning_rate': 1e-3,
         'n_epochs': 6,
         'ent_coef': 0.02,
-        'clip_range': 0.15
+        'clip_range': get_linear_fn(0.15, 0.15, 1.0)
     },
     'fine_tune': {   # For later iterations
         'learning_rate': 5e-4,
         'n_epochs': 8,
         'ent_coef': 0.01,
-        'clip_range': 0.1
+        'clip_range': get_linear_fn(0.1, 0.1, 1.0)
     }
 }
 
