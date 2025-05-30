@@ -361,14 +361,13 @@ def train_walk_forward_optimized(data: pd.DataFrame, initial_window: int, step_s
         threshold=args.convergence_threshold
     ) if args.early_stopping_patience > 0 else None
     
-    print(f"\n🎯 OPTIMIZATION FEATURES ENABLED:")
+    print(f"\n🎯 FEATURES ENABLED:")
     print(f"Adaptive Timesteps: {'✓' if args.adaptive_timesteps else '✗'}")
     print(f"Warm Starting: {'✓' if args.warm_start else '✗'}")
     print(f"Early Stopping: {'✓' if early_stopping else '✗'}")
     print(f"Progressive Training: {'✓' if args.progressive_training else '✗'}")
     print(f"Environment Caching: {'✓' if args.cache_environments else '✗'}")
     print(f"Fast Evaluation: {'✓' if use_fast_eval else '✗'}")
-    print(f"Expected Speedup: 5-10x\n")
 
     try:
         while training_start + initial_window <= total_periods:

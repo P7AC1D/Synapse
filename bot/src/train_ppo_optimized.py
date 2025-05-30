@@ -135,7 +135,6 @@ def main():
     print(f"Early Stopping: {'✓' if args.early_stopping_patience > 0 else '✗'}")
     print(f"Progressive Training: {'✓' if args.progressive_training else '✗'}")
     print(f"Environment Caching: {'✓' if args.cache_environments else '✗'}")
-    print(f"Expected Speedup: 5-10x (40-50min → 5-10min per iteration)\n")
     
     # Save optimization configuration
     optimization_config = {
