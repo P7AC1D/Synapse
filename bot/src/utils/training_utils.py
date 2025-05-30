@@ -36,12 +36,14 @@ try:
     from utils.fast_evaluation import (
         evaluate_model_on_dataset_optimized,
         evaluate_model_quick,
-        compare_models_parallel,
+        # compare_models_parallel,  # Using fixed version instead
         clear_evaluation_cache,
         get_cache_info
     )
     FAST_EVALUATION_AVAILABLE = True
-    print("✓ Fast evaluation optimizations loaded - expect 10-20x speedup!")
+    # Import the FIXED parallel comparison function
+    from utils.fast_evaluation_fixed import compare_models_parallel_fixed as compare_models_parallel
+    print("✓ Fast evaluation optimizations loaded with GPU deadlock fix!")
 except ImportError as e:
     FAST_EVALUATION_AVAILABLE = False
     print(f"⚠ Fast evaluation not available (using standard method): {e}")

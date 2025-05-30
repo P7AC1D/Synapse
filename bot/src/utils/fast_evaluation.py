@@ -473,7 +473,7 @@ def compare_models_parallel(model_paths: List[str], data: pd.DataFrame, args,
     results = {}
     
     # For single model, don't use multiprocessing overhead
-    if len(model_paths) == 1:
+    if len(model_paths) <= 2:
         model_path = model_paths[0]
         result = evaluate_model_on_dataset_optimized(model_path, data, args, batch_size)
         results[model_path] = result

@@ -4,7 +4,7 @@ import pandas as pd
 import ta
 from typing import Tuple, Dict, Any
 from gymnasium import spaces
-from .advanced_features import AdvancedFeatureCalculator
+from .fixed_advanced_features import FixedAdvancedFeatureCalculator as AdvancedFeatureCalculator
 
 class FeatureProcessor:
     """Handles feature calculation and preprocessing."""
