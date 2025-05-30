@@ -128,3 +128,4 @@ bot/results/*
 bot/models/*
 bot/model/XAUUSDm_old.zip
 bot/src/models/*
+results/*

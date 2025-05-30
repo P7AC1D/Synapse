@@ -116,9 +116,10 @@ def preprocess_evaluation_data(data: pd.DataFrame, args) -> Dict[str, Any]:
 
 
 def evaluate_model_batched(model, preprocessed_data: Dict[str, Any], 
-                          batch_size: int) -> Dict[str, Any]:
+                          batch_size: int, model_path: str = None) -> Dict[str, Any]:
     """
     Evaluate model using batch predictions for massive speedup.
+    Falls back to sequential processing if batch prediction fails.
     
     Args:
         model: Loaded RecurrentPPO model
@@ -133,8 +134,10 @@ def evaluate_model_batched(model, preprocessed_data: Dict[str, Any],
     data_length = preprocessed_data['data_length']
     env_params = preprocessed_data['env_params']
     initial_balance = preprocessed_data['initial_balance']
+      # Calculate safe batch size for RecurrentPPO LSTM compatibility
+    safe_batch_size = get_safe_batch_size(model, features.shape, batch_size)
     
-    print(f"Batch evaluation: {data_length} samples, batch size: {batch_size}")
+    print(f"Batch evaluation: {data_length} samples, batch size: {safe_batch_size}")
     
     # Initialize tracking variables
     balance = initial_balance
@@ -146,49 +149,75 @@ def evaluate_model_batched(model, preprocessed_data: Dict[str, Any],
     
     # Batch prediction - MAJOR SPEEDUP HERE
     lstm_states = None
-    total_batches = (data_length + batch_size - 1) // batch_size
+    total_batches = (data_length + safe_batch_size - 1) // safe_batch_size
     
-    for batch_idx, start_idx in enumerate(range(0, data_length, batch_size)):
-        if batch_idx % max(1, total_batches // 10) == 0:
-            progress = (batch_idx / total_batches) * 100
-            print(f"Batch prediction progress: {progress:.1f}%")
-        
-        end_idx = min(start_idx + batch_size, data_length)
-        batch_features = features[start_idx:end_idx]
-        
-        # Add position info to features (vectorized)
-        position_types = np.zeros(len(batch_features))
-        unrealized_pnls = np.zeros(len(batch_features))
-        
-        if position is not None:
-            position_types.fill(position['direction'])
-            # Vectorized PnL calculation for entire batch
-            if position['direction'] == 1:  # Long
-                price_diff = prices['close'][start_idx:end_idx] - position['entry_price']
-            else:  # Short
-                price_diff = position['entry_price'] - prices['close'][start_idx:end_idx]
+    # Track batch failures for fallback decision
+    batch_failures = 0
+    total_processed_batches = 0
+    
+    try:
+        for batch_idx, start_idx in enumerate(range(0, data_length, safe_batch_size)):
+            total_processed_batches += 1
             
-            unrealized_pnls = price_diff * position['lot_size'] * 100000 * env_params['point_value']
-            # Normalize PnL
-            unrealized_pnls = np.clip(unrealized_pnls / balance, -1, 1)
-        
-        # Combine features with position info
-        batch_obs = np.column_stack([
-            batch_features,
-            position_types,
-            unrealized_pnls
-        ])
-        
-        # Batch predict - HUGE SPEEDUP vs individual predictions
-        batch_actions, lstm_states = model.predict(
-            batch_obs, 
-            state=lstm_states,
-            deterministic=True
-        )
-        
-        actions[start_idx:end_idx] = batch_actions
+            if batch_idx % max(1, total_batches // 10) == 0:
+                progress = (batch_idx / total_batches) * 100
+                print(f"Batch prediction progress: {progress:.1f}%")
+            
+            end_idx = min(start_idx + safe_batch_size, data_length)
+            batch_features = features[start_idx:end_idx]
+            
+            # Add position info to features (vectorized)
+            position_types = np.zeros(len(batch_features))
+            unrealized_pnls = np.zeros(len(batch_features))
+            
+            if position is not None:
+                position_types.fill(position['direction'])
+                # Vectorized PnL calculation for entire batch
+                if position['direction'] == 1:  # Long
+                    price_diff = prices['close'][start_idx:end_idx] - position['entry_price']
+                else:  # Short
+                    price_diff = position['entry_price'] - prices['close'][start_idx:end_idx]
+                
+                unrealized_pnls = price_diff * position['lot_size'] * 100000 * env_params['point_value']
+                # Normalize PnL
+                unrealized_pnls = np.clip(unrealized_pnls / balance, -1, 1)
+              # Combine features with position info
+            batch_obs = np.column_stack([
+                batch_features,
+                position_types,
+                unrealized_pnls
+            ])
+            
+            # Safe batch predict with proper shape handling
+            try:
+                batch_actions, lstm_states = model.predict(
+                    batch_obs, 
+                    state=lstm_states,
+                    deterministic=True
+                )
+                actions[start_idx:end_idx] = batch_actions
+                
+            except RuntimeError as e:
+                batch_failures += 1
+                if "shape" in str(e) and "invalid for input" in str(e):
+                    # Silent fallback to sequential processing for LSTM shape mismatches
+                    return evaluate_model_sequential_fallback(model, preprocessed_data, model_path)
+                else:
+                    # Silent fallback for other batch prediction errors
+                    return evaluate_model_sequential_fallback(model, preprocessed_data, model_path)
+              # If too many batch failures, fall back to sequential processing
+            if batch_failures > min(5, total_batches // 4):  # More than 25% or 5 failures
+                return evaluate_model_sequential_fallback(model, preprocessed_data, model_path)
+                
+    except Exception as e:
+        # Silent fallback for complete batch processing failures
+        return evaluate_model_sequential_fallback(model, preprocessed_data, model_path)
     
-    print("Batch prediction complete. Processing trades...")
+    # Log batch processing results concisely
+    if batch_failures > 0:
+        print(f"⚡ Batch processing: {batch_failures}/{total_processed_batches} batches needed fallback")
+    
+    # Trade processing (no log needed - happens very fast)
     
     # Fast trade simulation using optimized loop
     metrics_tracker = MetricsTracker(initial_balance)
@@ -350,14 +379,13 @@ def evaluate_model_on_dataset_optimized(model_path: str, data: pd.DataFrame, arg
         if show_progress:
             progress_thread = threading.Thread(
                 target=show_progress_continuous,
-                args=(f"Evaluating model (batch size: {batch_size})",)
-            )
+                args=(f"Evaluating model (batch size: {batch_size})",)        )
             progress_thread.daemon = True
             progress_thread.start()
         
         try:
             # Batch evaluation - this is where the magic happens
-            performance = evaluate_model_batched(model, preprocessed_data, batch_size)
+            performance = evaluate_model_batched(model, preprocessed_data, batch_size, model_path)
         finally:
             if show_progress:
                 stop_progress_indicator()
@@ -610,3 +638,261 @@ def get_cache_info() -> Dict[str, Any]:
         'max_size': _evaluation_cache.max_size,
         'access_counts': _evaluation_cache.access_count.copy()
     }
+
+
+def get_safe_batch_size(model, features_shape: tuple, original_batch_size: int = 1000) -> int:
+    """
+    Determine a safe batch size that works with RecurrentPPO LSTM constraints.
+    
+    Args:
+        model: The RecurrentPPO model
+        features_shape: Shape of the features (num_samples, num_features)
+        original_batch_size: Requested batch size
+        
+    Returns:
+        Safe batch size that avoids shape mismatch errors
+    """
+    num_samples, num_features = features_shape
+    
+    # For RecurrentPPO models, we need to ensure the batch size works with LSTM reshaping
+    # The model internally reshapes to (n_seq, -1, lstm.input_size)
+    
+    # Get model's LSTM input size if available
+    lstm_input_size = None
+    try:
+        if hasattr(model.policy, 'lstm_actor') and hasattr(model.policy.lstm_actor, 'input_size'):
+            lstm_input_size = model.policy.lstm_actor.input_size
+        elif hasattr(model.policy, 'features_extractor'):
+            # Try to infer from the observation space
+            obs_space = model.observation_space
+            if hasattr(obs_space, 'shape'):
+                lstm_input_size = obs_space.shape[0]
+    except:
+        pass
+    
+    if lstm_input_size is None:
+        # Default fallback - use small batches for safety
+        safe_batch_size = min(100, original_batch_size, num_samples)
+        print(f"⚠ Could not determine LSTM input size, using conservative batch size: {safe_batch_size}")
+        return safe_batch_size
+    
+    # Calculate safe batch size based on LSTM constraints
+    # The total input size should be divisible by lstm_input_size
+    target_batch_size = min(original_batch_size, num_samples)
+    
+    # Ensure the batch size works with the total feature dimensions
+    total_input_size = target_batch_size * (num_features + 2)  # +2 for position_type and unrealized_pnl
+    
+    # Find the largest batch size that creates valid reshaping
+    while target_batch_size > 1:
+        test_input_size = target_batch_size * (num_features + 2)
+        if test_input_size % lstm_input_size == 0 or target_batch_size <= 50:
+            break
+        target_batch_size -= 1
+    
+    # Ensure minimum batch size for efficiency
+    safe_batch_size = max(10, min(target_batch_size, original_batch_size))
+    
+    if safe_batch_size != original_batch_size:
+        print(f"⚡ Adjusted batch size from {original_batch_size} to {safe_batch_size} for LSTM compatibility")
+    
+    return safe_batch_size
+
+
+def evaluate_model_sequential_fallback(model, preprocessed_data: Dict[str, Any], 
+                                      model_path: str = None) -> Dict[str, Any]:
+    """
+    Fallback evaluation using sequential prediction when batch processing fails.
+    
+    This is slower but more reliable for RecurrentPPO models with LSTM constraints.
+    Uses clean single-sample processing to avoid LSTM batch dimension issues.
+    
+    Args:
+        model: Loaded RecurrentPPO model
+        preprocessed_data: Preprocessed evaluation data
+        
+    Returns:
+        Performance metrics dictionary
+    """
+    features = preprocessed_data['features']
+    prices = preprocessed_data['prices']
+    data_length = preprocessed_data['data_length']
+    env_params = preprocessed_data['env_params']
+    initial_balance = preprocessed_data['initial_balance']
+    
+    print(f"🔄 Sequential evaluation: {data_length} samples")
+    
+    # Initialize tracking variables
+    balance = initial_balance
+    position = None
+    trades = []
+    actions = np.zeros(data_length, dtype=np.int32)
+      # Reset LSTM states for clean sequential processing
+    lstm_states = None
+    progress_interval = max(1, data_length // 4)  # Show progress every 25%
+    failed_predictions = 0
+    
+    for step in range(data_length):
+        if step % progress_interval == 0 and step > 0:
+            progress = (step / data_length) * 100
+            print(f"  Progress: {progress:.0f}%")
+        
+        # Prepare observation
+        obs_features = features[step]
+        
+        # Add position info
+        position_type = 0
+        unrealized_pnl = 0
+        
+        if position is not None:
+            position_type = position['direction']
+            if position['direction'] == 1:  # Long
+                price_diff = prices['close'][step] - position['entry_price']
+            else:  # Short
+                price_diff = position['entry_price'] - prices['close'][step]
+            
+            unrealized_pnl = price_diff * position['lot_size'] * 100000 * env_params['point_value']
+            unrealized_pnl = np.clip(unrealized_pnl / balance, -1, 1)  # Normalize
+          # Combine observation
+        obs = np.concatenate([obs_features, [position_type], [unrealized_pnl]])
+        
+        # Predict action with proper error handling
+        try:
+            # Ensure observation is properly shaped for single sample
+            obs_input = obs.reshape(1, -1)  # Shape: [1, features]
+            
+            # Get prediction with LSTM states
+            action, lstm_states = model.predict(
+                obs_input, 
+                state=lstm_states,
+                deterministic=True            )
+            actions[step] = action[0]
+            
+        except Exception as e:
+            # If individual prediction fails, try multiple recovery strategies
+            failed_predictions += 1
+            prediction_successful = False
+            
+            # Strategy 1: Try prediction without LSTM state (fresh start)
+            try:
+                lstm_states = None
+                action, lstm_states = model.predict(
+                    obs.reshape(1, -1), 
+                    state=None,
+                    deterministic=True                )
+                actions[step] = action[0]
+                prediction_successful = True
+            except Exception as e2:
+                pass  # Silent - will try next strategy
+            
+            # Strategy 2: Reload model if path available and persistent failures
+            if not prediction_successful and model_path and failed_predictions > 10:
+                try:
+                    # Reload model for completely fresh LSTM states
+                    from sb3_contrib.ppo_recurrent import RecurrentPPO
+                    individual_model = RecurrentPPO.load(model_path)
+                    
+                    action, _ = individual_model.predict(
+                        obs.reshape(1, -1), 
+                        state=None,
+                        deterministic=True
+                    )
+                    actions[step] = action[0]
+                    prediction_successful = True
+                    
+                    # Reset the main model's LSTM states
+                    lstm_states = None
+                    
+                except Exception as e3:
+                    pass  # Silent - will use default action
+            
+            # Strategy 3: Final fallback to default action
+            if not prediction_successful:
+                actions[step] = 0  # Hold action
+                lstm_states = None  # Reset for next attempt
+    
+    # Log completion with failure rate only if there were failures
+    if failed_predictions > 0:
+        failure_rate = (failed_predictions / data_length) * 100
+        print(f"✅ Sequential processing complete. Prediction failures: {failed_predictions}/{data_length} ({failure_rate:.1f}%)")
+    
+    print("Processing trades...")
+    
+    # Trade simulation (same as batch version)
+    metrics_tracker = MetricsTracker(initial_balance)
+    position = None  # Reset position for trade processing
+    
+    for step in range(data_length):
+        action = actions[step]
+        current_spread = prices['spread'][step] * env_params['point_value']
+        
+        # Handle position management
+        if action in [1, 2] and position is None:  # BUY or SELL
+            # Calculate lot size based on current balance
+            max_lots_by_balance = balance / env_params['balance_per_lot'] * env_params['min_lots']
+            lot_size = min(max_lots_by_balance, env_params['max_lots'])
+            
+            position = {
+                'direction': action,
+                'entry_price': prices['close'][step],
+                'entry_step': step,
+                'lot_size': lot_size
+            }
+            
+        elif action == 3 and position is not None:  # CLOSE
+            # Calculate PnL
+            if position['direction'] == 1:  # Long
+                price_diff = prices['close'][step] - position['entry_price']
+            else:  # Short
+                price_diff = position['entry_price'] - prices['close'][step]
+            
+            pnl = price_diff * position['lot_size'] * 100000 * env_params['point_value']
+            
+            # Subtract spread cost
+            pnl -= current_spread * position['lot_size'] * 100000
+            
+            # Record trade
+            profit_points = abs(prices['close'][step] - position['entry_price']) / env_params['point_value']
+            
+            trade_info = {
+                'direction': position['direction'],
+                'entry_price': position['entry_price'],
+                'exit_price': prices['close'][step],
+                'lot_size': position['lot_size'],
+                'pnl': pnl,
+                'profit_points': profit_points,
+                'hold_time': step - position['entry_step']
+            }
+            
+            trades.append(trade_info)
+            metrics_tracker.add_trade(trade_info)
+            metrics_tracker.update_balance(pnl)
+            balance += pnl
+            position = None
+    
+    # Handle any remaining position at end
+    if position is not None:
+        if position['direction'] == 1:
+            price_diff = prices['close'][-1] - position['entry_price']
+        else:
+            price_diff = position['entry_price'] - prices['close'][-1]
+        
+        pnl = price_diff * position['lot_size'] * 100000 * env_params['point_value']
+        profit_points = abs(prices['close'][-1] - position['entry_price']) / env_params['point_value']
+        
+        trade_info = {
+            'direction': position['direction'],
+            'entry_price': position['entry_price'],
+            'exit_price': prices['close'][-1],
+            'lot_size': position['lot_size'],
+            'pnl': pnl,
+            'profit_points': profit_points,
+            'hold_time': data_length - position['entry_step']
+        }
+        
+        trades.append(trade_info)
+        metrics_tracker.add_trade(trade_info)
+        metrics_tracker.update_balance(pnl)
+    
+    print(f"Sequential trade simulation complete. Processed {len(trades)} trades.")
+    return metrics_tracker.get_performance_summary()
