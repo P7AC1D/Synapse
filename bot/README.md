@@ -98,10 +98,11 @@ bot/
 
 ### Training Features
 
-- **Walk-Forward Optimization**: Temporal validation preventing data leakage
+- **Walk-Forward Optimization**: Temporal validation preventing data leakage ✅ **BIAS-FREE**
 - **Advanced Reward System**: Multi-objective optimization balancing profit and risk
 - **Dynamic Position Sizing**: Adaptive lot sizing based on account balance
 - **Market Regime Adaptation**: Different strategies for trending vs ranging markets
+- **🔒 No Look-Ahead Bias**: Model selection uses only validation data (fixed May 2025)
 
 ## ⚡ Performance Optimizations
 

@@ -556,33 +556,66 @@ def train_walk_forward_optimized(data: pd.DataFrame, initial_window: int, step_s
                 # Update timesteps in evaluation results
                 unified_callback = callbacks[1]
                 for result in unified_callback.eval_results:
-                    result['timesteps'] = (result['timesteps'] - current_timesteps) + start_timesteps
-
-            # OPTIMIZED model comparison using fast evaluation
+                    result['timesteps'] = (result['timesteps'] - current_timesteps) + start_timesteps            # OPTIMIZED model selection based ONLY on validation performance (NO LOOK-AHEAD BIAS)
+            # The evaluation callback has already selected the best model based on validation data
             curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
             best_model_path = os.path.join(f"../results/{args.seed}", "best_model_optimized.zip")
             
             if os.path.exists(curr_best_path):
+                # Load the validation-selected current best model
+                curr_best_metrics_path = curr_best_path.replace(".zip", "_metrics.json")
+                
                 if os.path.exists(best_model_path):
-                    # Use OPTIMIZED comparison
-                    from utils.training_utils import compare_models_on_full_dataset
-                    if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args, use_fast_eval):
+                    # Compare validation scores from callback evaluation (NO FUTURE DATA)
+                    try:
+                        with open(curr_best_metrics_path, 'r') as f:
+                            curr_metrics = json.load(f)
+                        
+                        best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
+                        if os.path.exists(best_metrics_path):
+                            with open(best_metrics_path, 'r') as f:
+                                best_metrics = json.load(f)
+                            
+                            # Compare validation scores (from callback evaluation on held-out data)
+                            curr_score = curr_metrics.get('validation_score', curr_metrics.get('enhanced_score', 0))
+                            best_score = best_metrics.get('validation_score', best_metrics.get('enhanced_score', 0))
+                            
+                            if curr_score > best_score:
+                                model = RecurrentPPO.load(curr_best_path)
+                                model.save(best_model_path)
+                                # Save metrics for next comparison
+                                import shutil
+                                shutil.copy2(curr_best_metrics_path, best_metrics_path)
+                                print(f"\n🎯 Current model validation score ({curr_score:.4f}) > previous ({best_score:.4f}) - saved as OPTIMIZED best model")
+                            else:
+                                model = RecurrentPPO.load(best_model_path)
+                                print(f"\n📊 Keeping previous OPTIMIZED best model (validation score {best_score:.4f} >= {curr_score:.4f})")
+                        else:
+                            # No previous metrics, use current as best
+                            model = RecurrentPPO.load(curr_best_path)
+                            model.save(best_model_path)
+                            import shutil
+                            shutil.copy2(curr_best_metrics_path, best_metrics_path)
+                            print("\n🎯 No previous best metrics - using current best as first OPTIMIZED best model")
+                    except (FileNotFoundError, json.JSONDecodeError) as e:
+                        print(f"\n⚠️ Error reading metrics files: {e}")
+                        print("Falling back to using current best model")
                         model = RecurrentPPO.load(curr_best_path)
                         model.save(best_model_path)
-                        print("\n🎯 Current best model outperformed previous - saved as OPTIMIZED best model")
-                    else:
-                        model = RecurrentPPO.load(best_model_path)
-                        print("\n📊 Keeping previous best model")
                 else:
                     model = RecurrentPPO.load(curr_best_path)
                     model.save(best_model_path)
+                    # Save metrics for future comparisons
+                    if os.path.exists(curr_best_metrics_path):
+                        import shutil
+                        best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
+                        shutil.copy2(curr_best_metrics_path, best_metrics_path)
                     print("\n🎯 No previous best model - using current best as first OPTIMIZED best model")
                     
                 # Clean up curr_best files
                 os.remove(curr_best_path)
-                metrics_path = curr_best_path.replace(".zip", "_metrics.json")
-                if os.path.exists(metrics_path):
-                    os.remove(metrics_path)
+                if os.path.exists(curr_best_metrics_path):
+                    os.remove(curr_best_metrics_path)
             else:
                 print("\n📊 No curr_best model found - reloading OPTIMIZED best model for next iteration")
                 if os.path.exists(best_model_path):
