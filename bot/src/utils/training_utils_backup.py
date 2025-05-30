@@ -5,13 +5,11 @@ This module provides functions and configurations for training a PPO-LSTM model
 using walk-forward optimization. It includes:
 - Model architecture and hyperparameter configurations
 - Training state management
-- Model evaluation and comparison functions (NOW OPTIMIZED!)
+- Model evaluation and comparison functions
 - Walk-forward training loop implementation
 
 The implementation is optimized for sparse reward scenarios in financial trading,
 with careful management of temporal dependencies and exploration strategies.
-
-NEW: Integrated fast evaluation system for 10-20x speedup!
 """
 import os
 import json
@@ -19,6 +17,22 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Tuple, Dict, Any, List
 import time
+"""
+Training utilities for PPO-LSTM model with walk-forward optimization.
+
+This module provides functions and configurations for training a PPO-LSTM model
+using walk-forward optimization. It includes:
+- Model architecture and hyperparameter configurations
+- Training state management
+- Model evaluation and comparison functions
+- Walk-forward training loop implementation
+
+The implementation is optimized for sparse reward scenarios in financial trading,
+with careful management of temporal dependencies and exploration strategies.
+"""
+import os
+import json
+import pandas as pd
 import threading
 from utils.progress import show_progress_continuous, stop_progress_indicator
 from stable_baselines3.common.monitor import Monitor
@@ -30,21 +44,6 @@ import torch as th
 
 from callbacks.epsilon_callback import CustomEpsilonCallback
 from callbacks.eval_callback import UnifiedEvalCallback
-
-# Import fast evaluation optimizations
-try:
-    from utils.fast_evaluation import (
-        evaluate_model_on_dataset_optimized,
-        evaluate_model_quick,
-        compare_models_parallel,
-        clear_evaluation_cache,
-        get_cache_info
-    )
-    FAST_EVALUATION_AVAILABLE = True
-    print("✓ Fast evaluation optimizations loaded - expect 10-20x speedup!")
-except ImportError as e:
-    FAST_EVALUATION_AVAILABLE = False
-    print(f"⚠ Fast evaluation not available (using standard method): {e}")
 
 # Model architecture configuration
 POLICY_KWARGS = {
@@ -144,37 +143,17 @@ def save_training_state(path: str, training_start: int, model_path: str,
     with open(path, 'w') as f:
         json.dump(state, f)
 
-def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args, 
-                             use_fast_evaluation: bool = True, 
-                             batch_size: int = 1000) -> Dict[str, Any]:
+def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args) -> Dict[str, Any]:
     """
-    Evaluate a model on a given dataset with OPTIMIZED PERFORMANCE.
-    
-    NOW FEATURES 10-20x SPEEDUP with batch processing and caching!
+    Evaluate a model on a given dataset.
     
     Args:
         model_path: Path to the model file
         data: Full dataset for evaluation
         args: Training arguments
-        use_fast_evaluation: Whether to use optimized batch evaluation (default: True)
-        batch_size: Batch size for optimized evaluation
         
     Returns:
         Dictionary with evaluation metrics
-    """
-    # Use optimized evaluation if available and requested
-    if use_fast_evaluation and FAST_EVALUATION_AVAILABLE:
-        print(f"🚀 Using OPTIMIZED batch evaluation (batch_size={batch_size})")
-        return evaluate_model_on_dataset_optimized(model_path, data, args, batch_size)
-    
-    # Fallback to original method
-    print("⚠ Using standard evaluation method")
-    return _evaluate_model_on_dataset_original(model_path, data, args)
-
-def _evaluate_model_on_dataset_original(model_path: str, data: pd.DataFrame, args) -> Dict[str, Any]:
-    """
-    Original model evaluation function (step-by-step).
-    Kept for backward compatibility and validation.
     """
     if not os.path.exists(model_path):
         return None
@@ -198,7 +177,7 @@ def _evaluate_model_on_dataset_original(model_path: str, data: pd.DataFrame, arg
         # Start progress indicator
         progress_thread = threading.Thread(
             target=show_progress_continuous,
-            args=("Evaluating model (standard method)",)
+            args=("Evaluating model",)
         )
         progress_thread.daemon = True
         progress_thread.start()
@@ -257,59 +236,36 @@ def _evaluate_model_on_dataset_original(model_path: str, data: pd.DataFrame, arg
         return None
 
 def compare_models_on_full_dataset(current_model_path: str, previous_model_path: str, 
-                                 full_data: pd.DataFrame, args,
-                                 use_fast_evaluation: bool = True) -> bool:
+                                 full_data: pd.DataFrame, args) -> bool:
     """
     Compare current best model against previous period model on full dataset.
-    NOW WITH PARALLEL PROCESSING for 4-8x speedup!
     
     Args:
         current_model_path: Path to current best model
         previous_model_path: Path to previous period model
         full_data: Complete dataset for evaluation
         args: Training arguments
-        use_fast_evaluation: Whether to use optimized evaluation (default: True)
         
     Returns:
         True if current model performs better, False otherwise
     """
-    # Use parallel comparison if fast evaluation is available and we have multiple models
-    if use_fast_evaluation and FAST_EVALUATION_AVAILABLE:
-        model_paths = [current_model_path]
-        if os.path.exists(previous_model_path):
-            model_paths.append(previous_model_path)
+    # Evaluate current model
+    current_metrics = evaluate_model_on_dataset(current_model_path, full_data, args)
+    if not current_metrics:
+        print("Could not evaluate current model")
+        return False
         
-        print("🚀 Using PARALLEL model comparison...")
-        results = compare_models_parallel(model_paths, full_data, args, max_workers=2)
+    # Skip comparison if no previous model exists
+    if not os.path.exists(previous_model_path):
+        print("No previous model to compare against")
+        return True
         
-        current_metrics = results.get(current_model_path)
-        previous_metrics = results.get(previous_model_path)
+    # Evaluate previous model
+    previous_metrics = evaluate_model_on_dataset(previous_model_path, full_data, args)
+    if not previous_metrics:
+        print("Could not evaluate previous model")
+        return True
         
-        if not current_metrics:
-            print("Could not evaluate current model")
-            return False
-            
-        if not previous_metrics:
-            print("No previous model to compare against")
-            return True
-    else:
-        # Fallback to sequential evaluation
-        current_metrics = evaluate_model_on_dataset(current_model_path, full_data, args, use_fast_evaluation)
-        if not current_metrics:
-            print("Could not evaluate current model")
-            return False
-            
-        # Skip comparison if no previous model exists
-        if not os.path.exists(previous_model_path):
-            print("No previous model to compare against")
-            return True
-            
-        # Evaluate previous model
-        previous_metrics = evaluate_model_on_dataset(previous_model_path, full_data, args, use_fast_evaluation)
-        if not previous_metrics:
-            print("Could not evaluate previous model")
-            return True
-    
     # Print comparison
     print("\n=== Full Dataset Model Comparison ===")
     print(f"Current Model:")
@@ -349,38 +305,16 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     except (FileNotFoundError, json.JSONDecodeError):
         return 0, None, {}
 
-# Convenience functions for optimized evaluation
-def quick_model_evaluation(model_path: str, data: pd.DataFrame, args, 
-                          sample_size: int = 10000) -> Dict[str, Any]:
-    """Quick model evaluation using sampling for rapid testing (5-20x speedup)."""
-    if FAST_EVALUATION_AVAILABLE:
-        return evaluate_model_quick(model_path, data, args, sample_size)
-    else:
-        # Use smaller subset with original method
-        subset_data = data.iloc[-sample_size:] if len(data) > sample_size else data
-        return _evaluate_model_on_dataset_original(model_path, subset_data, args)
-
-def benchmark_evaluation_performance(model_path: str, data: pd.DataFrame, args) -> Dict[str, Any]:
-    """Benchmark evaluation performance to show speedup improvements."""
-    if not FAST_EVALUATION_AVAILABLE:
-        print("Fast evaluation not available - cannot benchmark")
-        return {}
-    
-    from utils.fast_evaluation import benchmark_evaluation_methods
-    return benchmark_evaluation_methods(model_path, data, args)
-
 def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
-    Train a model using walk-forward optimization with ENHANCED PERFORMANCE.
-    
-    NOW FEATURING 10-20x FASTER model evaluation and comparison!
+    Train a model using walk-forward optimization.
     
     Implements walk-forward optimization with:
     - Progressive window training
-    - Model validation and selection (NOW OPTIMIZED!)
+    - Model validation and selection
     - State saving for resumable training
     - Adaptive exploration decay
-    - Best model tracking and comparison (NOW OPTIMIZED!)
+    - Best model tracking and comparison
     
     Args:
         data: Full dataset for training
@@ -392,7 +326,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         RecurrentPPO: Final trained model or last checkpoint if interrupted
         
     Notes:
-        - Uses optimized evaluation when available (10-20x speedup)
         - Uses 'validation_size' from args to split training/validation
         - Saves checkpoints and best models in ../results/{seed}/
         - Maintains training state for resumption
@@ -406,13 +339,6 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     
     # Calculate total number of iterations
     total_iterations = (total_periods - initial_window) // step_size + 1
-    
-    # Enable fast evaluation by default if available
-    use_fast_eval = getattr(args, 'use_fast_evaluation', True) and FAST_EVALUATION_AVAILABLE
-    if use_fast_eval:
-        print("🚀 Using OPTIMIZED evaluation for model comparison")
-    else:
-        print("⚠ Using standard evaluation")
     
     state_path = f"../results/{args.seed}/training_state.json"
     training_start, _, state = load_training_state(state_path)
@@ -537,10 +463,10 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
                 best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
                 
-                # Update best model if better curr_best was found (USING OPTIMIZED COMPARISON)
+                # Update best model if better curr_best was found
                 if os.path.exists(curr_best_path):
                     if os.path.exists(best_model_path):
-                        if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args, use_fast_eval):
+                        if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
                             model = RecurrentPPO.load(curr_best_path)
                             model.save(best_model_path)
                             print("\nCurrent best model outperformed previous - saved as best model")
@@ -599,13 +525,13 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 for result in unified_callback.eval_results:
                     result['timesteps'] = (result['timesteps'] - period_timesteps) + start_timesteps
 
-            # Compare curr_best against best_model if it exists (USING OPTIMIZED COMPARISON)
+            # Compare curr_best against best_model if it exists
             curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
             best_model_path = os.path.join(f"../results/{args.seed}", "best_model.zip")
             
             if os.path.exists(curr_best_path):
                 if os.path.exists(best_model_path):
-                    if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args, use_fast_eval):
+                    if compare_models_on_full_dataset(curr_best_path, best_model_path, data, args):
                         model = RecurrentPPO.load(curr_best_path)
                         model.save(best_model_path)
                         print("\nCurrent best model outperformed previous - saved as best model")

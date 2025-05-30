@@ -1,17 +1,21 @@
 """
-Training utilities for PPO-LSTM model with walk-forward optimization.
+Enhanced training utilities for PPO-LSTM model with walk-forward optimization.
 
 This module provides functions and configurations for training a PPO-LSTM model
 using walk-forward optimization. It includes:
 - Model architecture and hyperparameter configurations
 - Training state management
-- Model evaluation and comparison functions (NOW OPTIMIZED!)
+- Model evaluation and comparison functions (OPTIMIZED)
 - Walk-forward training loop implementation
 
 The implementation is optimized for sparse reward scenarios in financial trading,
 with careful management of temporal dependencies and exploration strategies.
 
-NEW: Integrated fast evaluation system for 10-20x speedup!
+PERFORMANCE IMPROVEMENTS:
+- Batch prediction evaluation (5-10x speedup)
+- Data preprocessing caching (2-3x speedup)
+- Parallel model comparison (4-8x speedup)
+- Smart sampling options (5-20x speedup)
 """
 import os
 import json
@@ -31,20 +35,21 @@ import torch as th
 from callbacks.epsilon_callback import CustomEpsilonCallback
 from callbacks.eval_callback import UnifiedEvalCallback
 
-# Import fast evaluation optimizations
+# Import optimized evaluation functions
 try:
     from utils.fast_evaluation import (
         evaluate_model_on_dataset_optimized,
         evaluate_model_quick,
         compare_models_parallel,
+        benchmark_evaluation_methods,
         clear_evaluation_cache,
         get_cache_info
     )
     FAST_EVALUATION_AVAILABLE = True
-    print("✓ Fast evaluation optimizations loaded - expect 10-20x speedup!")
+    print("✓ Fast evaluation module loaded successfully")
 except ImportError as e:
     FAST_EVALUATION_AVAILABLE = False
-    print(f"⚠ Fast evaluation not available (using standard method): {e}")
+    print(f"Warning: Fast evaluation module not available: {e}")
 
 # Model architecture configuration
 POLICY_KWARGS = {
@@ -148,15 +153,13 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args,
                              use_fast_evaluation: bool = True, 
                              batch_size: int = 1000) -> Dict[str, Any]:
     """
-    Evaluate a model on a given dataset with OPTIMIZED PERFORMANCE.
-    
-    NOW FEATURES 10-20x SPEEDUP with batch processing and caching!
+    Evaluate a model on a given dataset with optional optimization.
     
     Args:
         model_path: Path to the model file
         data: Full dataset for evaluation
         args: Training arguments
-        use_fast_evaluation: Whether to use optimized batch evaluation (default: True)
+        use_fast_evaluation: Whether to use optimized batch evaluation
         batch_size: Batch size for optimized evaluation
         
     Returns:
@@ -164,11 +167,11 @@ def evaluate_model_on_dataset(model_path: str, data: pd.DataFrame, args,
     """
     # Use optimized evaluation if available and requested
     if use_fast_evaluation and FAST_EVALUATION_AVAILABLE:
-        print(f"🚀 Using OPTIMIZED batch evaluation (batch_size={batch_size})")
+        print(f"Using optimized batch evaluation (batch_size={batch_size})")
         return evaluate_model_on_dataset_optimized(model_path, data, args, batch_size)
     
     # Fallback to original method
-    print("⚠ Using standard evaluation method")
+    print("Using standard evaluation method")
     return _evaluate_model_on_dataset_original(model_path, data, args)
 
 def _evaluate_model_on_dataset_original(model_path: str, data: pd.DataFrame, args) -> Dict[str, Any]:
@@ -261,14 +264,13 @@ def compare_models_on_full_dataset(current_model_path: str, previous_model_path:
                                  use_fast_evaluation: bool = True) -> bool:
     """
     Compare current best model against previous period model on full dataset.
-    NOW WITH PARALLEL PROCESSING for 4-8x speedup!
     
     Args:
         current_model_path: Path to current best model
         previous_model_path: Path to previous period model
         full_data: Complete dataset for evaluation
         args: Training arguments
-        use_fast_evaluation: Whether to use optimized evaluation (default: True)
+        use_fast_evaluation: Whether to use optimized evaluation
         
     Returns:
         True if current model performs better, False otherwise
@@ -279,7 +281,7 @@ def compare_models_on_full_dataset(current_model_path: str, previous_model_path:
         if os.path.exists(previous_model_path):
             model_paths.append(previous_model_path)
         
-        print("🚀 Using PARALLEL model comparison...")
+        print("Using parallel model comparison...")
         results = compare_models_parallel(model_paths, full_data, args, max_workers=2)
         
         current_metrics = results.get(current_model_path)
@@ -309,7 +311,7 @@ def compare_models_on_full_dataset(current_model_path: str, previous_model_path:
         if not previous_metrics:
             print("Could not evaluate previous model")
             return True
-    
+        
     # Print comparison
     print("\n=== Full Dataset Model Comparison ===")
     print(f"Current Model:")
@@ -349,38 +351,118 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     except (FileNotFoundError, json.JSONDecodeError):
         return 0, None, {}
 
-# Convenience functions for optimized evaluation
-def quick_model_evaluation(model_path: str, data: pd.DataFrame, args, 
-                          sample_size: int = 10000) -> Dict[str, Any]:
-    """Quick model evaluation using sampling for rapid testing (5-20x speedup)."""
-    if FAST_EVALUATION_AVAILABLE:
-        return evaluate_model_quick(model_path, data, args, sample_size)
-    else:
-        # Use smaller subset with original method
-        subset_data = data.iloc[-sample_size:] if len(data) > sample_size else data
-        return _evaluate_model_on_dataset_original(model_path, subset_data, args)
-
 def benchmark_evaluation_performance(model_path: str, data: pd.DataFrame, args) -> Dict[str, Any]:
-    """Benchmark evaluation performance to show speedup improvements."""
+    """
+    Benchmark evaluation performance to show speedup improvements.
+    
+    Args:
+        model_path: Path to test model
+        data: Test dataset
+        args: Training arguments
+        
+    Returns:
+        Benchmark results showing performance comparison
+    """
     if not FAST_EVALUATION_AVAILABLE:
         print("Fast evaluation not available - cannot benchmark")
         return {}
     
-    from utils.fast_evaluation import benchmark_evaluation_methods
-    return benchmark_evaluation_methods(model_path, data, args)
+    print(f"\n{'='*60}")
+    print("EVALUATION PERFORMANCE BENCHMARK")
+    print(f"{'='*60}")
+    print(f"Dataset size: {len(data):,} samples")
+    
+    results = {}
+    
+    # Test original method
+    print("\n1. Testing original evaluation method...")
+    start_time = time.time()
+    original_result = _evaluate_model_on_dataset_original(model_path, data, args)
+    original_time = time.time() - start_time
+    
+    if original_result:
+        results['original'] = {
+            'time': original_time,
+            'score': original_result['score'],
+            'trades': original_result['total_trades']
+        }
+        print(f"   Time: {original_time:.2f} seconds")
+        print(f"   Score: {original_result['score']:.4f}")
+    
+    # Test optimized method with different batch sizes
+    batch_sizes = [500, 1000, 2000, 4000]
+    for batch_size in batch_sizes:
+        if len(data) < batch_size * 2:
+            continue
+            
+        print(f"\n2. Testing optimized evaluation (batch_size={batch_size})...")
+        start_time = time.time()
+        optimized_result = evaluate_model_on_dataset_optimized(model_path, data, args, batch_size)
+        optimized_time = time.time() - start_time
+        
+        if optimized_result:
+            speedup = original_time / optimized_time if original_time > 0 else 0
+            results[f'optimized_{batch_size}'] = {
+                'time': optimized_time,
+                'score': optimized_result['score'],
+                'trades': optimized_result['total_trades'],
+                'speedup': speedup
+            }
+            print(f"   Time: {optimized_time:.2f} seconds")
+            print(f"   Score: {optimized_result['score']:.4f}")
+            print(f"   Speedup: {speedup:.1f}x")
+            
+            # Verify results are similar
+            if original_result:
+                score_diff = abs(original_result['score'] - optimized_result['score'])
+                trade_diff = abs(original_result['total_trades'] - optimized_result['total_trades'])
+                print(f"   Score difference: {score_diff:.6f}")
+                print(f"   Trade count difference: {trade_diff}")
+    
+    # Test quick evaluation
+    if len(data) > 10000:
+        print(f"\n3. Testing quick evaluation (10,000 samples)...")
+        start_time = time.time()
+        quick_result = evaluate_model_quick(model_path, data, args, sample_size=10000)
+        quick_time = time.time() - start_time
+        
+        if quick_result:
+            speedup = original_time / quick_time if original_time > 0 else 0
+            results['quick_10k'] = {
+                'time': quick_time,
+                'score': quick_result['score'],
+                'trades': quick_result['total_trades'],
+                'speedup': speedup,
+                'reduction_factor': quick_result.get('sampling_info', {}).get('reduction_factor', 1)
+            }
+            print(f"   Time: {quick_time:.2f} seconds")
+            print(f"   Score: {quick_result['score']:.4f}")
+            print(f"   Speedup: {speedup:.1f}x")
+            print(f"   Data reduction: {quick_result.get('sampling_info', {}).get('reduction_factor', 1):.1f}x")
+    
+    # Print summary
+    print(f"\n{'='*60}")
+    print("BENCHMARK SUMMARY")
+    print(f"{'='*60}")
+    
+    for method, stats in results.items():
+        if 'speedup' in stats:
+            print(f"{method:20s}: {stats['time']:6.2f}s  "
+                  f"Score: {stats['score']:7.4f}  "
+                  f"Speedup: {stats['speedup']:5.1f}x")
+    
+    return results
 
 def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
-    Train a model using walk-forward optimization with ENHANCED PERFORMANCE.
-    
-    NOW FEATURING 10-20x FASTER model evaluation and comparison!
+    Train a model using walk-forward optimization with enhanced evaluation.
     
     Implements walk-forward optimization with:
     - Progressive window training
-    - Model validation and selection (NOW OPTIMIZED!)
+    - Model validation and selection (OPTIMIZED)
     - State saving for resumable training
     - Adaptive exploration decay
-    - Best model tracking and comparison (NOW OPTIMIZED!)
+    - Best model tracking and comparison (OPTIMIZED)
     
     Args:
         data: Full dataset for training
@@ -410,7 +492,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
     # Enable fast evaluation by default if available
     use_fast_eval = getattr(args, 'use_fast_evaluation', True) and FAST_EVALUATION_AVAILABLE
     if use_fast_eval:
-        print("🚀 Using OPTIMIZED evaluation for model comparison")
+        print("✓ Using optimized evaluation for model comparison")
     else:
         print("⚠ Using standard evaluation")
     
@@ -649,3 +731,33 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         model = RecurrentPPO.load(best_model_path)
 
     return model
+
+# Convenience functions for easy access to optimized features
+def quick_model_evaluation(model_path: str, data: pd.DataFrame, args, 
+                          sample_size: int = 10000) -> Dict[str, Any]:
+    """Quick model evaluation using sampling for rapid testing."""
+    if FAST_EVALUATION_AVAILABLE:
+        return evaluate_model_quick(model_path, data, args, sample_size)
+    else:
+        # Use smaller subset with original method
+        subset_data = data.iloc[-sample_size:] if len(data) > sample_size else data
+        return _evaluate_model_on_dataset_original(model_path, subset_data, args)
+
+def parallel_model_comparison(model_paths: List[str], data: pd.DataFrame, args) -> Dict[str, Dict[str, Any]]:
+    """Compare multiple models in parallel."""
+    if FAST_EVALUATION_AVAILABLE:
+        return compare_models_parallel(model_paths, data, args)
+    else:
+        # Sequential comparison
+        results = {}
+        for model_path in model_paths:
+            results[model_path] = _evaluate_model_on_dataset_original(model_path, data, args)
+        return results
+
+def performance_benchmark(model_path: str, data: pd.DataFrame, args) -> Dict[str, Any]:
+    """Benchmark evaluation performance."""
+    if FAST_EVALUATION_AVAILABLE:
+        return benchmark_evaluation_methods(model_path, data, args)
+    else:
+        print("Fast evaluation not available - cannot benchmark")
+        return {}
