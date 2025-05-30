@@ -127,7 +127,7 @@ class FixedAdvancedFeatureCalculator:
         
         # Calculate VWAP
         vwap = df['cumulative_pv'] / df['cumulative_volume']
-        vwap = vwap.fillna(method='ffill').fillna(close[0])
+        vwap = vwap.ffill().fillna(close[0])
         
         # VWAP features
         vwap_distance = (close - vwap.values) / close
@@ -501,7 +501,7 @@ class FixedAdvancedFeatureCalculator:
         advanced_df = pd.DataFrame(advanced_features, index=index)
         
         # Fill any remaining NaN values
-        advanced_df = advanced_df.fillna(method='bfill').fillna(0)
+        advanced_df = advanced_df.ffill().fillna(0)
         
         print(f"✓ Advanced features calculated: {len(advanced_df.columns)} new features")
         return advanced_df
