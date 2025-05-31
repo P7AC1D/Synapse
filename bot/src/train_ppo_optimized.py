@@ -55,8 +55,8 @@ def main():
                       help='Use adaptive timestep reduction as model matures')
     parser.add_argument('--warm_start', action='store_true', default=True,
                       help='Continue training from previous iteration instead of starting fresh')
-    parser.add_argument('--early_stopping_patience', type=int, default=3,
-                      help='Stop training after N evaluations without improvement')
+    parser.add_argument('--early_stopping_patience', type=int, default=8,
+                      help='Stop training after N evaluations without improvement (increased for trading volatility)')
     parser.add_argument('--convergence_threshold', type=float, default=0.001,
                       help='Threshold for detecting model convergence')
     

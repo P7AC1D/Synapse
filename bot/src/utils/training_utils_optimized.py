@@ -239,31 +239,96 @@ def load_training_state(path: str) -> Tuple[int, str, Dict[str, Any]]:
     except (FileNotFoundError, json.JSONDecodeError):
         return 0, None, {}
 
-class EarlyStoppingCallback:
-    """Early stopping based on validation performance convergence."""
+class TradingAwareEarlyStoppingCallback:
+    """Trading-aware early stopping that handles market volatility and regime changes."""
     
-    def __init__(self, patience: int = 3, threshold: float = 0.001):
-        self.patience = patience
-        self.threshold = threshold
+    def __init__(self, patience: int = 15, min_iterations: int = 20, threshold: float = 0.005):
+        self.patience = patience  # Much more patient for trading
+        self.min_iterations = min_iterations  # Minimum iterations before early stopping
+        self.threshold = threshold  # Larger threshold for noisy trading data
         self.best_score = float('-inf')
         self.no_improvement_count = 0
         self.should_stop = False
+        self.score_history = []
+        self.trading_activity_history = []  # Track if model is still trading
+        self.iteration_count = 0
     
-    def update(self, score: float) -> bool:
+    def update(self, score: float, trading_metrics: dict = None) -> bool:
         """
-        Update with new score and return whether training should stop.
+        Trading-aware early stopping with multiple criteria.
+        
+        Args:
+            score: Validation performance score
+            trading_metrics: Dictionary with 'total_trades', 'win_rate', etc.
         
         Returns:
             True if training should stop early, False otherwise
         """
+        self.iteration_count += 1
+        self.score_history.append(score)
+        
+        # Track trading activity if provided
+        if trading_metrics:
+            trades = trading_metrics.get('total_trades', 0)
+            self.trading_activity_history.append(trades)
+        
+        # RULE 1: Never stop before minimum iterations (allow for initial volatility)
+        if self.iteration_count < self.min_iterations:
+            print(f"🕐 Early stopping disabled: {self.iteration_count}/{self.min_iterations} minimum iterations")
+            return False
+        
+        # RULE 2: Don't stop if model has completely stopped trading (needs more exploration)
+        if trading_metrics and trading_metrics.get('total_trades', 0) == 0:
+            print(f"⚠️ Model stopped trading - continuing to restore activity")
+            self.no_improvement_count = 0  # Reset counter when trading stops
+            return False
+        
+        # RULE 3: Check for score improvement with trading-appropriate threshold
         if score > self.best_score + self.threshold:
             self.best_score = score
             self.no_improvement_count = 0
+            print(f"📈 New best validation score: {score:.4f} (improvement: +{score - self.best_score + (score - self.best_score):.4f})")
         else:
             self.no_improvement_count += 1
+            print(f"📊 No significant improvement ({self.no_improvement_count}/{self.patience}): current={score:.4f}, best={self.best_score:.4f}")
         
+        # RULE 4: Advanced trend analysis - look for recovery patterns
+        if len(self.score_history) >= 6:
+            # Check if recent trend is improving
+            recent_scores = self.score_history[-3:]
+            older_scores = self.score_history[-6:-3]
+            recent_avg = sum(recent_scores) / len(recent_scores)
+            older_avg = sum(older_scores) / len(older_scores)
+            trend = recent_avg - older_avg
+            
+            if trend > self.threshold * 0.5:  # 50% of threshold for trend
+                print(f"📈 Positive trend detected (+{trend:.4f}) - resetting patience")
+                self.no_improvement_count = max(0, self.no_improvement_count - 2)  # Reduce counter
+                return False
+        
+        # RULE 5: Check for trading activity recovery
+        if len(self.trading_activity_history) >= 4:
+            recent_trades = sum(self.trading_activity_history[-2:]) / 2
+            older_trades = sum(self.trading_activity_history[-4:-2]) / 2
+            if recent_trades > older_trades * 1.2:  # 20% increase in trading
+                print(f"📊 Trading activity recovering ({recent_trades:.1f} vs {older_trades:.1f}) - continuing")
+                return False
+        
+        # RULE 6: Final early stopping decision
         if self.no_improvement_count >= self.patience:
+            # Last chance: check if we're in a potential recovery phase
+            if len(self.score_history) >= 3:
+                last_3_trend = (self.score_history[-1] - self.score_history[-3]) / 2
+                if last_3_trend > -self.threshold:  # Not getting significantly worse
+                    print(f"🤔 Borderline case - trend not severely negative ({last_3_trend:.4f})")
+                    if self.no_improvement_count < self.patience * 1.5:  # Allow 50% more patience
+                        return False
+            
             self.should_stop = True
+            print(f"🛑 Trading-aware early stopping triggered:")
+            print(f"   - {self.no_improvement_count} iterations without significant improvement")
+            print(f"   - Best score: {self.best_score:.4f}, Current: {score:.4f}")
+            print(f"   - Score history: {[f'{s:.3f}' for s in self.score_history[-5:]]}")
             return True
         
         return False
@@ -353,11 +418,10 @@ def train_walk_forward_optimized(data: pd.DataFrame, initial_window: int, step_s
     
     # Validate window and step sizes
     if initial_window < step_size * 3:  # Relaxed from 5 for speed
-        raise ValueError("Initial window should be at least 3x step size for OPTIMIZED training")
-    
-    # Initialize early stopping
-    early_stopping = EarlyStoppingCallback(
+        raise ValueError("Initial window should be at least 3x step size for OPTIMIZED training")    # Initialize TRADING-AWARE early stopping (designed for market volatility)
+    early_stopping = TradingAwareEarlyStoppingCallback(
         patience=args.early_stopping_patience,
+        min_iterations=max(10, args.early_stopping_patience // 2),  # Adaptive minimum
         threshold=args.convergence_threshold
     ) if args.early_stopping_patience > 0 else None
     
@@ -469,14 +533,13 @@ def train_walk_forward_optimized(data: pd.DataFrame, initial_window: int, step_s
                     seed=args.seed,
                     **model_kwargs
                 )
-                
-                # Set up OPTIMIZED callbacks
+                  # Set up OPTIMIZED callbacks
                 callbacks = [
-                    # Optimized exploration
+                    # FIXED: Better exploration for initial training
                     CustomEpsilonCallback(
-                        start_eps=0.8,  # Reduced for faster convergence
-                        end_eps=0.05,
-                        decay_timesteps=int(current_timesteps * 0.6),  # Faster decay
+                        start_eps=0.6,  # Moderate exploration for initial training
+                        end_eps=0.05,   # Maintain exploration
+                        decay_timesteps=int(current_timesteps * 0.7),  # Slower decay
                         iteration=iteration
                     ),
                     # Optimized evaluation
@@ -520,14 +583,13 @@ def train_walk_forward_optimized(data: pd.DataFrame, initial_window: int, step_s
                 
                 # Calculate base timesteps for this iteration
                 start_timesteps = iteration * base_timesteps
-                
-                # Set up OPTIMIZED callbacks for continued training
+                  # Set up OPTIMIZED callbacks for continued training
                 callbacks = [
-                    # Reduced exploration for faster convergence
+                    # FIXED: More balanced exploration for trading domain
                     CustomEpsilonCallback(
-                        start_eps=0.15 if iteration < 3 else 0.05,
-                        end_eps=0.01,
-                        decay_timesteps=int(current_timesteps * 0.5),  # Faster decay
+                        start_eps=0.25 if iteration < 5 else 0.15,  # Higher exploration early on
+                        end_eps=0.05,  # Maintain minimum exploration
+                        decay_timesteps=int(current_timesteps * 0.7),  # Slower decay
                         iteration=iteration
                     ),
                     # Optimized evaluation
@@ -622,19 +684,26 @@ def train_walk_forward_optimized(data: pd.DataFrame, initial_window: int, step_s
                     model = RecurrentPPO.load(best_model_path)
                     print("✓ Loaded OPTIMIZED best model from previous iterations")
                 else:
-                    print("⚠ No best model found - continuing with current model")
-            
-            # EARLY STOPPING check
+                    print("⚠ No best model found - continuing with current model")            # TRADING-AWARE early stopping check (designed for market volatility)
             if early_stopping:
-                # Get current model score for early stopping
+                # Get current model score AND trading metrics for early stopping
                 if os.path.exists(best_model_path):
                     from utils.training_utils import evaluate_model_on_dataset
                     current_metrics = evaluate_model_on_dataset(best_model_path, val_data, args, use_fast_eval)
-                    if current_metrics and early_stopping.update(current_metrics['score']):
-                        optimization_stats['early_stops'] += 1
-                        print(f"\n🛑 EARLY STOPPING triggered after {early_stopping.no_improvement_count} iterations without improvement")
-                        print(f"⚡ Saved {(total_iterations - iteration - 1) * state.get('avg_iteration_time', 0) / 60:.1f} minutes!")
-                        break
+                    if current_metrics:
+                        # Extract trading metrics for trading-aware early stopping
+                        trading_metrics = {
+                            'total_trades': current_metrics.get('total_trades', 0),
+                            'win_rate': current_metrics.get('win_rate', 0),
+                            'return': current_metrics.get('return', 0)
+                        }
+                        
+                        if early_stopping.update(current_metrics['score'], trading_metrics):
+                            optimization_stats['early_stops'] += 1
+                            print(f"\n🛑 TRADING-AWARE EARLY STOPPING triggered")
+                            print(f"💡 This considers market volatility and trading activity patterns")
+                            print(f"⚡ Saved {(total_iterations - iteration - 1) * state.get('avg_iteration_time', 0) / 60:.1f} minutes!")
+                            break
                 
             # Calculate iteration time and update OPTIMIZATION statistics
             iteration_time = time.time() - iteration_start_time
