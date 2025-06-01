@@ -47,9 +47,9 @@ def main():
                       help='Start training from random positions in the dataset')
     
     # OPTIMIZED TRAINING PARAMETERS
-    parser.add_argument('--total_timesteps', type=int, default=50000,
+    parser.add_argument('--total_timesteps', type=int, default=100000,
                       help='Base timesteps for training (reduced from 100K for speed)')
-    parser.add_argument('--min_timesteps', type=int, default=15000,
+    parser.add_argument('--min_timesteps', type=int, default=50000,
                       help='Minimum timesteps per iteration (for adaptive reduction)')
     parser.add_argument('--adaptive_timesteps', action='store_true', default=True,
                       help='Use adaptive timestep reduction as model matures')
