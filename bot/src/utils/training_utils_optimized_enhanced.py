@@ -146,12 +146,12 @@ class ValidationAwareEarlyStoppingCallback:
         self.iteration_count += 1
         self.validation_history.append(validation_score)
         self.training_history.append(training_score)
-        
-        # Calculate performance gap
-        if training_score != 0:
-            gap = abs(training_score - validation_score) / abs(training_score)
+          # Calculate performance gap using FIXED logic
+        # Only flag as overfitting if training >> validation (not the reverse)
+        if training_score > validation_score and abs(training_score) > 1e-6:
+            gap = (training_score - validation_score) / abs(training_score)
         else:
-            gap = abs(training_score - validation_score)
+            gap = 0.0  # No overfitting concern when validation >= training
         self.gap_history.append(gap)
         
         print(f"\n📊 VALIDATION MONITORING (Iteration {self.iteration_count}):")
@@ -159,27 +159,66 @@ class ValidationAwareEarlyStoppingCallback:
         print(f"   Validation Score: {validation_score:.4f}")
         print(f"   Performance Gap: {gap:.1%}")
         
+        # Enhanced status messaging for healthy vs concerning scenarios
+        if validation_score >= training_score:
+            print(f"✅ EXCELLENT GENERALIZATION: Validation outperforms training!")
+            print(f"   This indicates healthy model generalization, not overfitting.")
+        elif gap < 0.1:
+            print(f"✅ HEALTHY PERFORMANCE: Training/validation gap is minimal ({gap:.1%})")
+        elif gap < self.max_gap_threshold:
+            print(f"⚠️ MODERATE GAP: Training/validation gap is {gap:.1%} (threshold: {self.max_gap_threshold:.1%})")
+        else:
+            print(f"🚨 CONCERNING GAP: Training significantly outperforms validation ({gap:.1%})")
+        
         # RULE 1: Never stop before minimum iterations
         if self.iteration_count < self.min_iterations:
             print(f"🕐 Anti-overfitting: {self.iteration_count}/{self.min_iterations} minimum iterations")
-            return False
-        
-        # RULE 2: Check for excessive training/validation gap (OVERFITTING DETECTION)
+            return False        # RULE 2: Check for excessive training/validation gap (OVERFITTING DETECTION)
         if gap > self.max_gap_threshold:
-            self.overfitting_warnings += 1
-            print(f"⚠️ OVERFITTING WARNING #{self.overfitting_warnings}: Gap {gap:.1%} > {self.max_gap_threshold:.1%}")
-            print(f"   Training: {training_score:.4f}, Validation: {validation_score:.4f}")
+            # Special case: Both training and validation are profitable (positive scores)
+            # In trading, this indicates both strategies work, just different risk profiles
+            both_profitable = training_score > 0 and validation_score > 0
+            
+            if both_profitable and validation_score > 0.03:  # Validation is decently profitable (>3%)
+                print(f"💰 BOTH STRATEGIES PROFITABLE: Training {training_score:.1%}, Validation {validation_score:.1%}")
+                print(f"   Gap {gap:.1%} is large but both strategies are making money - continuing training")
+                # Still issue a warning but don't be as aggressive
+                if gap > self.max_gap_threshold * 1.5:  # Only escalate if gap is very extreme
+                    self.overfitting_warnings += 1
+                    print(f"⚠️ MILD WARNING #{self.overfitting_warnings}: Very large gap despite profitability")
+            else:
+                self.overfitting_warnings += 1
+                print(f"⚠️ OVERFITTING WARNING #{self.overfitting_warnings}: Gap {gap:.1%} > {self.max_gap_threshold:.1%}")
+                print(f"   Training: {training_score:.4f}, Validation: {validation_score:.4f}")
+                
+                # Use intelligent detection for additional confirmation
+                is_overfitting, reason = self._detect_overfitting_pattern()
+                if is_overfitting:
+                    print(f"🔍 PATTERN ANALYSIS: {reason}")
+                    self.overfitting_warnings += 1  # Extra penalty for confirmed patterns
             
             if self.overfitting_warnings >= self.max_overfitting_warnings:
                 print(f"🛑 STOPPING: Excessive overfitting detected!")
                 print(f"   - {self.overfitting_warnings} consecutive gap warnings")
                 print(f"   - Final gap: {gap:.1%} (threshold: {self.max_gap_threshold:.1%})")
+                if 'is_overfitting' in locals() and is_overfitting:
+                    print(f"   - Confirmed pattern: {reason}")
                 return True
         else:
-            # Reset warnings if gap improves
+            # Reset warnings if gap improves and check if we're actually in a good state
             if self.overfitting_warnings > 0:
-                self.overfitting_warnings = max(0, self.overfitting_warnings - 1)
-                print(f"✓ Gap improved - reduced warnings to {self.overfitting_warnings}")
+                is_overfitting, reason = self._detect_overfitting_pattern()
+                if not is_overfitting:
+                    self.overfitting_warnings = max(0, self.overfitting_warnings - 1)
+                    print(f"✓ Gap improved and no overfitting patterns - reduced warnings to {self.overfitting_warnings}")
+                else:
+                    print(f"⚠️ Gap improved but pattern persists: {reason}")
+            
+            # Check for subtle overfitting even with acceptable gap
+            is_overfitting, reason = self._detect_overfitting_pattern()
+            if is_overfitting and gap > self.max_gap_threshold * 0.6:
+                print(f"🔍 SUBTLE OVERFITTING DETECTED: {reason}")
+                self.overfitting_warnings += 1
         
         # RULE 3: Check validation performance improvement
         validation_improved = validation_score > self.best_validation_score
@@ -190,22 +229,35 @@ class ValidationAwareEarlyStoppingCallback:
         else:
             self.no_improvement_count += 1
             print(f"📊 No validation improvement ({self.no_improvement_count}/{self.patience})")
-        
-        # RULE 4: Check for validation degradation while training improves
-        if len(self.validation_history) >= 3:
-            recent_val_trend = np.mean(self.validation_history[-2:]) - np.mean(self.validation_history[-4:-2])
-            recent_train_trend = np.mean(self.training_history[-2:]) - np.mean(self.training_history[-4:-2])
+          # RULE 4: Enhanced trend-based overfitting detection (less aggressive)
+        if len(self.validation_history) >= 4:
+            # Use longer history for more stable trends
+            recent_val_trend = np.mean(self.validation_history[-3:]) - np.mean(self.validation_history[-6:-3]) if len(self.validation_history) >= 6 else 0
+            recent_train_trend = np.mean(self.training_history[-3:]) - np.mean(self.training_history[-6:-3]) if len(self.training_history) >= 6 else 0
             
-            # If training improving but validation degrading significantly
-            if recent_train_trend > 0.05 and recent_val_trend < -self.degradation_threshold:
-                print(f"⚠️ OVERFITTING PATTERN DETECTED:")
-                print(f"   Training trend: +{recent_train_trend:.4f}")
-                print(f"   Validation trend: {recent_val_trend:.4f}")
-                self.overfitting_warnings += 2  # More severe warning
+            # More conservative thresholds to reduce false positives
+            strong_train_improvement = recent_train_trend > 0.08  # Increased from 0.05
+            significant_val_degradation = recent_val_trend < -self.degradation_threshold * 1.5  # Increased threshold
+            
+            # Additional check: ensure this isn't just normal variance
+            val_variance = np.var(self.validation_history[-4:]) if len(self.validation_history) >= 4 else 0
+            is_high_variance = val_variance > 0.02  # Don't penalize during high variance periods
+            
+            # Only flag if we have strong evidence of overfitting
+            if strong_train_improvement and significant_val_degradation and not is_high_variance:
+                print(f"⚠️ STRONG OVERFITTING PATTERN DETECTED:")
+                print(f"   Training trend: +{recent_train_trend:.4f} (strong improvement)")
+                print(f"   Validation trend: {recent_val_trend:.4f} (significant degradation)")
+                print(f"   Validation variance: {val_variance:.4f} (low variance confirms pattern)")
+                self.overfitting_warnings += 2  # More severe warning for confirmed patterns
                 
                 if self.overfitting_warnings >= self.max_overfitting_warnings:
-                    print(f"🛑 STOPPING: Training/validation divergence!")
+                    print(f"🛑 STOPPING: Strong training/validation divergence confirmed!")
                     return True
+            elif strong_train_improvement and significant_val_degradation:
+                print(f"📊 POTENTIAL OVERFITTING (high variance period):")
+                print(f"   Training trend: +{recent_train_trend:.4f}, Validation trend: {recent_val_trend:.4f}")
+                print(f"   Validation variance: {val_variance:.4f} - monitoring but not penalizing")
         
         # RULE 5: Check trading activity (ensure model still trades)
         if validation_metrics and validation_metrics.get('total_trades', 0) == 0:
@@ -228,6 +280,59 @@ class ValidationAwareEarlyStoppingCallback:
                 return False
         
         return False
+    
+    def _detect_overfitting_pattern(self) -> tuple[bool, str]:
+        """
+        Intelligent overfitting detection using multiple indicators.
+        
+        Returns:
+            (is_overfitting, reason) tuple
+        """
+        if len(self.validation_history) < 4:
+            return False, "Insufficient data"
+        
+        # Pattern 1: Classic overfitting - training improves, validation degrades
+        if len(self.training_history) >= 4:
+            train_trend = np.mean(self.training_history[-2:]) - np.mean(self.training_history[-4:-2])
+            val_trend = np.mean(self.validation_history[-2:]) - np.mean(self.validation_history[-4:-2])
+            
+            if train_trend > 0.02 and val_trend < -0.02:
+                return True, f"Classic overfitting: training improving (+{train_trend:.3f}), validation degrading ({val_trend:.3f})"
+        
+        # Pattern 2: Validation volatility increase (model becoming unstable)
+        if len(self.validation_history) >= 6:
+            early_volatility = np.std(self.validation_history[:3])
+            recent_volatility = np.std(self.validation_history[-3:])
+            
+            if recent_volatility > early_volatility * 2 and recent_volatility > 0.05:
+                return True, f"Validation instability: volatility increased from {early_volatility:.3f} to {recent_volatility:.3f}"
+          # Pattern 3: Persistent large gap without improvement (but be conservative for profitable cases)
+        recent_gaps = self.gap_history[-3:] if len(self.gap_history) >= 3 else []
+        if len(recent_gaps) >= 3 and all(g > self.max_gap_threshold * 0.8 for g in recent_gaps):
+            avg_gap = np.mean(recent_gaps)
+            
+            # Check if both strategies are profitable
+            recent_training = self.training_history[-3:] if len(self.training_history) >= 3 else []
+            recent_validation = self.validation_history[-3:] if len(self.validation_history) >= 3 else []
+            
+            if (len(recent_training) >= 3 and len(recent_validation) >= 3 and
+                all(t > 0.02 for t in recent_training) and all(v > 0.02 for v in recent_validation)):
+                # Both consistently profitable (>2%) - be more lenient
+                if avg_gap > self.max_gap_threshold * 1.8:  # Only flag if gap is extremely large
+                    return True, f"Extreme persistent gap despite profitability: {avg_gap:.1%} for {len(recent_gaps)} iterations"
+                else:
+                    return False, f"Large gap but both strategies profitable: {avg_gap:.1%}"
+            else:
+                return True, f"Persistent large gap: {avg_gap:.1%} for {len(recent_gaps)} iterations"
+        
+        # Pattern 4: Validation score collapse
+        if len(self.validation_history) >= 4:
+            peak_val = max(self.validation_history)
+            current_val = self.validation_history[-1]
+            if peak_val > 0 and current_val < peak_val * 0.7:  # 30% drop from peak
+                return True, f"Validation collapse: dropped from {peak_val:.3f} to {current_val:.3f}"
+        
+        return False, "No overfitting pattern detected"
     
     def get_summary(self) -> Dict[str, Any]:
         """Get summary of early stopping decisions."""

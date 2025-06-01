@@ -44,11 +44,22 @@ ANTI_OVERFITTING_ARGS = {
 # Quick start configuration with maximum anti-overfitting
 CONSERVATIVE_ARGS = {
     **ANTI_OVERFITTING_ARGS,
-    'total_timesteps': 20000,      # Even more conservative
-    'min_timesteps': 10000,        # Lower minimum
-    'early_stopping_patience': 3,  # Very aggressive early stopping
-    'max_train_val_gap': 0.2,      # Stricter gap limit (20%)
+    'total_timesteps': 25000,      # Slightly more training (was 20k)
+    'min_timesteps': 12000,        # Lower minimum (was 10k)
+    'early_stopping_patience': 4,  # Moderate patience (was 3)
+    'max_train_val_gap': 0.15,     # Very strict gap limit (15% was 20%)
     'validation_size': 0.3,        # Even larger validation set
+}
+
+# Ultra-conservative configuration for severe overfitting cases
+ULTRA_CONSERVATIVE_ARGS = {
+    **ANTI_OVERFITTING_ARGS,
+    'total_timesteps': 15000,      # Very conservative training
+    'min_timesteps': 8000,         # Lower minimum
+    'early_stopping_patience': 3,  # Reasonable patience (was 2 - too aggressive)
+    'max_train_val_gap': 0.25,     # Reasonable gap limit (25% - was 10% too strict)
+    'validation_size': 0.35,       # Maximum validation set
+    'learning_rate': 1e-4,         # Even lower learning rate
 }
 
 # Experimental configuration with moderate anti-overfitting
@@ -66,12 +77,14 @@ def get_anti_overfitting_args(profile: str = 'default') -> dict:
     Get anti-overfitting configuration based on profile.
     
     Args:
-        profile: 'conservative', 'default', or 'balanced'
+        profile: 'ultra_conservative', 'conservative', 'default', or 'balanced'
         
     Returns:
         Dictionary of training arguments optimized for preventing overfitting
     """
-    if profile == 'conservative':
+    if profile == 'ultra_conservative':
+        return ULTRA_CONSERVATIVE_ARGS.copy()
+    elif profile == 'conservative':
         return CONSERVATIVE_ARGS.copy()
     elif profile == 'balanced':
         return BALANCED_ARGS.copy()
@@ -168,6 +181,6 @@ def print_configuration_summary(profile: str = 'default'):
 if __name__ == "__main__":
     # Example usage
     print("Available anti-overfitting profiles:")
-    for profile in ['conservative', 'default', 'balanced']:
+    for profile in ['ultra_conservative', 'conservative', 'default', 'balanced']:
         print_configuration_summary(profile)
         print("-" * 60)

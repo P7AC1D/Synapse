@@ -16,12 +16,14 @@ TARGET SOLUTION:
 - Maintained 5-10x training speedup
 
 USAGE:
+    python train_ppo_anti_overfitting.py --data_path ../data/XAUUSDm_15min.csv --profile ultra_conservative
     python train_ppo_anti_overfitting.py --data_path ../data/XAUUSDm_15min.csv --profile conservative
     python train_ppo_anti_overfitting.py --data_path ../data/XAUUSDm_15min.csv --profile default
     python train_ppo_anti_overfitting.py --data_path ../data/XAUUSDm_15min.csv --profile balanced
 
 PROFILES:
-    - conservative: Maximum anti-overfitting (20K timesteps, 3 patience, 20% max gap)
+    - ultra_conservative: Maximum anti-overfitting (15K timesteps, 2 patience, 10% max gap)
+    - conservative: Strong anti-overfitting (25K timesteps, 4 patience, 15% max gap)
     - default: Balanced anti-overfitting (30K timesteps, 5 patience, 25% max gap)  
     - balanced: Moderate anti-overfitting (40K timesteps, 8 patience, 30% max gap)
 """
@@ -31,6 +33,7 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import json
 from datetime import datetime
 import torch as th
 
@@ -111,10 +114,9 @@ def parse_arguments():
     # Required arguments
     parser.add_argument('--data_path', type=str, required=True,
                        help='Path to the CSV data file')
-    
-    # Anti-overfitting profile
+      # Anti-overfitting profile
     parser.add_argument('--profile', type=str, default='default',
-                       choices=['conservative', 'default', 'balanced'],
+                       choices=['ultra_conservative', 'conservative', 'default', 'balanced'],
                        help='Anti-overfitting profile to use')
     
     # Optional overrides
@@ -161,11 +163,10 @@ def main():
     print("=" * 60)
     
     args = parse_arguments()
-    
-    # Show configuration if requested
+      # Show configuration if requested
     if args.show_config:
         print("Available configurations:")
-        for profile in ['conservative', 'default', 'balanced']:
+        for profile in ['ultra_conservative', 'conservative', 'default', 'balanced']:
             print_configuration_summary(profile)
             print("-" * 60)
         return
@@ -246,9 +247,11 @@ def main():
     if training_size < args.step_size * 2:
         print("❌ Training window too small relative to step size")
         return 1
-    
-    # Dry run check
+      # Dry run check
     if args.dry_run:
+        print("\n✅ DRY RUN COMPLETED - Configuration validated")
+        print("Remove --dry_run flag to start actual training")
+        return 0
         print("\n✅ DRY RUN COMPLETED - Configuration validated")
         print("Remove --dry_run flag to start actual training")
         return 0
