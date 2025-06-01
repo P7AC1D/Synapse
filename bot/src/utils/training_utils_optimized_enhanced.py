@@ -465,8 +465,7 @@ def train_walk_forward_enhanced(data: pd.DataFrame, initial_window: int, step_si
             
             # ENHANCED model evaluation on both training and validation
             print("\n📊 Evaluating model performance on both datasets...")
-            
-            # Evaluate on training data
+              # Evaluate on training data
             train_env_eval = Monitor(TradingEnv(train_data, **{**env_params, 'random_start': False}))
             training_results = None
             try:
@@ -474,7 +473,7 @@ def train_walk_forward_enhanced(data: pd.DataFrame, initial_window: int, step_si
                 if os.path.exists(f"../results/{args.seed}/curr_best_model.zip"):
                     training_results = evaluate_model_on_dataset(
                         f"../results/{args.seed}/curr_best_model.zip", 
-                        train_data, args, use_fast_eval=FAST_EVALUATION_AVAILABLE
+                        train_data, args, use_fast_evaluation=FAST_EVALUATION_AVAILABLE
                     )
             except Exception as e:
                 print(f"⚠️ Training evaluation error: {e}")
@@ -485,7 +484,7 @@ def train_walk_forward_enhanced(data: pd.DataFrame, initial_window: int, step_si
                 if os.path.exists(f"../results/{args.seed}/curr_best_model.zip"):
                     validation_results = evaluate_model_on_dataset(
                         f"../results/{args.seed}/curr_best_model.zip", 
-                        val_data, args, use_fast_eval=FAST_EVALUATION_AVAILABLE
+                        val_data, args, use_fast_evaluation=FAST_EVALUATION_AVAILABLE
                     )
             except Exception as e:
                 print(f"⚠️ Validation evaluation error: {e}")

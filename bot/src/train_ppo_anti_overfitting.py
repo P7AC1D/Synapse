@@ -71,12 +71,15 @@ def load_and_validate_data(data_path: str) -> pd.DataFrame:
         missing_columns = [col for col in required_columns if col not in data.columns]
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
-        
-        # Convert timestamp if present
+          # Convert timestamp/time column if present
         if 'timestamp' in data.columns:
             data['timestamp'] = pd.to_datetime(data['timestamp'])
             data = data.set_index('timestamp')
             print(f"✓ Timestamp index set: {data.index[0]} to {data.index[-1]}")
+        elif 'time' in data.columns:
+            data['time'] = pd.to_datetime(data['time'])
+            data = data.set_index('time')
+            print(f"✓ Time index set: {data.index[0]} to {data.index[-1]}")
         
         # Check for NaN values
         nan_count = data.isnull().sum().sum()

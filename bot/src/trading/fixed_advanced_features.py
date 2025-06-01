@@ -90,8 +90,7 @@ class FixedAdvancedFeatureCalculator:
         stoch_cross = np.where(stoch_k.values > stoch_d.values, 1, -1)
         stoch_overbought = np.where(stoch_k.values > 80, 1, -1)  # Fixed: [-1, 1] range
         stoch_oversold = np.where(stoch_k.values < 20, 1, -1)    # Fixed: [-1, 1] range
-        
-        # Normalize
+          # Normalize
         stoch_k_norm = (stoch_k.values - 50) / 50  # Convert to [-1, 1]
         stoch_d_norm = (stoch_d.values - 50) / 50
         stoch_cross_norm = stoch_cross.astype(np.float32)
@@ -104,37 +103,61 @@ class FixedAdvancedFeatureCalculator:
             'stoch_oversold': stoch_oversold.astype(np.float32)
         }
     
-    def calculate_vwap_features(self, high: np.ndarray, low: np.ndarray, 
+    def calculate_vwap_features(self, high: np.ndarray, low: np.ndarray,
                                close: np.ndarray, volume: np.ndarray,
                                index: pd.DatetimeIndex) -> Dict[str, np.ndarray]:
         """Calculate VWAP and related features."""
         # Typical price
         typical_price = (high + low + close) / 3
         
-        # Daily VWAP calculation
-        df = pd.DataFrame({
-            'typical_price': typical_price,
-            'volume': volume,
-            'close': close
-        }, index=index)
+        # Ensure we have a proper DatetimeIndex
+        if not isinstance(index, pd.DatetimeIndex):
+            # If index is not DatetimeIndex, create a simple VWAP without date grouping
+            print("⚠️ Warning: Index is not DatetimeIndex, using simple VWAP calculation")
+            
+            # Simple cumulative VWAP
+            cumulative_pv = np.cumsum(typical_price * volume)
+            cumulative_volume = np.cumsum(volume)
+            
+            # Avoid division by zero
+            vwap = np.divide(cumulative_pv, cumulative_volume, 
+                           out=np.zeros_like(cumulative_pv), 
+                           where=cumulative_volume != 0)
+            vwap = np.where(vwap == 0, close[0], vwap)
+            
+        else:
+            # Daily VWAP calculation with proper date grouping
+            df = pd.DataFrame({
+                'typical_price': typical_price,
+                'volume': volume,
+                'close': close
+            }, index=index)
+              # Group by date for daily VWAP
+            df['date'] = df.index.date
+            df['cumulative_volume'] = df.groupby('date')['volume'].cumsum()
+            df['cumulative_pv'] = df.groupby('date').apply(
+                lambda x: (x['typical_price'] * x['volume']).cumsum(),
+                include_groups=False
+            ).values
+            
+            # Calculate VWAP
+            vwap = df['cumulative_pv'] / df['cumulative_volume']
+            vwap = vwap.ffill().fillna(close[0]).values
+          # VWAP features
+        vwap_distance = (close - vwap) / close
+        vwap_trend = np.diff(vwap, prepend=vwap[0])
         
-        # Group by date for daily VWAP
-        df['date'] = df.index.date
-        df['cumulative_volume'] = df.groupby('date')['volume'].cumsum()
-        df['cumulative_pv'] = df.groupby('date').apply(
-            lambda x: (x['typical_price'] * x['volume']).cumsum()
-        ).values
-        
-        # Calculate VWAP
-        vwap = df['cumulative_pv'] / df['cumulative_volume']
-        vwap = vwap.ffill().fillna(close[0])
-        
-        # VWAP features
-        vwap_distance = (close - vwap.values) / close
-        vwap_trend = np.diff(vwap.values, prepend=vwap.values[0])
-        vwap_volume_ratio = volume / (df.groupby('date')['volume'].transform('mean'))
-        
-        # Normalize
+        # Volume ratio calculation
+        if isinstance(index, pd.DatetimeIndex):
+            # Use date-based grouping for volume ratio
+            df_temp = pd.DataFrame({'volume': volume}, index=index)
+            df_temp['date'] = df_temp.index.date
+            vwap_volume_ratio = volume / (df_temp.groupby('date')['volume'].transform('mean'))
+        else:
+            # Use rolling window for volume ratio
+            volume_mean = pd.Series(volume).rolling(window=20, min_periods=1).mean()
+            vwap_volume_ratio = volume / volume_mean
+          # Normalize
         vwap_distance_norm = self._normalize_feature(vwap_distance, method='robust')
         vwap_trend_norm = self._normalize_feature(vwap_trend, method='robust')
         vwap_volume_ratio_norm = self._normalize_feature(vwap_volume_ratio, method='robust')
@@ -147,6 +170,19 @@ class FixedAdvancedFeatureCalculator:
     
     def calculate_session_features(self, index: pd.DatetimeIndex) -> Dict[str, np.ndarray]:
         """Calculate session-based features for XAU/USD."""
+        
+        if not isinstance(index, pd.DatetimeIndex):
+            # If index is not DatetimeIndex, return neutral session features
+            print("⚠️ Warning: Index is not DatetimeIndex, using neutral session features")
+            length = len(index)
+            return {
+                'asian_session': np.zeros(length),
+                'london_session': np.zeros(length),
+                'ny_session': np.zeros(length),
+                'overlap_session': np.zeros(length),
+                'session_premium': np.zeros(length)
+            }
+        
         hours = index.hour
         
         # Session indicators
