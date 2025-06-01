@@ -34,8 +34,8 @@ class TradingEnv(gym.Env, EzPickle):
             return self.metrics.balance
         return self.initial_balance  # Fallback before metrics initialization
         
-    def __init__(self, data: pd.DataFrame, initial_balance: float = 10000,
-                 balance_per_lot: float = 1000.0, random_start: bool = False,
+    def __init__(self, data: pd.DataFrame, initial_balance: float = 500.0,
+                 balance_per_lot: float = 500.0, random_start: bool = False,
                  predict_mode: bool = False, currency_conversion: Optional[float] = None,
                  point_value: float = 0.001,
                  min_lots: float = 0.01, max_lots: float = 200.0,
