@@ -125,6 +125,20 @@ def parse_arguments():
     parser.add_argument('--step_size', type=int, default=100,
                        help='Step size for walk-forward optimization')
     
+    # Trading environment parameters (for compatibility)
+    parser.add_argument('--initial_balance', type=float, default=None,
+                       help='Initial balance for trading (overrides profile setting)')
+    parser.add_argument('--balance_per_lot', type=float, default=None,
+                       help='Account balance required per 0.01 lot (overrides profile setting)')
+    parser.add_argument('--point_value', type=float, default=None,
+                       help='Value of one price point movement (overrides profile setting)')
+    parser.add_argument('--min_lots', type=float, default=None,
+                       help='Minimum lot size (overrides profile setting)')
+    parser.add_argument('--max_lots', type=float, default=None,
+                       help='Maximum lot size (overrides profile setting)')
+    parser.add_argument('--contract_size', type=float, default=None,
+                       help='Standard contract size (overrides profile setting)')
+    
     # Performance options
     parser.add_argument('--show_config', action='store_true',
                        help='Show configuration and exit')
@@ -168,6 +182,31 @@ def main():
     # Override with command line arguments
     config_args.seed = args.seed
     config_args.device = device
+    
+    # Apply trading parameter overrides if provided
+    if args.initial_balance is not None:
+        config_args.initial_balance = args.initial_balance
+        print(f"🔧 Override: initial_balance = {args.initial_balance}")
+    
+    if args.balance_per_lot is not None:
+        config_args.balance_per_lot = args.balance_per_lot
+        print(f"🔧 Override: balance_per_lot = {args.balance_per_lot}")
+    
+    if args.point_value is not None:
+        config_args.point_value = args.point_value
+        print(f"🔧 Override: point_value = {args.point_value}")
+    
+    if args.min_lots is not None:
+        config_args.min_lots = args.min_lots
+        print(f"🔧 Override: min_lots = {args.min_lots}")
+    
+    if args.max_lots is not None:
+        config_args.max_lots = args.max_lots
+        print(f"🔧 Override: max_lots = {args.max_lots}")
+    
+    if args.contract_size is not None:
+        config_args.contract_size = args.contract_size
+        print(f"🔧 Override: contract_size = {args.contract_size}")
     
     # Apply any manual overrides
     if args.total_timesteps:
