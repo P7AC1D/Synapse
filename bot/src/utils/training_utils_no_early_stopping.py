@@ -56,6 +56,100 @@ from utils.training_utils_optimized_enhanced import (
 # Import the environment cache instance
 from utils.training_utils_optimized import _env_cache
 
+# 🚀 PHASE 2: ENHANCED MODEL CONFIGURATION (16x LSTM Capacity)
+POLICY_KWARGS_PHASE2_NO_EARLY_STOPPING = {
+    "optimizer_class": th.optim.AdamW,
+    "lstm_hidden_size": 512,              # Phase 2: 4x increase (128→512)
+    "n_lstm_layers": 4,                   # Phase 2: 4x increase (1→4)
+    "shared_lstm": False,                 # Separate LSTM architectures
+    "enable_critic_lstm": True,           # Enable LSTM for value estimation
+    "net_arch": {
+        "pi": [512, 256, 128],            # Phase 2: Enhanced policy network
+        "vf": [512, 256, 128]             # Phase 2: Enhanced value network
+    },
+    "activation_fn": th.nn.Mish,          # Better activation function
+    "optimizer_kwargs": {
+        "eps": 1e-5,
+        "weight_decay": 1e-4              # Enhanced regularization
+    }
+}
+
+# 🚀 PHASE 2: ENHANCED TRAINING PARAMETERS (Compatible with larger model)
+MODEL_KWARGS_PHASE2_NO_EARLY_STOPPING = {
+    **MODEL_KWARGS_ANTI_OVERFITTING,
+    "learning_rate": 3e-4,               # Phase 2: Lower LR for larger model
+    "n_steps": 1024,                     # Phase 2: Longer sequences for 4-layer LSTM
+    "batch_size": 512,                   # Phase 2: Larger batch for stability
+    "gamma": 0.995,                      # Phase 2: Higher gamma for complex patterns
+    "gae_lambda": 0.98,                  # Higher lambda for advantage estimation
+    "clip_range": 0.15,                  # Phase 2: Moderate clipping for larger model
+    "clip_range_vf": 0.15,               # Match policy clipping
+    "ent_coef": 0.03,                    # Phase 2: Balanced exploration
+    "vf_coef": 0.5,                      # Phase 2: Balanced value learning
+    "max_grad_norm": 0.5,                # Conservative gradient clipping
+    "n_epochs": 10,                      # Phase 2: Optimal for larger model
+}
+
+def get_phase2_no_early_stopping_config(enhancement_level="phase2"):
+    """
+    Get Phase 2 configuration for no early stopping training.
+    
+    Args:
+        enhancement_level: "phase2" (16x), "conservative" (4x), or "baseline" (1x)
+    
+    Returns:
+        tuple: (policy_kwargs, model_kwargs)
+    """
+    if enhancement_level == "phase2":
+        print("🚀 Using Phase 2 Configuration (NO EARLY STOPPING):")
+        print("   🧠 LSTM: 4 layers × 512 units (16x capacity vs baseline)")
+        print("   🎯 Networks: 512→256→128 architecture")
+        print("   🔄 Optimizer: AdamW with enhanced regularization")
+        print("   📊 Training: Optimized for complex patterns + full WFO")
+        print("   🚫 Early Stopping: DISABLED for complete training cycles")
+        return POLICY_KWARGS_PHASE2_NO_EARLY_STOPPING, MODEL_KWARGS_PHASE2_NO_EARLY_STOPPING
+    
+    elif enhancement_level == "conservative":
+        conservative_policy = {
+            **POLICY_KWARGS_PHASE2_NO_EARLY_STOPPING,
+            "lstm_hidden_size": 256,
+            "n_lstm_layers": 2,
+            "net_arch": {"pi": [256, 128, 64], "vf": [256, 128, 64]}
+        }
+        conservative_model = {
+            **MODEL_KWARGS_ANTI_OVERFITTING,
+            "learning_rate": 5e-4,
+            "n_steps": 512,
+            "batch_size": 256,
+            "n_epochs": 12
+        }
+        print("📊 Using Conservative Configuration (NO EARLY STOPPING):")
+        print("   🧠 LSTM: 2 layers × 256 units (4x capacity)")
+        print("   🚫 Early Stopping: DISABLED")
+        return conservative_policy, conservative_model
+    
+    else:  # baseline
+        baseline_policy = {
+            "optimizer_class": th.optim.Adam,
+            "lstm_hidden_size": 128,
+            "n_lstm_layers": 1,
+            "shared_lstm": True,
+            "enable_critic_lstm": True,
+            "net_arch": [dict(pi=[64], vf=[64])],
+            "activation_fn": th.nn.ReLU,
+        }
+        baseline_model = {
+            **MODEL_KWARGS_ANTI_OVERFITTING,
+            "learning_rate": 3e-4,
+            "n_steps": 256,
+            "batch_size": 128,
+            "n_epochs": 4
+        }
+        print("📋 Using Baseline Configuration (NO EARLY STOPPING):")
+        print("   🧠 LSTM: 1 layer × 128 units (original)")
+        print("   🚫 Early Stopping: DISABLED")
+        return baseline_policy, baseline_model
+
 def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
     Walk-forward training with NO EARLY STOPPING to allow full WFO cycles.
@@ -219,18 +313,26 @@ def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int
                 
                 # Merge enhanced hyperparameters directly (they're a flat dict)
                 model_kwargs = {**MODEL_KWARGS_ANTI_OVERFITTING, **enhanced_params}
-                
-                # Initialize new model
+                  # Initialize new model with PHASE 2 CONFIGURATION
                 model = RecurrentPPO(
                     "MlpLstmPolicy",
                     train_env,
                     policy_kwargs={
-                        'net_arch': [256, 256],  # Enhanced architecture
-                        'lstm_hidden_size': 256,
-                        'n_lstm_layers': 2,
+                        # 🚀 PHASE 2: 16x LSTM Capacity (4 layers × 512 units)
+                        'optimizer_class': th.optim.AdamW,
+                        'lstm_hidden_size': 512,        # Phase 2: 4x increase (128→512)
+                        'n_lstm_layers': 4,             # Phase 2: 4x increase (1→4)
                         'shared_lstm': False,
                         'enable_critic_lstm': True,
-                        'lstm_kwargs': {'dropout': 0.1}  # Regularization
+                        'net_arch': {
+                            'pi': [512, 256, 128],      # Phase 2: Enhanced policy network
+                            'vf': [512, 256, 128]       # Phase 2: Enhanced value network
+                        },
+                        'activation_fn': th.nn.Mish,   # Better activation function
+                        'optimizer_kwargs': {
+                            'eps': 1e-5,
+                            'weight_decay': 1e-4,       # Enhanced regularization
+                        }
                     },
                     verbose=0,
                     device=getattr(args, 'device', 'auto'),
