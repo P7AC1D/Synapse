@@ -90,6 +90,218 @@ MODEL_KWARGS_PHASE2_NO_EARLY_STOPPING = {
     "n_epochs": 10,                      # Phase 2: Optimal for larger model
 }
 
+# ==================== CHECKPOINT UTILITIES ====================
+
+def list_checkpoints(results_dir: str) -> List[Dict[str, Any]]:
+    """
+    List all available checkpoints in the results directory.
+    
+    Args:
+        results_dir: Path to results directory (e.g., "../results/1002")
+        
+    Returns:
+        List of checkpoint info dictionaries
+    """
+    checkpoints_dir = os.path.join(results_dir, "checkpoints")
+    if not os.path.exists(checkpoints_dir):
+        return []
+    
+    checkpoints = []
+    for file in os.listdir(checkpoints_dir):
+        if file.startswith("model_iter_") and file.endswith(".zip"):
+            iteration = int(file.replace("model_iter_", "").replace(".zip", ""))
+            metrics_file = os.path.join(checkpoints_dir, f"metrics_iter_{iteration}.json")
+            
+            checkpoint_info = {
+                "iteration": iteration,
+                "model_path": os.path.join(checkpoints_dir, file),
+                "metrics_path": metrics_file if os.path.exists(metrics_file) else None,
+                "file_size_mb": os.path.getsize(os.path.join(checkpoints_dir, file)) / (1024*1024)
+            }
+            
+            # Load metrics if available
+            if checkpoint_info["metrics_path"]:
+                try:
+                    with open(checkpoint_info["metrics_path"], 'r') as f:
+                        metrics = json.load(f)
+                    checkpoint_info["metrics"] = metrics
+                except Exception:
+                    checkpoint_info["metrics"] = None
+            
+            checkpoints.append(checkpoint_info)
+    
+    # Sort by iteration
+    checkpoints.sort(key=lambda x: x["iteration"])
+    return checkpoints
+
+def analyze_checkpoint_performance(results_dir: str) -> Dict[str, Any]:
+    """
+    Analyze performance trends across checkpoints.
+    
+    Args:
+        results_dir: Path to results directory
+        
+    Returns:
+        Performance analysis summary
+    """
+    checkpoints = list_checkpoints(results_dir)
+    if not checkpoints:
+        return {"error": "No checkpoints found"}
+    
+    # Extract performance metrics
+    iterations = []
+    validation_scores = []
+    combined_scores = []
+    
+    for cp in checkpoints:
+        if cp["metrics"]:
+            try:
+                # Try different metric structures
+                metrics = cp["metrics"]
+                if isinstance(metrics, dict):
+                    # Handle nested metrics structure
+                    if "validation" in metrics and "combined" in metrics:
+                        val_return = metrics["validation"].get("return", 0) * 100
+                        comb_return = metrics["combined"].get("return", 0) * 100
+                    elif "selection" in metrics:
+                        val_return = metrics["selection"].get("validation_return", 0)
+                        comb_return = metrics["selection"].get("combined_return", 0)
+                    else:
+                        continue
+                        
+                    iterations.append(cp["iteration"])
+                    validation_scores.append(val_return)
+                    combined_scores.append(comb_return)
+            except Exception:
+                continue
+    
+    if not iterations:
+        return {"error": "No valid performance metrics found"}
+    
+    analysis = {
+        "total_checkpoints": len(checkpoints),
+        "iterations_analyzed": len(iterations),
+        "iteration_range": f"{min(iterations)} - {max(iterations)}",
+        "validation_performance": {
+            "mean": np.mean(validation_scores),
+            "std": np.std(validation_scores),
+            "min": min(validation_scores),
+            "max": max(validation_scores),
+            "latest": validation_scores[-1] if validation_scores else 0
+        },
+        "combined_performance": {
+            "mean": np.mean(combined_scores),
+            "std": np.std(combined_scores),
+            "min": min(combined_scores),
+            "max": max(combined_scores),
+            "latest": combined_scores[-1] if combined_scores else 0
+        },
+        "best_iteration": {
+            "validation": iterations[np.argmax(validation_scores)] if validation_scores else None,
+            "combined": iterations[np.argmax(combined_scores)] if combined_scores else None
+        }
+    }
+    
+    return analysis
+
+def cleanup_checkpoints(results_dir: str, keep_every_n: int = 10, keep_last_n: int = 5) -> int:
+    """
+    Clean up checkpoint files to save disk space while preserving key models.
+    
+    Args:
+        results_dir: Path to results directory
+        keep_every_n: Keep every Nth checkpoint (e.g., 10 = keep iterations 0, 10, 20, ...)
+        keep_last_n: Keep the last N checkpoints regardless
+        
+    Returns:
+        Number of checkpoints removed
+    """
+    checkpoints = list_checkpoints(results_dir)
+    if len(checkpoints) <= keep_last_n:
+        return 0  # Don't remove anything if we have few checkpoints
+    
+    total_iterations = max(cp["iteration"] for cp in checkpoints) if checkpoints else 0
+    removed = 0
+    
+    for checkpoint in checkpoints:
+        iteration = checkpoint["iteration"]
+        
+        # Keep every Nth checkpoint
+        if iteration % keep_every_n == 0:
+            continue
+            
+        # Keep last N checkpoints
+        if iteration >= total_iterations - keep_last_n + 1:
+            continue
+            
+        # Remove this checkpoint
+        try:
+            os.remove(checkpoint["model_path"])
+            if checkpoint["metrics_path"] and os.path.exists(checkpoint["metrics_path"]):
+                os.remove(checkpoint["metrics_path"])
+            removed += 1
+        except Exception as e:
+            print(f"⚠️ Error removing checkpoint {iteration}: {e}")
+    
+    return removed
+
+def load_checkpoint_model(results_dir: str, iteration: int) -> Optional[RecurrentPPO]:
+    """
+    Load a specific checkpoint model.
+    
+    Args:
+        results_dir: Path to results directory
+        iteration: Iteration number to load
+        
+    Returns:
+        Loaded RecurrentPPO model or None if not found
+    """
+    checkpoint_path = os.path.join(results_dir, "checkpoints", f"model_iter_{iteration}.zip")
+    
+    if not os.path.exists(checkpoint_path):
+        print(f"❌ Checkpoint not found: {checkpoint_path}")
+        return None
+    
+    try:
+        model = RecurrentPPO.load(checkpoint_path)
+        print(f"✅ Loaded checkpoint from iteration {iteration}")
+        return model
+    except Exception as e:
+        print(f"❌ Error loading checkpoint {iteration}: {e}")
+        return None
+
+def create_checkpoint_summary(results_dir: str) -> None:
+    """
+    Create a comprehensive summary of all checkpoints.
+    
+    Args:
+        results_dir: Path to results directory
+    """
+    checkpoints = list_checkpoints(results_dir)
+    analysis = analyze_checkpoint_performance(results_dir)
+    
+    summary = {
+        "checkpoint_summary": {
+            "total_checkpoints": len(checkpoints),
+            "results_directory": results_dir,
+            "analysis_timestamp": datetime.now().isoformat(),
+        },
+        "checkpoints": checkpoints,
+        "performance_analysis": analysis
+    }
+    
+    summary_path = os.path.join(results_dir, "checkpoint_summary.json")
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    print(f"📊 Checkpoint summary saved: {summary_path}")
+    print(f"💾 Total checkpoints: {len(checkpoints)}")
+    if "error" not in analysis:
+        print(f"📈 Best validation performance: {analysis['validation_performance']['max']:.2f}% (iteration {analysis['best_iteration']['validation']})")
+        print(f"📈 Best combined performance: {analysis['combined_performance']['max']:.2f}% (iteration {analysis['best_iteration']['combined']})")
+
+# ===============================================================
+
 def get_phase2_no_early_stopping_config(enhancement_level="phase2"):
     """
     Get Phase 2 configuration for no early stopping training.
@@ -452,13 +664,27 @@ def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int
                     print(f"   Validation Score: {validation_score:.4f}")
                     print(f"   Performance Gap: {gap:.1%}")
                     print(f"   ✅ Continuing training regardless of performance gap")
-            
-            # Model selection based on validation performance (preserve best model)
+              # Model selection and checkpoint preservation
             curr_best_path = os.path.join(f"../results/{args.seed}", "curr_best_model.zip")
+            
+            # 🔄 CHECKPOINT PRESERVATION: Save iteration-specific models
+            checkpoints_dir = os.path.join(f"../results/{args.seed}", "checkpoints")
+            os.makedirs(checkpoints_dir, exist_ok=True)
             
             if os.path.exists(curr_best_path):
                 # Load the validation-selected current best model
                 curr_best_metrics_path = curr_best_path.replace(".zip", "_metrics.json")
+                
+                # 💾 PRESERVE CHECKPOINT: Save iteration model before comparison/cleanup
+                checkpoint_model_path = os.path.join(checkpoints_dir, f"model_iter_{iteration}.zip")
+                checkpoint_metrics_path = os.path.join(checkpoints_dir, f"metrics_iter_{iteration}.json")
+                
+                import shutil
+                shutil.copy2(curr_best_path, checkpoint_model_path)
+                if os.path.exists(curr_best_metrics_path):
+                    shutil.copy2(curr_best_metrics_path, checkpoint_metrics_path)
+                    
+                print(f"\n💾 Checkpoint saved: {checkpoint_model_path}")
                 
                 if os.path.exists(best_model_path):
                     # Compare validation scores for model selection (no early stopping)
@@ -477,30 +703,40 @@ def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int
                             if curr_score > best_score:
                                 model = RecurrentPPO.load(curr_best_path)
                                 model.save(best_model_path)
-                                import shutil
                                 shutil.copy2(curr_best_metrics_path, best_metrics_path)
                                 optimization_stats['validation_improvements'] += 1
-                                print(f"\n🎯 New best model: validation score {curr_score:.4f} > {best_score:.4f}")
+                                print(f"🎯 New best model: validation score {curr_score:.4f} > {best_score:.4f}")
                             else:
                                 model = RecurrentPPO.load(best_model_path)
-                                print(f"\n📊 Keeping previous best model: validation score {best_score:.4f} >= {curr_score:.4f}")
+                                print(f"📊 Keeping previous best model: validation score {best_score:.4f} >= {curr_score:.4f}")
                         else:
                             model = RecurrentPPO.load(curr_best_path)
                             model.save(best_model_path)
-                            import shutil
                             shutil.copy2(curr_best_metrics_path, best_metrics_path)
-                            print(f"\n🎯 First model saved as best")
+                            print(f"🎯 First model saved as best")
                     except Exception as e:
                         print(f"⚠️ Model comparison error: {e}")
                         model = RecurrentPPO.load(curr_best_path)
                         model.save(best_model_path)
                 
-                # Clean up current model files
+                # Clean up temporary current model files (checkpoints preserved)
                 os.remove(curr_best_path)
                 if os.path.exists(curr_best_metrics_path):
                     os.remove(curr_best_metrics_path)
-            
-            # Save training state
+            else:
+                # 🚫 NO MODEL SAVED: Create placeholder checkpoint for tracking
+                checkpoint_info_path = os.path.join(checkpoints_dir, f"no_model_iter_{iteration}.json")
+                no_model_info = {
+                    "iteration": iteration,
+                    "timestamp": datetime.now().isoformat(),
+                    "reason": "No model met saving criteria",
+                    "training_timesteps": current_timesteps,
+                    "note": "Model did not achieve positive returns on both validation and combined datasets"
+                }
+                with open(checkpoint_info_path, 'w') as f:
+                    json.dump(no_model_info, f, indent=2)
+                print(f"\n📝 No model checkpoint for iteration {iteration} (did not meet criteria)")
+              # Save training state
             iteration_time = time.time() - iteration_start_time
             iteration_times.append(iteration_time)
             optimization_stats['avg_iteration_time'] = sum(iteration_times) / len(iteration_times)
@@ -515,14 +751,17 @@ def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int
             print(f"Achieved speedup: {current_speedup:.1f}x vs original")
             print(f"Progress: {iteration+1}/{total_iterations} ({(iteration+1)/total_iterations*100:.1f}%)")
             print(f"✅ NO EARLY STOPPING - continuing to next iteration")
-              # Save state for resumption
-            save_training_state({
-                'iteration': iteration + 1,
-                'validation_scores': validation_performance_history,
-                'model_path': best_model_path,
-                'optimization_stats': optimization_stats,
-                'no_early_stopping': True
-            }, state_path)
+            
+            # Save state for resumption
+            save_training_state(
+                state_path, 
+                training_start + step_size, 
+                best_model_path,
+                iteration_time=iteration_time, 
+                total_iterations=total_iterations,
+                step_size=step_size, 
+                optimization_stats=optimization_stats
+            )
             
             # Update estimated time remaining (removed custom progress indicator)
             if len(iteration_times) > 0:
@@ -536,13 +775,22 @@ def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int
         print("\n🛑 Training interrupted. Progress saved - use same command to resume.")
         return model
     finally:
-        clear_optimization_cache()
-
-    # Load final model
+        clear_optimization_cache()    # Load final model
     if os.path.exists(best_model_path):
         model = RecurrentPPO.load(best_model_path)
-
-    # Save final summary
+    
+    # Save final summary 
+    results_path = f"../results/{args.seed}"
+    
+    # Get checkpoint information for summary
+    try:
+        checkpoints = list_checkpoints(results_path)
+        checkpoint_analysis = analyze_checkpoint_performance(results_path)
+    except Exception as e:
+        print(f"Warning: Could not analyze checkpoints: {e}")
+        checkpoints = []
+        checkpoint_analysis = {'error': str(e)}
+    
     final_summary = {
         'no_early_stopping_completion': True,
         'total_iterations_completed': total_iterations,
@@ -554,7 +802,16 @@ def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int
         'max_train_val_gap': optimization_stats['max_train_val_gap'],
         'avg_iteration_time_minutes': optimization_stats['avg_iteration_time'] / 60,
         'estimated_time_saved_hours': (45 - optimization_stats['avg_iteration_time'] / 60) * total_iterations / 60,
-        'completion_timestamp': datetime.now().isoformat()
+        'completion_timestamp': datetime.now().isoformat(),
+        'checkpoint_info': {
+            'total_checkpoints_saved': len(checkpoints),
+            'checkpoints_directory': os.path.join(results_path, "checkpoints"),
+            'best_checkpoint_performance': checkpoint_analysis.get('best_iteration', {}) if 'error' not in checkpoint_analysis else {},
+            'performance_range': {
+                'validation': checkpoint_analysis.get('validation_performance', {}) if 'error' not in checkpoint_analysis else {},
+                'combined': checkpoint_analysis.get('combined_performance', {}) if 'error' not in checkpoint_analysis else {}
+            }
+        }
     }
     
     with open(f"../results/{args.seed}/no_early_stopping_summary.json", 'w') as f:
@@ -568,5 +825,16 @@ def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int
     print(f"⏱️ Average iteration time: {optimization_stats['avg_iteration_time']/60:.1f} minutes")
     print(f"🚫 Early stops triggered: 0 (DISABLED)")
     print(f"📈 Model improvements: {optimization_stats['validation_improvements']}")
+    print(f"\n💾 CHECKPOINT SUMMARY:")
+    print(f"📂 Checkpoints saved: {len(checkpoints)}")
+    print(f"📁 Checkpoint directory: {os.path.join(results_path, 'checkpoints')}")
+    if "error" not in checkpoint_analysis:
+        if checkpoint_analysis.get('best_iteration', {}).get('validation'):
+            print(f"🏆 Best validation checkpoint: iteration {checkpoint_analysis['best_iteration']['validation']} ({checkpoint_analysis['validation_performance']['max']:.2f}%)")
+        if checkpoint_analysis.get('best_iteration', {}).get('combined'):
+            print(f"🏆 Best combined checkpoint: iteration {checkpoint_analysis['best_iteration']['combined']} ({checkpoint_analysis['combined_performance']['max']:.2f}%)")
+    
+    # Create comprehensive checkpoint summary
+    create_checkpoint_summary(results_path)
     
     return model
