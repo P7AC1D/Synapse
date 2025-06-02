@@ -33,6 +33,8 @@ import pandas as pd
 import torch as th
 from datetime import datetime
 
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
+
 # Import the new no early stopping training function
 from utils.training_utils_no_early_stopping import train_walk_forward_no_early_stopping
 from utils.data_loader import load_and_prepare_data
