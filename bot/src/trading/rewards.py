@@ -35,11 +35,11 @@ class RewardCalculator:
         self.MARKET_ENGAGEMENT_BONUS = 1.0      # Bonus for taking positions
         
         # Position management
-        self.PROFIT_HOLD_REWARD = 0.5           # Strong reward for holding profitable positions
-        self.LOSS_HOLD_PENALTY = -0.2           # Penalty for holding losing positions
+        self.PROFIT_HOLD_REWARD = 1.5           # INCREASED: Strong reward for holding profitable positions
+        self.LOSS_HOLD_PENALTY = -0.1           # REDUCED: Smaller penalty for holding losing positions
         self.PROFIT_PROTECTION_BONUS = 0.5      # Bonus for protecting unrealized profits
-        self.SIGNIFICANT_PROFIT_THRESHOLD = 0.01 # 1% profit threshold for bonus rewards
-        self.SIGNIFICANT_PROFIT_BONUS = 0.2     # Extra bonus for significantly profitable positions
+        self.SIGNIFICANT_PROFIT_THRESHOLD = 0.005 # REDUCED: 0.5% profit threshold for bonus rewards
+        self.SIGNIFICANT_PROFIT_BONUS = 0.8     # INCREASED: Extra bonus for significantly profitable positions
         
         # Activity incentives
         self.HOLD_COST = -0.005                 # Small cost for inaction (accumulates)
@@ -64,8 +64,15 @@ class RewardCalculator:
         # Base score from PnL relative to ATR (market volatility)
         pnl_atr_ratio = pnl / (atr * self.trade_entry_balance) if atr > 0 else 0
         
-        # Time efficiency score (reward quicker profitable trades)
-        time_efficiency = max(0.1, 1.0 - (hold_time / 100.0))
+        # FIXED: Time efficiency that encourages holding profitable positions longer
+        # For profitable trades, don't penalize holding (flat bonus)
+        # For losing trades, encourage quick closure
+        if pnl > 0:
+            # Profitable positions: flat time efficiency (no decay for first 50 bars)
+            time_efficiency = max(0.7, 1.0 - max(0, (hold_time - 50) / 100.0))
+        else:
+            # Losing positions: encourage quick closure
+            time_efficiency = max(0.1, 1.0 - (hold_time / 30.0))
         
         # Combine scores
         quality_score = pnl_atr_ratio * time_efficiency
@@ -149,19 +156,27 @@ class RewardCalculator:
             if action == Action.HOLD:
                 # Position holding rewards/penalties
                 if pnl > 0:
-                    # Diminishing returns for holding profitable positions
-                    # Enhanced hold decay for profitable positions
+                    # FIXED: Ensure ALL profitable positions get positive hold rewards
                     profit_ratio = pnl / self.trade_entry_balance
-                    hold_decay = max(0.3, 1.0 - (current_hold / 80.0))  # Slower decay, higher minimum
+                    hold_decay = max(0.8, 1.0 - max(0, (current_hold - 30) / 200.0))  # FIXED: Much slower decay, no penalty for first 30 bars
+                    
+                    # Base profitable hold reward
+                    base_reward = self.PROFIT_HOLD_REWARD * hold_decay
                     
                     # Add significant profit bonus
                     profit_bonus = 0.0
                     if profit_ratio > self.SIGNIFICANT_PROFIT_THRESHOLD:
-                        profit_bonus = self.SIGNIFICANT_PROFIT_BONUS * min(profit_ratio * 20, 3.0)
-                    total_reward += (self.PROFIT_HOLD_REWARD * hold_decay) + profit_bonus
+                        profit_bonus = self.SIGNIFICANT_PROFIT_BONUS * min(profit_ratio * 50, 5.0)  # INCREASED multiplier
+                    
+                    # CRITICAL: Ensure minimum positive reward for ANY profitable position
+                    total_profit_reward = base_reward + profit_bonus
+                    if total_profit_reward < 0.1:  # Guarantee minimum positive reward
+                        total_profit_reward = 0.1
+                        
+                    total_reward += total_profit_reward
                 else:
-                    # Increasing penalty for holding losing positions
-                    loss_penalty_multiplier = min(2.0, 1.0 + (current_hold / 20.0))
+                    # REDUCED: Less aggressive penalty for holding losing positions  
+                    loss_penalty_multiplier = min(1.5, 1.0 + (current_hold / 40.0))  # REDUCED: Slower escalation
                     total_reward += self.LOSS_HOLD_PENALTY * loss_penalty_multiplier
                     
                 # Add risk management score
