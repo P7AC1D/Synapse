@@ -84,7 +84,7 @@ MODEL_KWARGS_PHASE2_NO_EARLY_STOPPING = {
     "gae_lambda": 0.98,                  # Higher lambda for advantage estimation
     "clip_range": 0.15,                  # Phase 2: Moderate clipping for larger model
     "clip_range_vf": 0.15,               # Match policy clipping
-    "ent_coef": 0.03,                    # Phase 2: Balanced exploration
+    "ent_coef": 0.15,                    # Phase 2: HIGH exploration for trading
     "vf_coef": 0.5,                      # Phase 2: Balanced value learning
     "max_grad_norm": 0.5,                # Conservative gradient clipping
     "n_epochs": 10,                      # Phase 2: Optimal for larger model
@@ -553,12 +553,11 @@ def train_walk_forward_no_early_stopping(data: pd.DataFrame, initial_window: int
                 )
                 
                 # Set up callbacks (NO early stopping)
-                callbacks = [
-                    # Enhanced exploration 
+                callbacks = [                    # Enhanced exploration for trading
                     CustomEpsilonCallback(
-                        start_eps=0.5,  # Moderate exploration
-                        end_eps=0.05,   # Maintain exploration
-                        decay_timesteps=int(current_timesteps * 0.7),
+                        start_eps=0.8,  # High initial exploration
+                        end_eps=0.1,    # Maintain significant exploration
+                        decay_timesteps=int(current_timesteps * 0.8),  # Slower decay
                         iteration=iteration
                     ),
                     # Evaluation callback (for model selection only, no early stopping)
