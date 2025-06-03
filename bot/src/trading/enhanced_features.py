@@ -176,7 +176,6 @@ class EnhancedFeatureProcessor:
             
             # Add advanced features if enabled
             if self.use_advanced_features:
-                print("Calculating advanced features...")
                 advanced_features_df = self.advanced_calculator.calculate_all_advanced_features(data)
                 
                 # Combine basic and advanced features

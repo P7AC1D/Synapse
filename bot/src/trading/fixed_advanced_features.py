@@ -488,8 +488,7 @@ class FixedAdvancedFeatureCalculator:
 
     def calculate_all_advanced_features(self, data: pd.DataFrame) -> pd.DataFrame:
         """Calculate all advanced features for the dataset."""
-        print("Calculating advanced features...")
-        
+
         high = data['high'].values
         low = data['low'].values
         close = data['close'].values
@@ -499,37 +498,30 @@ class FixedAdvancedFeatureCalculator:
         advanced_features = {}
         
         # 1. MACD features (5 features)
-        print("  - MACD features...")
         macd_features = self.calculate_macd_features(close)
         advanced_features.update(macd_features)
         
         # 2. Stochastic features (5 features)
-        print("  - Stochastic features...")
         stoch_features = self.calculate_stochastic_features(high, low, close)
         advanced_features.update(stoch_features)
         
         # 3. VWAP features (3 features)
-        print("  - VWAP features...")
         vwap_features = self.calculate_vwap_features(high, low, close, volume, index)
         advanced_features.update(vwap_features)
         
         # 4. Session features (5 features)
-        print("  - Session features...")
         session_features = self.calculate_session_features(index)
         advanced_features.update(session_features)
         
         # 5. Psychological level features (2 features)
-        print("  - Psychological level features...")
         psych_features = self.calculate_psychological_levels(close)
         advanced_features.update(psych_features)
         
         # 6. Multi-timeframe trend features (3 features)
-        print("  - Multi-timeframe trend features...")
         trend_features = self.calculate_multi_timeframe_trend(close)
         advanced_features.update(trend_features)
         
         # 7. Momentum features (3 features)
-        print("  - Momentum features...")
         momentum_features = self.calculate_momentum_features(high, low, close)
         advanced_features.update(momentum_features)
         
@@ -539,5 +531,4 @@ class FixedAdvancedFeatureCalculator:
         # Fill any remaining NaN values
         advanced_df = advanced_df.ffill().fillna(0)
         
-        print(f"✓ Advanced features calculated: {len(advanced_df.columns)} new features")
         return advanced_df

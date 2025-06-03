@@ -13,8 +13,9 @@ import os
 import json
 import pandas as pd
 import time
+import shutil
 from datetime import datetime
-from typing import Tuple, Dict, Any, Optional
+from typing import Tuple, Dict, Any
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback
 from sb3_contrib.ppo_recurrent import RecurrentPPO
@@ -28,6 +29,34 @@ from configs.training_config import (
     MODEL_KWARGS,
     VALIDATION_CONFIG
 )
+
+def save_validation_state(save_path: str, state: Dict[str, Any]) -> None:
+    """
+    Save validation state to continue tracking between sessions.
+    
+    Args:
+        save_path: Directory path where to save the state
+        state: Dictionary containing validation state to save
+    """
+    state_path = os.path.join(save_path, "validation_state.json")
+    with open(state_path, 'w') as f:
+        json.dump(state, f, indent=2)
+
+def load_validation_state(load_path: str) -> Dict[str, Any]:
+    """
+    Load validation state from previous session.
+    
+    Args:
+        load_path: Directory path where state file is located
+        
+    Returns:
+        Dictionary containing loaded validation state
+    """
+    state_path = os.path.join(load_path, "validation_state.json")
+    if os.path.exists(state_path):
+        with open(state_path, 'r') as f:
+            return json.load(f)
+    return None
 
 class EvalCallback(BaseCallback):
     """
@@ -51,26 +80,34 @@ class EvalCallback(BaseCallback):
         self.iteration = iteration
         self.training_timesteps = training_timesteps
         
-        # Load existing validation state if available
-        self.load_validation_state()
-        
-        # Initialize if no state was loaded
-        if not hasattr(self, 'best_validation_score'):
-            self.best_validation_score = -float('inf')
-        if not hasattr(self, 'best_validation_metrics'):
-            self.best_validation_metrics = None
-        if not hasattr(self, 'validation_history'):
-            self.validation_history = []
-        if not hasattr(self, 'no_improvement_count'):
-            self.no_improvement_count = 0
+        # Initialize validation state
+        self._initialize_validation_state()
             
         self.early_stopping_patience = VALIDATION_CONFIG['early_stopping']['patience']
         self.n_calls = 0
     
-    def save_validation_state(self):
-        """Save validation state to continue tracking between sessions."""
+    def _initialize_validation_state(self):
+        """Initialize or load validation state."""
         if self.best_model_save_path:
-            state_path = os.path.join(self.best_model_save_path, "validation_state.json")
+            # Try to load existing state
+            state = load_validation_state(self.best_model_save_path)
+            if state:
+                self.best_validation_score = state.get('best_validation_score', -float('inf'))
+                self.validation_history = state.get('validation_history', [])
+                self.no_improvement_count = state.get('no_improvement_count', 0)
+                self.iteration = state.get('iteration', self.iteration)
+                self.n_calls = state.get('n_calls', 0)
+                self.best_validation_metrics = state.get('best_validation_metrics', None)
+            else:
+                # Initialize new state
+                self.best_validation_score = -float('inf')
+                self.best_validation_metrics = None
+                self.validation_history = []
+                self.no_improvement_count = 0
+    
+    def _save_current_state(self):
+        """Save current validation state."""
+        if self.best_model_save_path:
             state = {
                 'best_validation_score': self.best_validation_score,
                 'validation_history': self.validation_history,
@@ -79,22 +116,7 @@ class EvalCallback(BaseCallback):
                 'n_calls': self.n_calls,
                 'best_validation_metrics': self.best_validation_metrics
             }
-            with open(state_path, 'w') as f:
-                json.dump(state, f, indent=2)
-                
-    def load_validation_state(self):
-        """Load validation state for continuation."""
-        if self.best_model_save_path:
-            state_path = os.path.join(self.best_model_save_path, "validation_state.json")
-            if os.path.exists(state_path):
-                with open(state_path, 'r') as f:
-                    state = json.load(f)
-                self.best_validation_score = state.get('best_validation_score', -float('inf'))
-                self.validation_history = state.get('validation_history', [])
-                self.no_improvement_count = state.get('no_improvement_count', 0)
-                self.iteration = state.get('iteration', self.iteration)
-                self.n_calls = state.get('n_calls', 0)
-                self.best_validation_metrics = state.get('best_validation_metrics', None)
+            save_validation_state(self.best_model_save_path, state)
     
     def _evaluate_on_validation(self) -> Dict[str, Any]:
         """Evaluate model on validation data."""
@@ -177,14 +199,14 @@ class EvalCallback(BaseCallback):
             self.no_improvement_count = 0
             
             # Save validation state after improvement
-            self.save_validation_state()
+            self._save_current_state()
             
             if self.verbose > 0:
                 print(f"✅ New best score: {validation_score*100:.2f}%")
             return True
         else:
             self.no_improvement_count += 1
-            self.save_validation_state()
+            self._save_current_state()
             
             if self.verbose > 0:
                 print(f"📊 No improvement - Current: {validation_score*100:.2f}%, "
@@ -358,11 +380,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             iteration_val_data = data.iloc[train_end:val_end].copy()
             
             # Create data splits
-            train_data, val_data, _ = create_data_splits(iteration_train_data)
-            
-            print(f"\n=== Training Period: {train_data.index[0]} to {train_data.index[-1]} ===")
-            print(f"=== Validation Period: {val_data.index[0]} to {val_data.index[-1]} ===")
-            print(f"=== Iteration: {iteration+1}/{total_iterations} ===")
+            train_data, val_data, _ = create_data_splits(iteration_train_data)            
             
             # Environment parameters
             env_params = {
