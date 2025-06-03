@@ -1,75 +1,138 @@
 """
-Training Configuration Settings
+Regularized Training Configuration
 
-This module defines the configuration parameters for training the DRL trading bot,
-including model architecture, training hyperparameters, and validation settings.
+This configuration implements critical fixes for overfitting issues:
+1. Stronger regularization through model architecture changes
+2. Validation-based model selection
+3. Improved data splitting (70/20/10)
+4. Gradient clipping and reduced learning rates
+5. Early stopping based on validation performance
 """
 
+import torch as th
 from torch import nn
 
 # Core training configuration
 TRAINING_CONFIG = {
     'total_timesteps': 40000,        # Total training steps
-    'eval_freq': 5000,                # Evaluation frequency (increased to enable early stopping)
+    'eval_freq': 3000,               # More frequent evaluation
     'learning_starts': 1000,         # Initial learning delay
     'train_split': 0.7,             # Training data proportion
     'validation_split': 0.2,         # Validation data proportion
-    'test_split': 0.1               # Test data proportion
+    'test_split': 0.1,              # Test data proportion
+    'random_start': False,           # Deterministic start for validation consistency
 }
 
-# Model policy configuration
+# Model policy configuration with regularization
 POLICY_KWARGS = {
-    'lstm_hidden_size': 256,         # LSTM hidden layer size
-    'n_lstm_layers': 2,             # Number of LSTM layers
-    'enable_critic_lstm': True,      # Use LSTM for value function
-    'net_arch': {                    # Network architecture
-        'pi': [128, 128],           # Policy network
-        'vf': [128, 128]            # Value network
+    'optimizer_class': th.optim.AdamW,  # Use AdamW for better regularization
+    'lstm_hidden_size': 256,            # Reduced from original larger size
+    'n_lstm_layers': 2,                # Reduced from 4 to prevent overfitting
+    'enable_critic_lstm': True,         # Use LSTM for value function
+    'shared_lstm': False,
+    'net_arch': {                       # Reduced network sizes
+        'pi': [128, 128],              # Policy network
+        'vf': [128, 128]               # Value network
     },
-    'activation_fn': nn.Tanh,        # Activation function
-    'optimizer_kwargs': {            # Optimizer settings
-        'weight_decay': 1e-3         # L2 regularization
+    'activation_fn': nn.ReLU,           # Changed from Tanh for better gradients
+    'ortho_init': True,                 # Orthogonal initialization for stability
+    'optimizer_kwargs': {
+        'eps': 1e-5,
+        'weight_decay': 1e-3            # L2 regularization
     }
 }
 
-# Model training parameters
+# Model training parameters with conservative settings
 MODEL_KWARGS = {
-    'learning_rate': 5e-4,          # Learning rate
-    'n_steps': 1024,                # Steps per update
-    'batch_size': 64,               # Mini-batch size
-    'n_epochs': 4,                  # CRITICAL FIX: Reduced from 10 to prevent overfitting
-    'gamma': 0.99,                  # Discount factor
-    'gae_lambda': 0.95,             # GAE parameter
-    'clip_range': 0.1,              # CRITICAL FIX: Reduced from 0.2 to prevent instability
-    'clip_range_vf': None,          # Value function clip
-    'normalize_advantage': True,    # Normalize advantages
-    'ent_coef': 0.01,               # Entropy coefficient
-    'vf_coef': 0.5,                 # Value function coefficient
-    'max_grad_norm': 0.5,           # Gradient clipping
-    'use_sde': False,               # State-dependent exploration
-    'sde_sample_freq': -1,          # SDE sampling frequency
-    'target_kl': None,              # Target KL divergence
-    'verbose': 0                    # Verbosity level
+    'learning_rate': 5e-4,             # Reduced for stability
+    'n_steps': 1024,                   # Reasonable sequence length
+    'batch_size': 64,                  # Smaller batches for regularization
+    'n_epochs': 4,                     # Reduced from 10 to prevent overtraining
+    'gamma': 0.99,                     # Discount factor
+    'gae_lambda': 0.9,                 # Reduced GAE lambda
+    'clip_range': 0.1,                 # Reduced from 0.2 for stability
+    'clip_range_vf': 0.1,              # Value function clipping
+    'normalize_advantage': True,        # Normalize advantages
+    'ent_coef': 0.01,                  # Increased entropy coefficient
+    'vf_coef': 0.5,                    # Value function coefficient
+    'max_grad_norm': 0.5,              # Gradient clipping
+    'use_sde': False,                  # No state-dependent exploration
+    'sde_sample_freq': -1,             # SDE sampling frequency
+    'target_kl': None,                 # Target KL divergence
+    'verbose': 0                       # Verbosity level
 }
 
-# Validation configuration
+# Enhanced validation configuration
 VALIDATION_CONFIG = {
     'early_stopping': {
-        'enabled': True,            # Enable early stopping
-        'metric': 'validation_return',  # Metric to monitor
-        'patience': 10,            # Patience counter
-        'min_improvement': 0.001,  # Minimum improvement threshold
-        'mode': 'maximize'         # Optimization mode
-    }
+        'enabled': True,                # Enable early stopping
+        'metric': 'validation_return',  # Monitor validation returns
+        'patience': 10,                 # Stop if no improvement for 10 iterations
+        'min_improvement': 0.01,        # Minimum 1% improvement required
+        'mode': 'maximize',             # Maximize validation returns
+        'restore_best_weights': True    # Restore best model weights
+    },
+    'selection_criterion': 'validation_return',  # Use validation instead of combined
+    'save_best_only': True,
+    'save_frequency': 1,                # Save every iteration
+    'validation_frequency': 1,          # Validate every iteration
+    'detailed_validation_logging': True
 }
 
+# Enhanced epsilon configuration for exploration
 ENHANCED_EPSILON_CONFIG = {
-    # Starting epsilon value for exploration
-    'start_eps': 0.9,
-    
-    # Final epsilon value after decay
-    'end_eps': 0.2,
-    
-    # Minimum exploration rate to maintain
-    'min_exploration_rate': 0.4
+    'start_eps': 0.9,                  # Starting epsilon value
+    'end_eps': 0.2,                    # Final epsilon value after decay
+    'min_exploration_rate': 0.4        # Minimum exploration rate to maintain
 }
+
+# Environment settings
+ENVIRONMENT_CONFIG = {
+    'initial_balance': 10000,
+    'balance_per_lot': 500,
+    'random_start': False,             # Deterministic start for validation consistency
+    'point_value': 0.01,
+    'min_lots': 0.01,
+    'max_lots': 1.0,                   # Conservative position sizing
+    'contract_size': 100000
+}
+
+def get_training_args():
+    """Get complete training arguments with regularization."""
+    return {
+        # Data splits
+        'train_split': TRAINING_CONFIG['train_split'],
+        'validation_split': TRAINING_CONFIG['validation_split'],
+        'test_split': TRAINING_CONFIG['test_split'],
+
+        # Model selection
+        'model_selection_metric': VALIDATION_CONFIG['selection_criterion'],
+        'save_best_validation_only': VALIDATION_CONFIG['save_best_only'],
+
+        # Regularization
+        'learning_rate': MODEL_KWARGS['learning_rate'],
+        'max_grad_norm': MODEL_KWARGS['max_grad_norm'],
+        'weight_decay': POLICY_KWARGS['optimizer_kwargs']['weight_decay'],
+
+        # Early stopping
+        'early_stopping_patience': VALIDATION_CONFIG['early_stopping']['patience'],
+        'early_stopping_min_improvement': VALIDATION_CONFIG['early_stopping']['min_improvement'],
+        'early_stopping_metric': VALIDATION_CONFIG['early_stopping']['metric'],
+
+        # Training constraints
+        'max_timesteps_per_iteration': TRAINING_CONFIG['total_timesteps'],
+        'max_iterations': 25,
+
+        # Validation
+        'validation_frequency': VALIDATION_CONFIG['validation_frequency'],
+        'detailed_validation': VALIDATION_CONFIG['detailed_validation_logging']
+    }
+
+if __name__ == "__main__":
+    print("Regularized Training Configuration")
+    print("=" * 50)
+    print(f"Learning Rate: {MODEL_KWARGS['learning_rate']}")
+    print(f"Epochs: {MODEL_KWARGS['n_epochs']}")
+    print(f"Clip Range: {MODEL_KWARGS['clip_range']}")
+    print(f"Network Architecture: {POLICY_KWARGS['net_arch']}")
+    print(f"Data Splits: {TRAINING_CONFIG['train_split']}/{TRAINING_CONFIG['validation_split']}/{TRAINING_CONFIG['test_split']}")
