@@ -1,1 +1,11 @@
-# Configuration files package
+"""Configuration modules package."""
+
+from .training_config import TRAINING_CONFIG, POLICY_KWARGS, MODEL_KWARGS, VALIDATION_CONFIG, ENHANCED_EPSILON_CONFIG
+
+__all__ = [
+    'TRAINING_CONFIG',
+    'POLICY_KWARGS',
+    'MODEL_KWARGS',
+    'VALIDATION_CONFIG',
+    'ENHANCED_EPSILON_CONFIG'
+]

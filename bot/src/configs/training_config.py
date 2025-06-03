@@ -62,3 +62,14 @@ VALIDATION_CONFIG = {
         'mode': 'maximize'         # Optimization mode
     }
 }
+
+ENHANCED_EPSILON_CONFIG = {
+    # Starting epsilon value for exploration
+    'start_eps': 0.9,
+    
+    # Final epsilon value after decay
+    'end_eps': 0.2,
+    
+    # Minimum exploration rate to maintain
+    'min_exploration_rate': 0.4
+}
