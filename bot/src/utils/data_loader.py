@@ -50,23 +50,29 @@ def load_and_prepare_data(data_path: str) -> pd.DataFrame:
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
         
-        # Handle datetime index - try multiple common column names
-        datetime_column = None
-        possible_datetime_columns = ['timestamp', 'time', 'datetime', 'date']
+        # Handle datetime column - prefer existing column names
+        datetime_col = None
+        if 'time' in data.columns:  # First check for 'time' since it's our primary format
+            datetime_col = 'time'
+        elif 'datetime' in data.columns:  # Then check for 'datetime'
+            datetime_col = 'datetime'
+        else:
+            # Try other common column names
+            possible_datetime_columns = ['timestamp', 'date']
+            for col in possible_datetime_columns:
+                if col in data.columns:
+                    datetime_col = col
+                    break
         
-        for col in possible_datetime_columns:
-            if col in data.columns:
-                datetime_column = col
-                break
-        
-        if datetime_column:
+        if datetime_col:
             # Convert to datetime and set as index
-            data[datetime_column] = pd.to_datetime(data[datetime_column])
-            data = data.set_index(datetime_column)
-            print(f"✓ {datetime_column.title()} index set: {data.index[0]} to {data.index[-1]}")
+            data[datetime_col] = pd.to_datetime(data[datetime_col])
+            data = data.set_index(datetime_col)
+            print(f"✓ {datetime_col.title()} index set: {data.index[0]} to {data.index[-1]}")
         else:
             # If no datetime column found, create a simple range index
             print("⚠️ No datetime column found - using sequential index")
+            print("⚠️ Note: VWAP and session features will be limited without datetime index")
         
         # Handle missing values
         nan_count = data.isnull().sum().sum()

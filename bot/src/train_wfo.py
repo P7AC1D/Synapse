@@ -38,9 +38,16 @@ def load_and_prepare_data(args):
     
     data = pd.read_csv(data_path)
     
+    # Handle both 'datetime' and 'time' columns for compatibility
+    datetime_col = None
     if 'datetime' in data.columns:
-        data['datetime'] = pd.to_datetime(data['datetime'])
-        data.set_index('datetime', inplace=True)
+        datetime_col = 'datetime'
+    elif 'time' in data.columns:
+        datetime_col = 'time'
+        
+    if datetime_col:
+        data[datetime_col] = pd.to_datetime(data[datetime_col])
+        data.set_index(datetime_col, inplace=True)
     
     print(f"✅ Data loaded: {len(data):,} samples")
     print(f"   Period: {data.index[0]} to {data.index[-1]}")
