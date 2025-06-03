@@ -79,8 +79,7 @@ class EvalCallback(BaseCallback):
         self.verbose = verbose
         self.iteration = iteration
         self.training_timesteps = training_timesteps
-        
-        # Initialize validation state
+          # Initialize validation state
         self._initialize_validation_state()
             
         self.early_stopping_patience = VALIDATION_CONFIG['early_stopping']['patience']
@@ -92,19 +91,26 @@ class EvalCallback(BaseCallback):
             # Try to load existing state
             state = load_validation_state(self.best_model_save_path)
             if state:
+                loaded_iteration = state.get('iteration', -1)
                 self.best_validation_score = state.get('best_validation_score', -float('inf'))
                 self.validation_history = state.get('validation_history', [])
-                self.no_improvement_count = state.get('no_improvement_count', 0)
-                self.iteration = state.get('iteration', self.iteration)
-                self.n_calls = state.get('n_calls', 0)
                 self.best_validation_metrics = state.get('best_validation_metrics', None)
+                self.n_calls = state.get('n_calls', 0)
+                
+                # Reset counter if starting a new iteration
+                if loaded_iteration != self.iteration:
+                    self.no_improvement_count = 0
+                    if self.verbose > 0:
+                        print(f"🔄 Early stopping counter reset for iteration {self.iteration} (was {state.get('no_improvement_count', 0)})")
+                else:
+                    self.no_improvement_count = state.get('no_improvement_count', 0)
             else:
                 # Initialize new state
                 self.best_validation_score = -float('inf')
                 self.best_validation_metrics = None
                 self.validation_history = []
                 self.no_improvement_count = 0
-    
+
     def _save_current_state(self):
         """Save current validation state."""
         if self.best_model_save_path:
@@ -112,7 +118,7 @@ class EvalCallback(BaseCallback):
                 'best_validation_score': self.best_validation_score,
                 'validation_history': self.validation_history,
                 'no_improvement_count': self.no_improvement_count,
-                'iteration': self.iteration,
+                'iteration': self.iteration,  # Always save current iteration
                 'n_calls': self.n_calls,
                 'best_validation_metrics': self.best_validation_metrics
             }
