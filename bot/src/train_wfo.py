@@ -88,8 +88,6 @@ def main():
     if data is None:
         return 1
     
-    print(f"\n🎯 STARTING TRAINING...")
-    
     # Run training
     try:
         start_time = datetime.now()

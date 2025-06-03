@@ -5,6 +5,8 @@ This module defines the configuration parameters for training the DRL trading bo
 including model architecture, training hyperparameters, and validation settings.
 """
 
+from torch import nn
+
 # Core training configuration
 TRAINING_CONFIG = {
     'total_timesteps': 40000,        # Total training steps
@@ -24,7 +26,7 @@ POLICY_KWARGS = {
         'pi': [128, 128],           # Policy network
         'vf': [128, 128]            # Value network
     },
-    'activation_fn': 'tanh',         # Activation function
+    'activation_fn': nn.Tanh,        # Activation function
     'optimizer_kwargs': {            # Optimizer settings
         'weight_decay': 1e-3         # L2 regularization
     }
@@ -40,14 +42,14 @@ MODEL_KWARGS = {
     'gae_lambda': 0.95,             # GAE parameter
     'clip_range': 0.2,              # PPO clip range
     'clip_range_vf': None,          # Value function clip
-    'normalize_advantage': True,     # Normalize advantages
+    'normalize_advantage': True,    # Normalize advantages
     'ent_coef': 0.01,               # Entropy coefficient
     'vf_coef': 0.5,                 # Value function coefficient
     'max_grad_norm': 0.5,           # Gradient clipping
     'use_sde': False,               # State-dependent exploration
     'sde_sample_freq': -1,          # SDE sampling frequency
     'target_kl': None,              # Target KL divergence
-    'verbose': 1                    # Verbosity level
+    'verbose': 0                    # Verbosity level
 }
 
 # Validation configuration
