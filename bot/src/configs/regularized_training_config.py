@@ -42,18 +42,13 @@ REGULARIZED_MODEL_KWARGS = {
     'learning_rate': 0.0005,             # Reduced from 0.001 (50% reduction)
     'n_steps': 1024,                     # Reasonable sequence length
     'batch_size': 64,                    # Smaller batches for regularization
-    'n_epochs': 4,                       # Fewer epochs to prevent overtraining
-    'gamma': 0.99,                       # Standard discount factor
+    'n_epochs': 4,                       # Fewer epochs to prevent overtraining    'gamma': 0.99,                       # Standard discount factor
     'gae_lambda': 0.9,                   # Reduced GAE lambda
-      # Clipping for regularization
+    
+    # Clipping for regularization
     'clip_range': 0.1,                   # Reduced from 0.2 (conservative clipping)
     'clip_range_vf': 0.1,                # Value function clipping
     'max_grad_norm': 0.5,                # Gradient clipping for regularization
-      # Optimizer settings with weight decay
-    'optimizer_kwargs': {
-        'eps': 1e-5,
-        'weight_decay': 1e-3,             # Increased weight decay for regularization
-    },
     
     # Exploration parameters
     'ent_coef': 0.01,                    # Increased entropy coefficient

@@ -21,7 +21,7 @@ import torch as th
 from datetime import datetime
 from typing import Tuple, Dict, Any, List, Optional
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from sb3_contrib.ppo_recurrent import RecurrentPPO
 from trading.environment import TradingEnv
 
@@ -35,7 +35,7 @@ from configs.regularized_training_config import (
     REGULARIZED_VALIDATION_CONFIG
 )
 
-class RegularizedEvalCallback:
+class RegularizedEvalCallback(BaseCallback):
     """
     Regularized evaluation callback that uses VALIDATION-ONLY model selection.
     
@@ -46,6 +46,8 @@ class RegularizedEvalCallback:
     def __init__(self, eval_env, train_data, val_data, eval_freq=5000, 
                  best_model_save_path=None, log_path=None, deterministic=True, 
                  verbose=0, iteration=0, training_timesteps=40000):
+        super().__init__(verbose)  # Initialize BaseCallback
+        
         self.eval_env = eval_env
         self.train_data = train_data
         self.val_data = val_data
@@ -56,8 +58,7 @@ class RegularizedEvalCallback:
         self.verbose = verbose
         self.iteration = iteration
         self.training_timesteps = training_timesteps
-        
-        # Validation-only tracking
+          # Validation-only tracking
         self.best_validation_score = -float('inf')
         self.best_validation_metrics = None
         self.validation_history = []
@@ -65,15 +66,15 @@ class RegularizedEvalCallback:
         self.early_stopping_patience = REGULARIZED_VALIDATION_CONFIG['early_stopping']['patience']
         
         self.n_calls = 0
-        
+    
     def _evaluate_on_validation(self) -> Dict[str, Any]:
         """
         Evaluate model ONLY on validation data.
         This is the key change: no combined dataset evaluation.
         """
         try:
-            # Reset environment 
-            obs = self.eval_env.reset()
+            # Reset environment (handle tuple return)
+            obs, _ = self.eval_env.reset()
             lstm_states = None
             episode_rewards = []
             episode_actions = []
@@ -88,26 +89,27 @@ class RegularizedEvalCallback:
                 action, lstm_states = self.model.predict(
                     obs, state=lstm_states, deterministic=self.deterministic
                 )
-                
-                # Take step
-                obs, reward, done, info = self.eval_env.step(action)
+                  # Take step
+                obs, reward, terminated, truncated, info = self.eval_env.step(action)
+                done = terminated or truncated
                 episode_reward += reward
                 episode_actions.append(action)
-                step_count += 1
-            
-            # Extract metrics from environment
-            env_metrics = self.eval_env.env.get_metrics()
-            
-            # Calculate validation score (validation return only)
-            validation_return = env_metrics.get('total_return', 0.0)
+                step_count += 1              # Extract metrics from environment
+            # Handle different environment wrapper structures
+            if hasattr(self.eval_env, 'env'):
+                env_metrics = self.eval_env.env.metrics.get_performance_summary()
+            else:
+                env_metrics = self.eval_env.metrics.get_performance_summary()
+              # Calculate validation score (validation return only)
+            validation_return = env_metrics.get('return_pct', 0.0) / 100.0
             
             # Additional validation metrics
             validation_metrics = {
                 'return': validation_return,
                 'total_trades': env_metrics.get('total_trades', 0),
-                'win_rate': env_metrics.get('win_rate', 0.0),
+                'win_rate': env_metrics.get('win_rate', 0.0) / 100.0,
                 'profit_factor': env_metrics.get('profit_factor', 0.0),
-                'max_drawdown': env_metrics.get('max_drawdown', 0.0),
+                'max_drawdown': env_metrics.get('max_drawdown_pct', 0.0) / 100.0,
                 'sharpe_ratio': env_metrics.get('sharpe_ratio', 0.0),
                 'episode_reward': episode_reward,
                 'steps': step_count
@@ -141,8 +143,7 @@ class RegularizedEvalCallback:
             if self.verbose > 0:
                 print(f"❌ Model rejected - Negative validation return: {validation_return*100:.2f}%")
             return False
-        
-        # Calculate validation score (could add profit factor bonus later)
+          # Calculate validation score (could add profit factor bonus later)
         validation_score = validation_return
         
         # Save if validation performance improves
@@ -175,11 +176,10 @@ class RegularizedEvalCallback:
         
         return False
     
-    def on_step(self, model) -> bool:
+    def _on_step(self) -> bool:
         """
         Called during training to evaluate and potentially save the model.
         """
-        self.model = model
         self.n_calls += 1
         
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
@@ -201,7 +201,7 @@ class RegularizedEvalCallback:
                 if self.best_model_save_path:
                     # Save as current best model
                     curr_best_path = os.path.join(self.best_model_save_path, "curr_best_model.zip")
-                    model.save(curr_best_path)
+                    self.model.save(curr_best_path)
                     
                     # Save validation metrics
                     metrics_path = curr_best_path.replace(".zip", "_metrics.json")
@@ -434,8 +434,7 @@ def train_regularized_walk_forward(data: pd.DataFrame, initial_window: int, step
                         curr_metrics = json.load(f)
                     
                     curr_validation_score = curr_metrics.get('validation_score', 0)
-                    
-                    # Compare with best model (validation-only comparison)
+                      # Compare with best model (validation-only comparison)
                     if os.path.exists(best_model_path):
                         best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
                         if os.path.exists(best_metrics_path):
@@ -454,14 +453,16 @@ def train_regularized_walk_forward(data: pd.DataFrame, initial_window: int, step
                             else:
                                 print(f"📊 Keeping previous best: validation score {best_validation_score*100:.2f}% >= {curr_validation_score*100:.2f}%")
                         else:
-                            # First model with validation metrics
+                            # First model with validation metrics - define best_metrics_path
+                            best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
                             shutil.copy2(curr_best_path, best_model_path)
                             shutil.copy2(metrics_path, best_metrics_path)
                             training_metrics['validation_improvements'] += 1
                             training_metrics['best_validation_score'] = curr_validation_score
                             print(f"🎯 First regularized model saved: validation score {curr_validation_score*100:.2f}%")
                     else:
-                        # First model ever
+                        # First model ever - define best_metrics_path
+                        best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
                         shutil.copy2(curr_best_path, best_model_path)
                         shutil.copy2(metrics_path, best_metrics_path)
                         training_metrics['validation_improvements'] += 1
@@ -553,12 +554,11 @@ def validate_regularization_implementation() -> Dict[str, Any]:
         fixes_verified.append("✅ Model selection: Validation-only (no combined dataset bias)")
     else:
         issues_found.append("❌ Model selection still uses combined dataset")
-    
-    # 3. Check regularization
+      # 3. Check regularization
     regularization_checks = [
         REGULARIZED_MODEL_KWARGS['learning_rate'] <= 0.0005,
         REGULARIZED_MODEL_KWARGS['max_grad_norm'] <= 0.5,
-        REGULARIZED_MODEL_KWARGS.get('optimizer_kwargs', {}).get('weight_decay', 0) >= 1e-3,
+        REGULARIZED_POLICY_KWARGS.get('optimizer_kwargs', {}).get('weight_decay', 0) >= 1e-3,
         REGULARIZED_MODEL_KWARGS['batch_size'] <= 64
     ]
     
@@ -611,3 +611,91 @@ def validate_regularization_implementation() -> Dict[str, Any]:
                 print(f"  {fix}")
     
     return validation_results
+
+# Add RegularizedTrainingManager class after the existing classes
+class RegularizedTrainingManager:
+    """
+    Training manager that wraps RegularizedEvalCallback for testing and validation.
+    
+    This class provides a unified interface for regularized training management
+    and validation metrics testing.
+    """
+    
+    def __init__(self, model, env, eval_env, results_dir="results"):
+        """
+        Initialize the training manager.
+        
+        Args:
+            model: The model to evaluate
+            env: Training environment
+            eval_env: Evaluation environment  
+            results_dir: Directory for saving results
+        """
+        self.model = model
+        self.env = env
+        self.eval_env = eval_env
+        self.results_dir = results_dir
+        
+        # Create mock data for the evaluation callback
+        import pandas as pd
+        import numpy as np
+        
+        # Create minimal mock data for evaluation
+        self.train_data = pd.DataFrame({
+            'close': np.random.normal(1.0, 0.01, 100)
+        })
+        self.val_data = pd.DataFrame({
+            'close': np.random.normal(1.0, 0.01, 50) 
+        })
+        
+        # Create the regularized evaluation callback
+        self.eval_callback = RegularizedEvalCallback(
+            eval_env=eval_env,
+            train_data=self.train_data,
+            val_data=self.val_data,
+            eval_freq=1000,
+            best_model_save_path=results_dir,
+            verbose=1
+        )
+        
+        # Set the model on the callback
+        self.eval_callback.model = model
+    
+    def _evaluate_on_validation(self) -> Dict[str, Any]:
+        """
+        Evaluate the model on validation data using the regularized approach.
+        
+        Returns:
+            Dict containing validation metrics
+        """
+        return self.eval_callback._evaluate_on_validation()
+    
+    def train(self, total_timesteps: int = 10000):
+        """
+        Train the model using regularized approach.
+        
+        Args:
+            total_timesteps: Number of timesteps to train
+        """
+        if hasattr(self.model, 'learn'):
+            self.model.learn(
+                total_timesteps=total_timesteps,
+                callback=self.eval_callback
+            )
+        else:
+            print("Mock model provided - no actual training performed")
+    
+    def save_best_model(self, path: str):
+        """Save the best model based on validation performance."""
+        if hasattr(self.model, 'save'):
+            self.model.save(path)
+        else:
+            print(f"Mock model - would save to {path}")
+    
+    def get_training_metrics(self) -> Dict[str, Any]:
+        """Get training metrics from the evaluation callback."""
+        return {
+            'best_validation_score': self.eval_callback.best_validation_score,
+            'validation_history': self.eval_callback.validation_history,
+            'no_improvement_count': self.eval_callback.no_improvement_count
+        }
