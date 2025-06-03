@@ -20,9 +20,6 @@ class EnhancedFeatureProcessor:
         self.use_advanced_features = use_advanced_features
         if self.use_advanced_features:
             self.advanced_calculator = AdvancedFeatureCalculator()
-            print("✓ Enhanced features enabled - 37+ features will be calculated")
-        else:
-            print("⚠️ Using basic features only (9 features)")
 
     def setup_observation_space(self, feature_count: int = 37) -> spaces.Box:
         """Setup observation space with proper feature bounds.
@@ -95,7 +92,6 @@ class EnhancedFeatureProcessor:
         Returns:
             Tuple of (features DataFrame, ATR values)
         """
-        print(f"Processing data with {len(data)} bars...")
         
         with np.errstate(divide='ignore', invalid='ignore'):
             close = data['close'].values
@@ -186,7 +182,6 @@ class EnhancedFeatureProcessor:
                 
                 # Concatenate features
                 features_df = pd.concat([features_df, advanced_features_df], axis=1)
-                print(f"✓ Combined features: {len(features_df.columns)} total features")
             
             # Clean up NaN values
             features_df = features_df.dropna()
@@ -234,7 +229,6 @@ class EnhancedFeatureProcessor:
                         # Clip to valid range
                         features_df[col] = np.clip(features_df[col], -1, 1)
             
-            print(f"✓ Feature processing complete: {len(features_df.columns)} features, {len(features_df)} samples")
             return features_df, atr_aligned
 
     def get_feature_names(self) -> list:

@@ -10,7 +10,7 @@ from torch import nn
 # Core training configuration
 TRAINING_CONFIG = {
     'total_timesteps': 40000,        # Total training steps
-    'eval_freq': 5000,               # Evaluation frequency
+    'eval_freq': 10000,               # Evaluation frequency
     'learning_starts': 1000,         # Initial learning delay
     'train_split': 0.7,             # Training data proportion
     'validation_split': 0.2,         # Validation data proportion
