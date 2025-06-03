@@ -30,11 +30,12 @@ class UnifiedEvalCallback(BaseCallback):
     1. Models with positive returns on both validation and combined sets are saved
        as curr_best_model.zip
     2. At each iteration end, curr_best_model is compared against existing best_model
-    3. Better performing model becomes the new best_model.zip
-    4. curr_best_model files are cleaned up after comparison
+    3. Better performing model becomes the new best_model.zip    4. curr_best_model files are cleaned up after comparison
     """
-    def __init__(self, eval_env, train_data, val_data, eval_freq=100000, best_model_save_path=None, 
-                 log_path=None, deterministic=True, verbose=0, iteration=0, training_timesteps=200000):
+    
+    def __init__(self, eval_env, train_data, val_data, eval_freq=100000, best_model_save_path=None,
+                 log_path=None, deterministic=True, verbose=0, iteration=0, training_timesteps=200000,
+                 anti_collapse_callback=None):
         super(UnifiedEvalCallback, self).__init__(verbose=verbose)
         self.eval_env = eval_env
         self.eval_freq = eval_freq
@@ -45,6 +46,9 @@ class UnifiedEvalCallback(BaseCallback):
         self.last_time_trigger = 0
         self.iteration = iteration
         self.training_timesteps = training_timesteps
+        
+        # Anti-collapse callback integration
+        self.anti_collapse_callback = anti_collapse_callback
 
         # Store separate datasets
         self.train_data = train_data
@@ -234,20 +238,19 @@ class UnifiedEvalCallback(BaseCallback):
             self.logger.info(f"\nModel Comparison (End of Iteration {self.iteration}):")
             self.logger.info(f"  Current Model Score: {current_score:.4f}")
             self.logger.info(f"  Best Model Score: {prev_score:.4f}")
-            
-            # Compare scores
+              # Compare scores
             return current_score > prev_score
             
         except Exception as e:
             self.logger.warning(f"Error comparing with best model: {e}")
             return True  # Default to accepting current model on error
-        
+    
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
         """
         Determine if current model should be saved as curr_best_model.
         
         A model is saved as curr_best_model if:
-        1. Both validation and combined returns are positive
+        1. Returns are non-negative (>= 0) on both datasets (allows 0% from 0 trades)
         2. Score is tracked for logging but doesn't prevent saving
         3. At iteration end, curr_best_model is compared against best_model
         
@@ -257,8 +260,9 @@ class UnifiedEvalCallback(BaseCallback):
         validation = metrics['validation']
         combined = metrics['combined']
         
-        # Reject models with negative returns on either dataset
-        if validation['return'] <= 0 or combined['return'] <= 0:
+        # Allow models with 0 trades (0% returns) to enable initial learning
+        # Only reject models with actual losses (negative returns)
+        if validation['return'] < 0 or combined['return'] < 0:
             self.logger.debug(
                 f"Model rejected - Negative returns: "
                 f"Validation: {validation['return']*100:.2f}%, "
@@ -275,13 +279,11 @@ class UnifiedEvalCallback(BaseCallback):
             pf = validation['performance']['profit_factor']
             if pf > 1.0:  # Only reward profit factors above 1.0
                 bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
-        
-        # Calculate final score
+          # Calculate final score
         score = average_return + bonus
         
-
-        # Save if score is positive
-        if validation['return'] > 0 and combined['return'] > 0:
+        # Save if returns are non-negative (>= 0)
+        if validation['return'] >= 0 and combined['return'] >= 0:
             if score > self.best_score:
                 self.best_score = score
                 self.best_metrics = metrics
@@ -501,8 +503,7 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"      - Combined: {metrics['combined']['return']*100:.2f}%")
                 print(f"    Profit Factor Bonus: +{profit_factor_bonus:.3f}")
                 print(f"    Progress: {self.num_timesteps/self.training_timesteps*100:.1f}%")
-                
-                # Separator
+                  # Separator
                 print(f"\n  {'-'*50}")
                 
                 print("  Network Stats:")
@@ -513,6 +514,24 @@ class UnifiedEvalCallback(BaseCallback):
                 print(f"      Loss: {training_stats['policy_loss']:.4f}")
                 print(f"      Entropy: {training_stats['entropy_loss']:.4f}")
                 print(f"      KL Div: {training_stats['approx_kl']:.4f}")
+
+            # 🛡️ ANTI-COLLAPSE INTEGRATION: Update anti-collapse callback with evaluation results
+            if self.anti_collapse_callback is not None:
+                # Get entropy and trading metrics from validation set evaluation
+                val_entropy = val_metrics['training']['entropy_loss']
+                val_total_trades = val_metrics['performance']['total_trades']
+                
+                # Update anti-collapse callback with current metrics
+                self.anti_collapse_callback.update_training_metrics(
+                    entropy_loss=val_entropy,
+                    total_trades=val_total_trades
+                )
+                
+                if self.verbose >= 1:
+                    print(f"\n🛡️ Anti-Collapse Monitor:")
+                    print(f"   - Entropy: {val_entropy:.3f} (threshold: {self.anti_collapse_callback.min_entropy_threshold})")
+                    print(f"   - Trades: {val_total_trades} (min required: {self.anti_collapse_callback.min_trades_per_eval})")
+                    print(f"   - Emergency mode: {self.anti_collapse_callback.emergency_mode}")
 
             self.last_time_trigger = self.n_calls
         

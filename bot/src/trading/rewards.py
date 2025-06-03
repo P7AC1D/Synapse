@@ -26,25 +26,59 @@ class RewardCalculator:
         # Track position metrics
         self.max_unrealized_pnl = 0.0
         self.position_opened_at_step = None
-        self.total_hold_steps = 0
+        self.total_hold_steps = 0        # === ENHANCED REWARD CONFIGURATION ===
+        # Load enhanced reward parameters using robust import mechanism
+        import os
+        import sys
         
-        # === REWARD CONFIGURATION ===
-        # Core trading rewards
-        self.PROFITABLE_TRADE_REWARD = 5.0      # Strong reward for winning trades
-        self.LOSING_TRADE_PENALTY = -2.0        # Moderate penalty for losing trades
-        self.MARKET_ENGAGEMENT_BONUS = 1.0      # Bonus for taking positions
+        # Default enhanced values (fallback)
+        enhanced_reward_config = {
+            'PROFITABLE_TRADE_REWARD': 8.0,
+            'LOSING_TRADE_PENALTY': -1.5,
+            'MARKET_ENGAGEMENT_BONUS': 2.0,
+            'PROFIT_HOLD_REWARD': 2.0,
+            'LOSS_HOLD_PENALTY': -0.05,
+            'PROFIT_PROTECTION_BONUS': 1.0,
+            'SIGNIFICANT_PROFIT_THRESHOLD': 0.003,
+            'SIGNIFICANT_PROFIT_BONUS': 1.5,
+            'HOLD_COST': -0.02,
+            'EXCESSIVE_HOLD_PENALTY': -0.05,
+            'INACTIVITY_THRESHOLD': 30
+        }
         
-        # Position management
-        self.PROFIT_HOLD_REWARD = 1.5           # INCREASED: Strong reward for holding profitable positions
-        self.LOSS_HOLD_PENALTY = -0.1           # REDUCED: Smaller penalty for holding losing positions
-        self.PROFIT_PROTECTION_BONUS = 0.5      # Bonus for protecting unrealized profits
-        self.SIGNIFICANT_PROFIT_THRESHOLD = 0.005 # REDUCED: 0.5% profit threshold for bonus rewards
-        self.SIGNIFICANT_PROFIT_BONUS = 0.8     # INCREASED: Extra bonus for significantly profitable positions
+        # Try to load from enhanced exploration config
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            src_dir = os.path.dirname(current_dir)  # Go up to src directory
+            configs_path = os.path.join(src_dir, 'configs', 'enhanced_exploration_config.py')
+            
+            if os.path.exists(configs_path):
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("enhanced_exploration_config", configs_path)
+                config_module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(config_module)
+                if hasattr(config_module, 'ENHANCED_REWARD_CONFIG'):
+                    enhanced_reward_config = config_module.ENHANCED_REWARD_CONFIG
+                    print("✅ Successfully loaded enhanced reward configuration")
+        except Exception as e:
+            print(f"⚠️ Using default enhanced reward parameters: {e}")
         
-        # Activity incentives
-        self.HOLD_COST = -0.005                 # Small cost for inaction (accumulates)
-        self.EXCESSIVE_HOLD_PENALTY = -0.02     # Penalty for excessive holding
-        self.INACTIVITY_THRESHOLD = 50          # Steps before inactivity penalty
+        # Apply enhanced reward configuration
+        self.PROFITABLE_TRADE_REWARD = enhanced_reward_config.get('PROFITABLE_TRADE_REWARD', 8.0)      
+        self.LOSING_TRADE_PENALTY = enhanced_reward_config.get('LOSING_TRADE_PENALTY', -1.5)        
+        self.MARKET_ENGAGEMENT_BONUS = enhanced_reward_config.get('MARKET_ENGAGEMENT_BONUS', 2.0)      
+        
+        # Position management - Enhanced values
+        self.PROFIT_HOLD_REWARD = enhanced_reward_config.get('PROFIT_HOLD_REWARD', 2.0)           
+        self.LOSS_HOLD_PENALTY = enhanced_reward_config.get('LOSS_HOLD_PENALTY', -0.05)           
+        self.PROFIT_PROTECTION_BONUS = enhanced_reward_config.get('PROFIT_PROTECTION_BONUS', 1.0)      
+        self.SIGNIFICANT_PROFIT_THRESHOLD = enhanced_reward_config.get('SIGNIFICANT_PROFIT_THRESHOLD', 0.003) 
+        self.SIGNIFICANT_PROFIT_BONUS = enhanced_reward_config.get('SIGNIFICANT_PROFIT_BONUS', 1.5)     
+        
+        # Activity incentives - Enhanced values
+        self.HOLD_COST = enhanced_reward_config.get('HOLD_COST', -0.02)                 
+        self.EXCESSIVE_HOLD_PENALTY = enhanced_reward_config.get('EXCESSIVE_HOLD_PENALTY', -0.05)     
+        self.INACTIVITY_THRESHOLD = enhanced_reward_config.get('INACTIVITY_THRESHOLD', 30)
         
         # Risk management
         self.INVALID_ACTION_PENALTY = -2.0      # Penalty for invalid actions

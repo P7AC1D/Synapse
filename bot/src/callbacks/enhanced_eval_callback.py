@@ -229,12 +229,11 @@ class EnhancedEvalCallback(BaseCallback):
         """
         validation = metrics['validation']
         combined = metrics['combined']
-        
-        # 80/20 validation weighting for base performance
+          # 80/20 validation weighting for base performance
         base_score = (validation['return'] * 0.80 + combined['return'] * 0.20)
         
-        # Only proceed if base performance is positive
-        if base_score <= 0:
+        # Allow 0% returns (from 0 trades) but penalize negative returns
+        if base_score < 0:
             return float('-inf')
         
         # Get performance data for additional metrics
@@ -314,20 +313,19 @@ class EnhancedEvalCallback(BaseCallback):
             self.logger.info(f"\nEnhanced Model Comparison (End of Iteration {self.iteration}):")
             self.logger.info(f"  Current Model Score: {current_score:.4f}")
             self.logger.info(f"  Best Model Score: {prev_score:.4f}")
-            
-            # Compare scores
+              # Compare scores
             return current_score > prev_score
             
         except Exception as e:
             self.logger.warning(f"Error comparing with best model: {e}")
             return True  # Default to accepting current model on error
-        
+    
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
         """
         Determine if current model should be saved as curr_best_model.
         
         A model is saved as curr_best_model if:
-        1. Both validation and combined returns are positive
+        1. Returns are non-negative (>= 0) on both datasets (allows 0% from 0 trades)
         2. Enhanced score is tracked for logging and comparison
         3. At iteration end, curr_best_model is compared against best_model using enhanced scoring
         
@@ -337,8 +335,9 @@ class EnhancedEvalCallback(BaseCallback):
         validation = metrics['validation']
         combined = metrics['combined']
         
-        # Reject models with negative returns on either dataset
-        if validation['return'] <= 0 or combined['return'] <= 0:
+        # Allow models with 0 trades (0% returns) to enable initial learning
+        # Only reject models with actual losses (negative returns)
+        if validation['return'] < 0 or combined['return'] < 0:
             self.logger.debug(
                 f"Model rejected - Negative returns: "
                 f"Validation: {validation['return']*100:.2f}%, "
