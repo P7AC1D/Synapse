@@ -37,10 +37,10 @@ MODEL_KWARGS = {
     'learning_rate': 5e-4,          # Learning rate
     'n_steps': 1024,                # Steps per update
     'batch_size': 64,               # Mini-batch size
-    'n_epochs': 10,                 # Training epochs
+    'n_epochs': 4,                  # CRITICAL FIX: Reduced from 10 to prevent overfitting
     'gamma': 0.99,                  # Discount factor
     'gae_lambda': 0.95,             # GAE parameter
-    'clip_range': 0.2,              # PPO clip range
+    'clip_range': 0.1,              # CRITICAL FIX: Reduced from 0.2 to prevent instability
     'clip_range_vf': None,          # Value function clip
     'normalize_advantage': True,    # Normalize advantages
     'ent_coef': 0.01,               # Entropy coefficient
