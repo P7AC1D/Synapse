@@ -248,11 +248,15 @@ class UnifiedEvalCallback(BaseCallback):
     def _should_save_model(self, metrics: Dict[str, Dict[str, float]]) -> bool:
         """
         Determine if current model should be saved as curr_best_model.
+        Also handles no improvement tracking for both rejected and suboptimal models.
         
         A model is saved as curr_best_model if:
         1. Returns are non-negative (>= 0) on both datasets (allows 0% from 0 trades)
         2. Score is tracked for logging but doesn't prevent saving
         3. At iteration end, curr_best_model is compared against best_model
+        
+        Note: Both rejected models (negative returns) and non-improving models 
+        count towards the no improvement counter.
         
         Returns:
             bool: True if model should be saved as curr_best_model
@@ -263,11 +267,15 @@ class UnifiedEvalCallback(BaseCallback):
         # Allow models with 0 trades (0% returns) to enable initial learning
         # Only reject models with actual losses (negative returns)
         if validation['return'] < 0 or combined['return'] < 0:
-            self.logger.debug(
-                f"Model rejected - Negative returns: "
-                f"Validation: {validation['return']*100:.2f}%, "
-                f"Combined: {combined['return']*100:.2f}%"
+            self.logger.info(
+                f"\n❌ Model rejected - Negative return: {validation['return']*100:.2f}%"
             )
+            # Count rejected models towards no improvement counter
+            self.best_score = max(self.best_score, float('-inf'))  # Ensure best_score is initialized
+            
+            if hasattr(self.model, 'no_improvement_count'):
+                self.model.no_improvement_count += 1
+                self.logger.info(f"📊 No improvement - Current: {validation['return']*100:.2f}%, Best: {self.best_score*100:.2f}% (No improvement: {self.model.no_improvement_count}/10)")
             return False
         
         # Calculate average return between validation and combined datasets
@@ -279,15 +287,23 @@ class UnifiedEvalCallback(BaseCallback):
             pf = validation['performance']['profit_factor']
             if pf > 1.0:  # Only reward profit factors above 1.0
                 bonus = min(pf - 1.0, 2.0) * 0.1  # Up to 20% bonus
-          # Calculate final score
+        # Calculate final score
         score = average_return + bonus
         
-        # Save if returns are non-negative (>= 0)
+        # Save if returns are non-negative (>= 0) and better than best
         if validation['return'] >= 0 and combined['return'] >= 0:
             if score > self.best_score:
                 self.best_score = score
                 self.best_metrics = metrics
-            return True
+                # Reset no improvement counter on new best
+                if hasattr(self.model, 'no_improvement_count'):
+                    self.model.no_improvement_count = 0
+                return True
+            else:
+                # Increment no improvement counter for positive but suboptimal returns
+                if hasattr(self.model, 'no_improvement_count'):
+                    self.model.no_improvement_count += 1
+                    self.logger.info(f"📊 No improvement - Current: {validation['return']*100:.2f}%, Best: {self.best_score*100:.2f}% (No improvement: {self.model.no_improvement_count}/10)")
         return False
     
     def _on_step(self) -> bool:

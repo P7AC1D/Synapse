@@ -96,12 +96,17 @@ class EvalCallback(BaseCallback):
                 self.validation_history = state.get('validation_history', [])
                 self.best_validation_metrics = state.get('best_validation_metrics', None)
                 self.n_calls = state.get('n_calls', 0)
-                
-                # Reset counter if starting a new iteration
+                  # Reset validation state if starting a new iteration
                 if loaded_iteration != self.iteration:
                     self.no_improvement_count = 0
+                    # Start fresh for new iteration - each iteration is independent
+                    self.best_validation_score = -float('inf')
+                    self.best_validation_metrics = None
+                    self.validation_history = []
                     if self.verbose > 0:
-                        print(f"🔄 Early stopping counter reset for iteration {self.iteration} (was {state.get('no_improvement_count', 0)})")
+                        print(f"🔄 Starting fresh validation for iteration {self.iteration}")
+                        print(f"   Previous iteration: {loaded_iteration} (score: {state.get('best_validation_score', 0)*100:.2f}%)")
+                        print(f"   Early stopping counter reset (was {state.get('no_improvement_count', 0)})")
                 else:
                     self.no_improvement_count = state.get('no_improvement_count', 0)
             else:
@@ -188,9 +193,12 @@ class EvalCallback(BaseCallback):
     def _should_save_model(self, validation_metrics: Dict[str, float]) -> bool:
         """Determine if model should be saved based on validation performance."""
         validation_return = validation_metrics['return']
-        
-        # Only save models with non-negative validation returns
+          # Only save models with non-negative validation returns
         if validation_return < 0:
+            self.no_improvement_count += 1
+            # Save state after rejection to maintain consistency
+            self._save_current_state()
+            
             if self.verbose > 0:
                 print(f"❌ Model rejected - Negative return: {validation_return*100:.2f}%")
             return False
