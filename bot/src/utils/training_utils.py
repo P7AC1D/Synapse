@@ -289,6 +289,10 @@ def create_data_splits(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, 
     """
     Create data splits for training, validation, and testing.
     
+    ⚠️ DEPRECATED FOR WALK-FORWARD OPTIMIZATION ⚠️
+    This function is for traditional ML training only. 
+    WFO training should use full iteration windows without internal splits.
+    
     Args:
         data: Full dataset for training
         
@@ -315,11 +319,18 @@ def create_data_splits(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, 
 
 def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, args) -> RecurrentPPO:
     """
-    Walk-forward training implementation.
+    Walk-forward training implementation - FIXED for proper WFO.
+    
+    ✅ ARCHITECTURAL FIX APPLIED:
+    - Removed double-split issue (no more create_data_splits() within iterations)
+    - Uses FULL iteration windows for training (no data waste)
+    - Implements proper temporal validation (next period out-of-sample)
+    - Eliminates the 10% test data waste per iteration
+    - Prevents temporal leakage through proper data separation
     
     Args:
         data: Full dataset for training
-        initial_window: Size of initial training window  
+        initial_window: Size of initial training window
         step_size: Step size for moving window forward
         args: Training arguments
         
@@ -388,13 +399,18 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             if val_end - train_end < val_size * 0.3:
                 print(f"\n⚠️ Insufficient validation data at iteration {iteration + 1}, stopping")
                 break
+              # Get iteration data - PROPER WFO Implementation
+            # Use FULL iteration window for training (no internal splits)
+            train_data = data.iloc[train_start:train_end].copy()
             
-            # Get iteration data
-            iteration_train_data = data.iloc[train_start:train_end].copy()
-            iteration_val_data = data.iloc[train_end:val_end].copy()
+            # Use NEXT temporal period for validation (proper WFO)
+            val_data = data.iloc[train_end:val_end].copy()
             
-            # Create data splits
-            train_data, val_data, _ = create_data_splits(iteration_train_data)            
+            print(f"📊 WFO Window {iteration + 1}:")
+            print(f"   Training: {len(train_data):,} samples ({train_start}-{train_end})")
+            print(f"   Validation: {len(val_data):,} samples ({train_end}-{val_end})")
+            print(f"   ✅ No data waste - Using full training window")
+            print(f"   ✅ Temporal separation - No future leakage")
             
             # Environment parameters
             env_params = {

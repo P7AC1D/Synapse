@@ -23,8 +23,7 @@ if src_dir not in sys.path:
     sys.path.append(src_dir)
 
 from utils.training_utils import (
-    train_walk_forward,
-    create_data_splits
+    train_walk_forward
 )
 
 def load_and_prepare_data(args):
