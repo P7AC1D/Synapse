@@ -4,6 +4,8 @@ import numpy as np
 from gym.spaces import Discrete
 from typing import Optional
 import torch as th
+import os
+from src.configs.enhanced_exploration_config import ENHANCED_EPSILON_CONFIG
 
 class CustomEpsilonCallback(BaseCallback):
     """Custom callback for epsilon-greedy exploration during training"""
@@ -11,64 +13,20 @@ class CustomEpsilonCallback(BaseCallback):
     def __init__(self, start_eps=1.0, end_eps=0.05, decay_timesteps=40000, iteration=0):
         super().__init__()
         
-        # Load exploration parameters using robust import mechanism with aggressive prioritization
-        import os
-        import sys
+        # Load exploration parameters from enhanced config
+        epsilon_config = ENHANCED_EPSILON_CONFIG.copy()  # Create a copy to avoid modifying original
         
-        # Default enhanced values (fallback)
-        epsilon_config = {
-            'start_eps': 0.9,
-            'end_eps': 0.2,
-            'decay_timesteps': 30000,
-            'min_exploration_rate': 0.4
-        }
-        
-        # 🚀 PRIORITIZE AGGRESSIVE EXPLORATION FOR EARLY ITERATIONS
-        needs_aggressive_exploration = iteration < 5  # First 5 iterations get aggressive exploration
-        
-        try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            src_dir = os.path.dirname(current_dir)  # Go up to src directory
-            
-            if needs_aggressive_exploration:
-                # Try to load aggressive exploration config first
-                aggressive_configs_path = os.path.join(src_dir, 'configs', 'aggressive_exploration_config.py')
-                if os.path.exists(aggressive_configs_path):
-                    import importlib.util
-                    spec = importlib.util.spec_from_file_location("aggressive_exploration_config", aggressive_configs_path)
-                    config_module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(config_module)
-                    if hasattr(config_module, 'AGGRESSIVE_EPSILON_CONFIG'):
-                        epsilon_config = config_module.AGGRESSIVE_EPSILON_CONFIG
-                        print("🚀 Successfully loaded AGGRESSIVE epsilon configuration (MAXIMUM EXPLORATION)")
-                        print(f"   - Start epsilon: {epsilon_config.get('start_eps', 'N/A')}")
-                        print(f"   - End epsilon: {epsilon_config.get('end_eps', 'N/A')}")
-                        print(f"   - Min exploration: {epsilon_config.get('min_exploration_rate', 'N/A')}")
-                    else:
-                        print("⚠️ Aggressive epsilon config exists but AGGRESSIVE_EPSILON_CONFIG not found")
-                else:
-                    print("⚠️ Aggressive epsilon config not found, falling back to enhanced")
-            
-            # Fallback to enhanced configuration if aggressive not available or not needed
-            if not needs_aggressive_exploration or 'AGGRESSIVE_EPSILON_CONFIG' not in locals():
-                enhanced_configs_path = os.path.join(src_dir, 'configs', 'enhanced_exploration_config.py')
-                if os.path.exists(enhanced_configs_path):
-                    import importlib.util
-                    spec = importlib.util.spec_from_file_location("enhanced_exploration_config", enhanced_configs_path)
-                    config_module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(config_module)
-                    if hasattr(config_module, 'ENHANCED_EPSILON_CONFIG'):
-                        epsilon_config = config_module.ENHANCED_EPSILON_CONFIG
-                        print("✅ Successfully loaded enhanced epsilon configuration")
-                    
-        except Exception as e:
-            print(f"⚠️ Using default epsilon parameters: {e}")
-        
-        # Apply exploration parameters
+        # Apply exploration parameters with overrides if explicitly provided
         self.start_eps = start_eps if start_eps != 1.0 else epsilon_config.get('start_eps', 0.9)
         self.end_eps = end_eps if end_eps != 0.05 else epsilon_config.get('end_eps', 0.2)
         self.decay_timesteps = decay_timesteps
         self.min_exploration_rate = epsilon_config.get('min_exploration_rate', 0.4)
+        
+        # Print active configuration
+        print("✅ Using enhanced exploration parameters:")
+        print(f"   - Start epsilon: {self.start_eps}")
+        print(f"   - End epsilon: {self.end_eps}")
+        print(f"   - Min exploration rate: {self.min_exploration_rate}")
         
         self.iteration = iteration
         self.original_forward = None
