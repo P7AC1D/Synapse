@@ -39,10 +39,20 @@ def main():
     
     # Import checkpoint utilities
     try:
-        from training_utils_no_early_stopping import (
-            list_checkpoints, analyze_checkpoint_performance, 
-            cleanup_checkpoints, load_checkpoint_model, create_checkpoint_summary
-        )
+        # First try regularized utilities
+        try:
+            from regularized_training_utils import (
+                list_checkpoints, analyze_checkpoint_performance,
+                cleanup_checkpoints, load_checkpoint_model, create_checkpoint_summary
+            )
+            print("✅ Using regularized training utilities")
+        except ImportError:
+            # Fall back to non-regularized utilities
+            from training_utils_no_early_stopping import (
+                list_checkpoints, analyze_checkpoint_performance,
+                cleanup_checkpoints, load_checkpoint_model, create_checkpoint_summary
+            )
+            print("⚠️ Using non-regularized training utilities")
     except ImportError as e:
         print(f"❌ Error importing checkpoint utilities: {e}")
         print("Make sure you're running this from the src/utils directory")
@@ -72,7 +82,10 @@ def main():
 
 def list_command(results_dir: str, format_type: str):
     """List all available checkpoints"""
-    from training_utils_no_early_stopping import list_checkpoints
+    try:
+        from regularized_training_utils import list_checkpoints
+    except ImportError:
+        from training_utils_no_early_stopping import list_checkpoints
     
     checkpoints = list_checkpoints(results_dir)
     
@@ -93,7 +106,10 @@ def list_command(results_dir: str, format_type: str):
 
 def analyze_command(results_dir: str, format_type: str):
     """Analyze performance trends across checkpoints"""
-    from training_utils_no_early_stopping import analyze_checkpoint_performance
+    try:
+        from regularized_training_utils import analyze_checkpoint_performance
+    except ImportError:
+        from training_utils_no_early_stopping import analyze_checkpoint_performance
     
     analysis = analyze_checkpoint_performance(results_dir)
     
@@ -133,7 +149,10 @@ def analyze_command(results_dir: str, format_type: str):
 
 def cleanup_command(results_dir: str, keep_every: int, keep_last: int):
     """Clean up old checkpoints"""
-    from training_utils_no_early_stopping import cleanup_checkpoints, list_checkpoints
+    try:
+        from regularized_training_utils import cleanup_checkpoints, list_checkpoints
+    except ImportError:
+        from training_utils_no_early_stopping import cleanup_checkpoints, list_checkpoints
     
     checkpoints_before = list_checkpoints(results_dir)
     removed = cleanup_checkpoints(results_dir, keep_every, keep_last)
@@ -146,25 +165,68 @@ def cleanup_command(results_dir: str, keep_every: int, keep_last: int):
     print(f"Strategy: Keep every {keep_every}th + last {keep_last} iterations")
 
 def load_command(results_dir: str, iteration: Optional[int]):
-    """Load a specific checkpoint model"""
-    from training_utils_no_early_stopping import load_checkpoint_model
-    
+    """Load a specific checkpoint model and restore its state"""
+    try:
+        from regularized_training_utils import load_checkpoint_model, RegularizedTrainingManager
+        is_regularized = True
+    except ImportError:
+        from training_utils_no_early_stopping import load_checkpoint_model
+        is_regularized = False
+
     if iteration is None:
         print("❌ Please specify --iteration for load command")
         return
     
+    # Load the model
     model = load_checkpoint_model(results_dir, iteration)
-    if model:
-        print(f"✅ Successfully loaded checkpoint from iteration {iteration}")
-        print(f"Model type: {type(model).__name__}")
-        print(f"Device: {model.device}")
-        # You could extend this to save the model elsewhere or perform evaluations
-    else:
+    if model is None:
         print(f"❌ Failed to load checkpoint from iteration {iteration}")
+        return
+    
+    # Restore validation state for regularized models
+    if is_regularized:
+        validation_state_path = os.path.join(results_dir, "validation_state.json")
+        if os.path.exists(validation_state_path):
+            try:
+                with open(validation_state_path, 'r') as f:
+                    validation_state = json.load(f)
+                print("\n📊 Restored validation state:")
+                print(f"Best validation score: {validation_state.get('best_validation_score', -float('inf'))*100:.2f}%")
+                print(f"Iteration: {validation_state.get('iteration', 'N/A')}")
+                print(f"No improvement count: {validation_state.get('no_improvement_count', 0)}")
+            except Exception as e:
+                print(f"⚠️ Warning: Could not restore validation state - {e}")
+    
+    print(f"\n✅ Successfully loaded checkpoint from iteration {iteration}")
+    print(f"Model type: {type(model).__name__}")
+    try:
+        print(f"Device: {model.device}")
+    except:
+        print(f"Device: Not available")
+    
+    # Load training state
+    training_state_path = os.path.join(results_dir, "regularized_training_state.json")
+    if os.path.exists(training_state_path):
+        try:
+            with open(training_state_path, 'r') as f:
+                training_state = json.load(f)
+            print("\n📈 Training state loaded:")
+            print(f"Best model path: {training_state.get('best_model_path', 'N/A')}")
+            print(f"Training metrics:")
+            metrics = training_state.get('training_metrics', {})
+            print(f"  - Iterations completed: {metrics.get('iterations_completed', 0)}")
+            print(f"  - Best validation score: {metrics.get('best_validation_score', -float('inf'))*100:.2f}%")
+            print(f"  - Validation improvements: {metrics.get('validation_improvements', 0)}")
+            print(f"  - Early stops triggered: {metrics.get('early_stops_triggered', 0)}")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not load training state - {e}")
 
 def summary_command(results_dir: str):
     """Create comprehensive checkpoint summary"""
-    from training_utils_no_early_stopping import create_checkpoint_summary
+    try:
+        from regularized_training_utils import create_checkpoint_summary
+    except ImportError:
+        from training_utils_no_early_stopping import create_checkpoint_summary
     
     create_checkpoint_summary(results_dir)
     print(f"✅ Checkpoint summary created for {results_dir}")

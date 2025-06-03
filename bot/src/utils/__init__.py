@@ -1,8 +1,8 @@
 """Utility modules for PPO training."""
-from .training_utils_no_early_stopping import (
-    save_training_state, 
-    load_training_state, 
-    train_walk_forward_no_early_stopping
+from .training_utils import (
+    save_validation_state, 
+    load_validation_state, 
+    train_walk_forward
 )
 
-__all__ = ['save_training_state', 'load_training_state', 'train_walk_forward_no_early_stopping']
+__all__ = ['save_validation_state', 'load_validation_state', 'train_walk_forward']
