@@ -29,6 +29,7 @@ from configs.training_config import (
     MODEL_KWARGS,
     VALIDATION_CONFIG
 )
+from utils.adaptive_validation_utils import AdaptiveValidationManager
 
 def save_validation_state(save_path: str, state: Dict[str, Any]) -> None:
     """
@@ -79,7 +80,15 @@ class EvalCallback(BaseCallback):
         self.verbose = verbose
         self.iteration = iteration
         self.training_timesteps = training_timesteps
-          # Initialize validation state
+        
+        # Initialize adaptive validation if enabled
+        self.adaptive_validation = None
+        if best_model_save_path and VALIDATION_CONFIG.get('adaptive', {}).get('enabled', False):
+            self.adaptive_validation = AdaptiveValidationManager(best_model_save_path, iteration)
+            if self.verbose > 0:
+                print(f"🧠 Adaptive validation enabled for iteration {iteration}")
+        
+        # Initialize validation state
         self._initialize_validation_state()
             
         self.early_stopping_patience = VALIDATION_CONFIG['early_stopping']['patience']
@@ -183,7 +192,7 @@ class EvalCallback(BaseCallback):
                 'return': -1.0,
                 'total_trades': 0,
                 'win_rate': 0.0,
-                'profit_factor': 0.0,
+                'profit_factor': 0.0,                
                 'max_drawdown': 1.0,
                 'sharpe_ratio': -1.0,
                 'episode_reward': -1000,
@@ -193,7 +202,47 @@ class EvalCallback(BaseCallback):
     def _should_save_model(self, validation_metrics: Dict[str, float]) -> bool:
         """Determine if model should be saved based on validation performance."""
         validation_return = validation_metrics['return']
-          # Only save models with non-negative validation returns
+        
+        # Use adaptive validation if available
+        if self.adaptive_validation:
+            should_save, decision_info = self.adaptive_validation.should_save_model(
+                validation_metrics, self.best_validation_score, self.validation_history
+            )
+            
+            if should_save:
+                # Update best scores
+                score = decision_info.get('composite_score', validation_return)
+                if score > self.best_validation_score:
+                    self.best_validation_score = score
+                    self.best_validation_metrics = validation_metrics
+                    self.no_improvement_count = 0
+                    
+                    if self.verbose > 0:
+                        threshold = decision_info.get('threshold_used', 0)
+                        print(f"✅ 🧠 Enhanced validation - New best score: {score*100:.2f}%")
+                        print(f"   Return: {validation_return*100:.2f}% (threshold: {threshold*100:.2f}%)")
+                        print(f"   Composite score: {decision_info.get('composite_score', 0)*100:.2f}%")
+                else:
+                    self.no_improvement_count += 1
+                    if self.verbose > 0:
+                        print(f"✅ 🧠 Enhanced validation - Model saved (meets criteria)")
+                        print(f"   Return: {validation_return*100:.2f}%, Score: {score*100:.2f}%")
+            else:
+                self.no_improvement_count += 1
+                if self.verbose > 0:
+                    reason = decision_info.get('reason', 'Unknown')
+                    threshold = decision_info.get('threshold_used', 0)
+                    print(f"❌ 🧠 Enhanced validation - Model rejected")
+                    print(f"   Return: {validation_return*100:.2f}% (threshold: {threshold*100:.2f}%)")
+                    print(f"   Reason: {reason}")
+                    print(f"   No improvement: {self.no_improvement_count}/{self.early_stopping_patience}")
+            
+            # Save validation state after processing
+            self._save_current_state()
+            return should_save
+        
+        # Fallback to original logic if adaptive validation not available
+        # Only save models with non-negative validation returns
         if validation_return < 0:
             self.no_improvement_count += 1
             # Save state after rejection to maintain consistency

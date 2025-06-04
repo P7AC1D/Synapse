@@ -67,8 +67,8 @@ VALIDATION_CONFIG = {
     'early_stopping': {
         'enabled': True,                # Enable early stopping
         'metric': 'validation_return',  # Monitor validation returns
-        'patience': 10,                 # Stop if no improvement for 10 iterations
-        'min_improvement': 0.01,        # Minimum 1% improvement required
+        'patience': 15,                 # Increased patience for adaptive mode
+        'min_improvement': 0.005,       # Reduced minimum improvement (0.5%)
         'mode': 'maximize',             # Maximize validation returns
         'restore_best_weights': True    # Restore best model weights
     },
@@ -76,7 +76,20 @@ VALIDATION_CONFIG = {
     'save_best_only': True,
     'save_frequency': 1,                # Save every iteration
     'validation_frequency': 1,          # Validate every iteration
-    'detailed_validation_logging': True
+    'detailed_validation_logging': True,
+    
+    # Adaptive validation settings
+    'adaptive': {
+        'enabled': True,                # Enable adaptive validation
+        'base_return_threshold': -0.05,  # Start with -5% threshold
+        'min_threshold': -0.15,         # Never go below -15%
+        'max_stagnation_iterations': 50, # Reset after 50 iterations
+        'lookback_window': 20,          # Analyze last 20 iterations
+        'threshold_decay_rate': 0.98,   # Gradual relaxation
+        'risk_adjustment_factor': 0.3,  # Weight for risk metrics
+        'activity_bonus_factor': 0.02,  # Bonus for trading activity
+        'winrate_bonus_factor': 0.1,    # Bonus for win rate
+    }
 }
 
 # Enhanced epsilon configuration for exploration

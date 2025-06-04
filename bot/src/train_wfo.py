@@ -25,6 +25,7 @@ if src_dir not in sys.path:
 from utils.training_utils import (
     train_walk_forward
 )
+from utils.adaptive_validation_utils import AdaptiveValidationManager
 
 def load_and_prepare_data(args):
     """Load and prepare data for training."""
