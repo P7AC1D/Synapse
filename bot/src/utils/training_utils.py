@@ -706,7 +706,11 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 break            # Model selection - IMPROVED WFO Model Selection
             curr_best_path = os.path.join(results_path, "curr_best_model.zip")
             
-            if os.path.exists(curr_best_path):                # Check if improved model selection is enabled
+            if os.path.exists(curr_best_path):
+                # Define metrics_path early to avoid "referenced before assignment" error
+                metrics_path = curr_best_path.replace(".zip", "_metrics.json")
+                
+                # Check if improved model selection is enabled
                 use_improved_selection = VALIDATION_CONFIG.get('wfo_model_selection', {}).get('enabled', True)
                 selection_strategy = VALIDATION_CONFIG.get('wfo_model_selection', {}).get('strategy', 'ensemble_validation')
                 
@@ -752,8 +756,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                         else:
                             print("   Fallback disabled - skipping model selection")
                             
-                if not use_improved_selection:
-                    # Legacy comparison with configurable warnings
+                if not use_improved_selection:                    # Legacy comparison with configurable warnings
                     warn_about_legacy = VALIDATION_CONFIG.get('wfo_model_selection', {}).get('warn_about_legacy', True)
                     
                     if warn_about_legacy:
@@ -764,8 +767,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     else:
                         print(f"💾 Processing model selection...")
                     
-                    # Load validation metrics
-                    metrics_path = curr_best_path.replace(".zip", "_metrics.json")
+                    # Load validation metrics (metrics_path already defined above)
                     if os.path.exists(metrics_path):
                         with open(metrics_path, 'r') as f:
                             curr_metrics = json.load(f)
