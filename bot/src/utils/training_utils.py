@@ -241,7 +241,7 @@ class EvalCallback(BaseCallback):
                     self.no_improvement_count = 0
                     
                     if self.verbose > 0:
-                        threshold = decision_info.get('threshold_used', 0)
+                        threshold = decision_info.get('adaptive_threshold', 0)
                         print(f"✅ 🧠 Enhanced validation - New best score: {score*100:.2f}%")
                         print(f"   Return: {validation_return*100:.2f}% (threshold: {threshold*100:.2f}%)")
                         print(f"   Composite score: {decision_info.get('composite_score', 0)*100:.2f}%")
@@ -254,7 +254,7 @@ class EvalCallback(BaseCallback):
                 self.no_improvement_count += 1
                 if self.verbose > 0:
                     reason = decision_info.get('reason', 'Unknown')
-                    threshold = decision_info.get('threshold_used', 0)
+                    threshold = decision_info.get('adaptive_threshold', 0)
                     print(f"❌ 🧠 Enhanced validation - Model rejected")
                     print(f"   Return: {validation_return*100:.2f}% (threshold: {threshold*100:.2f}%)")
                     print(f"   Reason: {reason}")
