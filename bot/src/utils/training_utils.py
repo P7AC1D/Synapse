@@ -703,54 +703,107 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                     training_successful = False
             
             if not training_successful:
-                break
-            
-            # Model selection
+                break            # Model selection - IMPROVED WFO Model Selection
             curr_best_path = os.path.join(results_path, "curr_best_model.zip")
             
-            if os.path.exists(curr_best_path):
-                print(f"\n💾 Processing model selection...")
+            if os.path.exists(curr_best_path):                # Check if improved model selection is enabled
+                use_improved_selection = VALIDATION_CONFIG.get('wfo_model_selection', {}).get('enabled', True)
+                selection_strategy = VALIDATION_CONFIG.get('wfo_model_selection', {}).get('strategy', 'ensemble_validation')
                 
-                # Load validation metrics
-                metrics_path = curr_best_path.replace(".zip", "_metrics.json")
-                if os.path.exists(metrics_path):
-                    with open(metrics_path, 'r') as f:
-                        curr_metrics = json.load(f)
-                    
-                    curr_validation_score = curr_metrics.get('validation_score', 0)
-                    
-                    # Compare with best model
-                    if os.path.exists(best_model_path):
-                        best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
-                        if os.path.exists(best_metrics_path):
-                            with open(best_metrics_path, 'r') as f:
-                                best_metrics = json.load(f)
+                # Override with command line arguments if provided
+                if hasattr(args, 'disable_improved_selection') and args.disable_improved_selection:
+                    use_improved_selection = False
+                elif hasattr(args, 'model_selection'):
+                    if args.model_selection == 'legacy':
+                        use_improved_selection = False
+                    else:
+                        selection_strategy = args.model_selection
+                
+                if use_improved_selection:
+                    # Import improved model selection (with fallback)
+                    try:
+                        from utils.wfo_model_selection import apply_improved_model_selection
+                        
+                        # Calculate current position in dataset for validation sets
+                        current_end_idx = min(train_end + val_size, len(data))
+                        
+                        # Apply improved model selection with cross-validation
+                        model_updated = apply_improved_model_selection(
+                            results_path=results_path,
+                            current_model_path=curr_best_path,
+                            best_model_path=best_model_path,
+                            data=data,
+                            current_end_idx=current_end_idx,
+                            env_params=env_params,
+                            iteration=iteration,
+                            strategy=selection_strategy
+                        )
+                        
+                        if model_updated:
+                            training_metrics['validation_improvements'] += 1
+                            # Note: best_validation_score tracking is now handled by the selector
                             
-                            best_validation_score = best_metrics.get('validation_score', 0)
+                    except ImportError as e:
+                        print(f"⚠️ Could not import improved model selection: {e}")
+                        fallback_enabled = VALIDATION_CONFIG.get('wfo_model_selection', {}).get('fallback_to_legacy', True)
+                        if fallback_enabled:
+                            print("   Falling back to legacy validation comparison...")
+                            use_improved_selection = False
+                        else:
+                            print("   Fallback disabled - skipping model selection")
                             
-                            if curr_validation_score > best_validation_score:
-                                # New best model based on validation
+                if not use_improved_selection:
+                    # Legacy comparison with configurable warnings
+                    warn_about_legacy = VALIDATION_CONFIG.get('wfo_model_selection', {}).get('warn_about_legacy', True)
+                    
+                    if warn_about_legacy:
+                        print(f"💾 Processing model selection (LEGACY - comparing different validation periods)...")
+                        print(f"⚠️  WARNING: This compares models on different time periods!")
+                        print(f"⚠️  Results may not be meaningful for walk-forward optimization.")
+                        print(f"⚠️  Consider enabling improved model selection in config.")
+                    else:
+                        print(f"💾 Processing model selection...")
+                    
+                    # Load validation metrics
+                    metrics_path = curr_best_path.replace(".zip", "_metrics.json")
+                    if os.path.exists(metrics_path):
+                        with open(metrics_path, 'r') as f:
+                            curr_metrics = json.load(f)
+                        
+                        curr_validation_score = curr_metrics.get('validation_score', 0)
+                        
+                        # Compare with best model
+                        if os.path.exists(best_model_path):
+                            best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
+                            if os.path.exists(best_metrics_path):
+                                with open(best_metrics_path, 'r') as f:
+                                    best_metrics = json.load(f)
+                                
+                                best_validation_score = best_metrics.get('validation_score', 0)
+                                
+                                if curr_validation_score > best_validation_score:
+                                    # New best model based on validation
+                                    shutil.copy2(curr_best_path, best_model_path)
+                                    shutil.copy2(metrics_path, best_metrics_path)
+                                    training_metrics['validation_improvements'] += 1
+                                    training_metrics['best_validation_score'] = curr_validation_score
+                                    print(f"🎯 NEW BEST MODEL: {curr_validation_score*100:.2f}% > {best_validation_score*100:.2f}%")
+                                else:
+                                    print(f"📊 Keeping previous best: {best_validation_score*100:.2f}% >= {curr_validation_score*100:.2f}%")
+                            else:
+                                best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
                                 shutil.copy2(curr_best_path, best_model_path)
                                 shutil.copy2(metrics_path, best_metrics_path)
                                 training_metrics['validation_improvements'] += 1
                                 training_metrics['best_validation_score'] = curr_validation_score
-                                print(f"🎯 NEW BEST MODEL: {curr_validation_score*100:.2f}% > {best_validation_score*100:.2f}%")
-                            else:
-                                print(f"📊 Keeping previous best: {best_validation_score*100:.2f}% >= {curr_validation_score*100:.2f}%")
+                                print(f"🎯 First model saved: {curr_validation_score*100:.2f}%")
                         else:
                             best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
                             shutil.copy2(curr_best_path, best_model_path)
                             shutil.copy2(metrics_path, best_metrics_path)
                             training_metrics['validation_improvements'] += 1
                             training_metrics['best_validation_score'] = curr_validation_score
-                            print(f"🎯 First model saved: {curr_validation_score*100:.2f}%")
-                    else:
-                        best_metrics_path = best_model_path.replace(".zip", "_metrics.json")
-                        shutil.copy2(curr_best_path, best_model_path)
-                        shutil.copy2(metrics_path, best_metrics_path)
-                        training_metrics['validation_improvements'] += 1
-                        training_metrics['best_validation_score'] = curr_validation_score
-                        print(f"🎯 Initial model saved: {curr_validation_score*100:.2f}%")
+                            print(f"🎯 Initial model saved: {curr_validation_score*100:.2f}%")
                 
                 # Clean up temporary files
                 os.remove(curr_best_path)

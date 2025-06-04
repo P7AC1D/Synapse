@@ -74,10 +74,20 @@ def main():
     parser.add_argument('--min-lots', type=float, default=0.01, dest='min_lots', help='Minimum lot size')
     parser.add_argument('--max-lots', type=float, default=1.0, dest='max_lots', help='Maximum lot size')
     parser.add_argument('--contract-size', type=float, default=100000, dest='contract_size', help='Contract size')
-      # Data and paths
+    
+    # Data and paths
     parser.add_argument('--data-path', type=str, default='../data/XAUUSD_M15_enriched_features.csv', 
                        dest='data_path', help='Path to training data')
     parser.add_argument('--device', type=str, default='auto', help='Device for training (auto/cpu/cuda)')
+    
+    # Model selection strategy arguments
+    parser.add_argument('--model-selection', type=str, default='ensemble_validation',
+                       choices=['ensemble_validation', 'rolling_validation', 'risk_adjusted', 'legacy'],
+                       dest='model_selection', help='Model selection strategy for walk-forward optimization')
+    parser.add_argument('--disable-improved-selection', action='store_true', dest='disable_improved_selection',
+                       help='Disable improved model selection and use legacy comparison')
+    parser.add_argument('--no-legacy-warnings', action='store_true', dest='no_legacy_warnings',
+                       help='Suppress warnings when using legacy model selection')
     
     args = parser.parse_args()
     
@@ -85,8 +95,17 @@ def main():
     print(f"🚀 WALK-FORWARD OPTIMIZATION TRAINING")
     print(f"{'='*60}")
     print(f"Seed: {args.seed}")
+    print(f"Model Selection: {args.model_selection}")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}")
+    
+    # Update configuration based on command line arguments
+    if hasattr(args, 'disable_improved_selection') and args.disable_improved_selection:
+        print("⚠️  Improved model selection disabled - using legacy comparison")
+    elif hasattr(args, 'model_selection') and args.model_selection == 'legacy':
+        print("⚠️  Legacy model selection explicitly requested")
+    else:
+        print(f"✅ Using improved model selection: {getattr(args, 'model_selection', 'ensemble_validation')}")
     
     # Create results directory using proper cross-platform path handling
     results_dir = os.path.join("..", "results", str(args.seed))

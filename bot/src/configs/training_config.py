@@ -14,7 +14,7 @@ from torch import nn
 
 # Core training configuration
 TRAINING_CONFIG = {
-    'total_timesteps': 40000,        # Total training steps
+    'total_timesteps': 150000,        # Total training steps
     'eval_freq': 3000,               # More frequent evaluation
     'learning_starts': 1000,         # Initial learning delay
     'train_split': 0.7,             # Training data proportion
@@ -77,8 +77,7 @@ VALIDATION_CONFIG = {
     'save_frequency': 1,                # Save every iteration
     'validation_frequency': 1,          # Validate every iteration
     'detailed_validation_logging': True,
-    
-    # Adaptive validation settings
+      # Adaptive validation settings
     'adaptive': {
         'enabled': True,                # Enable adaptive validation
         'base_return_threshold': -0.05,  # Start with -5% threshold
@@ -89,6 +88,14 @@ VALIDATION_CONFIG = {
         'risk_adjustment_factor': 0.3,  # Weight for risk metrics
         'activity_bonus_factor': 0.02,  # Bonus for trading activity
         'winrate_bonus_factor': 0.1,    # Bonus for win rate
+    },
+    
+    # Walk-Forward Model Selection settings
+    'wfo_model_selection': {
+        'enabled': True,                # Enable improved WFO model selection
+        'strategy': 'ensemble_validation',  # Strategy: ensemble_validation, rolling_validation, risk_adjusted
+        'fallback_to_legacy': True,     # Fallback to legacy comparison if improved fails
+        'warn_about_legacy': True       # Show warnings when using legacy comparison
     }
 }
 
