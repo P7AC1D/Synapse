@@ -225,12 +225,12 @@ class EvalCallback(BaseCallback):
     def _should_save_model(self, validation_metrics: Dict[str, float]) -> bool:
         """Determine if model should be saved based on validation performance."""
         validation_return = validation_metrics['return']
-        
-        # Use adaptive validation if available
+          # Use adaptive validation if available
         if self.adaptive_validation:
-            should_save, decision_info = self.adaptive_validation.should_save_model(
-                validation_metrics, self.best_validation_score, self.validation_history
+            decision_info = self.adaptive_validation.should_save_model(
+                validation_metrics, self.best_validation_score
             )
+            should_save = decision_info.get('should_save', False)
             
             if should_save:
                 # Update best scores
@@ -492,14 +492,14 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         initial_window: Size of initial training window
         step_size: Step size for moving window forward
         args: Training arguments
-        
-    Returns:
+          Returns:
         RecurrentPPO: Final trained model
     """
     total_periods = len(data)
     total_iterations = (total_periods - initial_window) // step_size + 1
     
-    results_path = f"../results/{args.seed}"
+    # Create results path using proper cross-platform path handling
+    results_path = os.path.join("..", "results", str(args.seed))
     os.makedirs(results_path, exist_ok=True)
     best_model_path = os.path.join(results_path, "best_model.zip")
     

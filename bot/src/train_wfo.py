@@ -74,8 +74,7 @@ def main():
     parser.add_argument('--min-lots', type=float, default=0.01, dest='min_lots', help='Minimum lot size')
     parser.add_argument('--max-lots', type=float, default=1.0, dest='max_lots', help='Maximum lot size')
     parser.add_argument('--contract-size', type=float, default=100000, dest='contract_size', help='Contract size')
-    
-    # Data and paths
+      # Data and paths
     parser.add_argument('--data-path', type=str, default='../data/XAUUSD_M15_enriched_features.csv', 
                        dest='data_path', help='Path to training data')
     parser.add_argument('--device', type=str, default='auto', help='Device for training (auto/cpu/cuda)')
@@ -89,8 +88,8 @@ def main():
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}")
     
-    # Create results directory
-    results_dir = f"../results/{args.seed}"
+    # Create results directory using proper cross-platform path handling
+    results_dir = os.path.join("..", "results", str(args.seed))
     os.makedirs(results_dir, exist_ok=True)
     
     # Load data
