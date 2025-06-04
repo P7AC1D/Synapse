@@ -63,9 +63,9 @@ def main():
     
     # Core training parameters
     parser.add_argument('--seed', type=int, default=1007, help='Random seed for reproducibility')
-    parser.add_argument('--total-timesteps', type=int, default=40000, dest='total_timesteps', help='Total timesteps for training')
-    parser.add_argument('--initial-window', type=int, default=5000, dest='initial_window', help='Initial training window size')
-    parser.add_argument('--step-size', type=int, default=500, dest='step_size', help='Walk-forward step size')
+    parser.add_argument('--total-timesteps', type=int, default=150000, dest='total_timesteps', help='Total timesteps for training')
+    parser.add_argument('--initial-window', type=int, default=18000, dest='initial_window', help='Initial training window size')
+    parser.add_argument('--step-size', type=int, default=1500, dest='step_size', help='Walk-forward step size')
     
     # Environment parameters
     parser.add_argument('--initial-balance', type=float, default=10000, dest='initial_balance', help='Initial account balance')
