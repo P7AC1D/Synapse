@@ -74,9 +74,8 @@ def main():
     parser.add_argument('--min-lots', type=float, default=0.01, dest='min_lots', help='Minimum lot size')
     parser.add_argument('--max-lots', type=float, default=1.0, dest='max_lots', help='Maximum lot size')
     parser.add_argument('--contract-size', type=float, default=100000, dest='contract_size', help='Contract size')
-    
-    # Data and paths
-    parser.add_argument('--data-path', type=str, default='../data/XAUUSD_M15_enriched_features.csv', 
+      # Data and paths
+    parser.add_argument('--data-path', type=str, default='../data/XAUUSDm_15min.csv', 
                        dest='data_path', help='Path to training data')
     parser.add_argument('--device', type=str, default='auto', help='Device for training (auto/cpu/cuda)')
     

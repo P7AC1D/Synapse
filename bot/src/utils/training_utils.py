@@ -336,6 +336,9 @@ class EvalCallback(BaseCallback):
         self.n_calls += 1
         
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+            # Debug: Log evaluation trigger
+            print(f"🔍 Evaluation triggered: n_calls={self.n_calls}, eval_freq={self.eval_freq}, timestep={self.num_timesteps}")
+            
             # Evaluate on validation set
             validation_metrics = self._evaluate_on_validation()
             self.validation_history.append(validation_metrics)
@@ -659,6 +662,13 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 iteration=iteration,
                 training_timesteps=current_timesteps
             )
+            
+            # Debug: Print eval frequency configuration
+            print(f"🔧 Evaluation Configuration:")
+            print(f"   Config eval_freq: {TRAINING_CONFIG['eval_freq']}")
+            print(f"   EvalCallback eval_freq: {eval_cb.eval_freq}")
+            print(f"   Current timesteps: {current_timesteps}")
+            print(f"   Step size: {step_size}")
             
             # Create anti-collapse callback
             anti_collapse_cb = AntiCollapseCallback(
