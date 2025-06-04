@@ -81,6 +81,9 @@ class EvalCallback(BaseCallback):
         self.iteration = iteration
         self.training_timesteps = training_timesteps
         
+        # Create enhanced directory structure
+        self._create_directory_structure()
+        
         # Initialize adaptive validation if enabled
         self.adaptive_validation = None
         if best_model_save_path and VALIDATION_CONFIG.get('adaptive', {}).get('enabled', False):
@@ -93,6 +96,26 @@ class EvalCallback(BaseCallback):
             
         self.early_stopping_patience = VALIDATION_CONFIG['early_stopping']['patience']
         self.n_calls = 0
+    
+    def _create_directory_structure(self):
+        """Create enhanced directory structure for organized storage."""
+        if not self.best_model_save_path:
+            return
+            
+        # Create main directories
+        self.iterations_dir = os.path.join(self.best_model_save_path, "iterations")
+        self.checkpoints_dir = os.path.join(self.best_model_save_path, "checkpoints")
+        self.validation_dir = os.path.join(self.best_model_save_path, "validation_results")
+        
+        # Create directories if they don't exist
+        for directory in [self.iterations_dir, self.checkpoints_dir, self.validation_dir]:
+            os.makedirs(directory, exist_ok=True)
+            
+        if self.verbose > 0:
+            print(f"📁 Enhanced directory structure created:")
+            print(f"   Iterations: {self.iterations_dir}")
+            print(f"   Checkpoints: {self.checkpoints_dir}")
+            print(f"   Validation: {self.validation_dir}")
     
     def _initialize_validation_state(self):
         """Initialize or load validation state."""
@@ -260,8 +283,7 @@ class EvalCallback(BaseCallback):
             self.best_validation_score = validation_score
             self.best_validation_metrics = validation_metrics
             self.no_improvement_count = 0
-            
-            # Save validation state after improvement
+              # Save validation state after improvement
             self._save_current_state()
             
             if self.verbose > 0:
@@ -296,6 +318,12 @@ class EvalCallback(BaseCallback):
             # Evaluate on validation set
             validation_metrics = self._evaluate_on_validation()
             self.validation_history.append(validation_metrics)
+            
+            # Save detailed validation results for analysis
+            self._save_validation_results(validation_metrics)
+            
+            # Save checkpoint model for analysis
+            self._save_checkpoint_model()
             
             # Log validation performance
             if self.verbose > 0:
@@ -334,6 +362,88 @@ class EvalCallback(BaseCallback):
         
         return True  # Continue training
 
+    def _save_validation_results(self, validation_metrics: Dict[str, Any]):
+        """Save detailed validation results for analysis."""
+        if not self.best_model_save_path:
+            return
+            
+        # Create comprehensive validation result
+        result = {
+            'iteration': self.iteration,
+            'training_step': self.n_calls,
+            'timestamp': datetime.now().isoformat(),
+            'progress': {
+                'step_progress': self.n_calls / self.training_timesteps * 100,
+                'eval_number': len(self.validation_history),
+                'no_improvement_count': self.no_improvement_count,
+                'early_stopping_patience': self.early_stopping_patience
+            },
+            'validation_metrics': validation_metrics,
+            'best_validation_score': self.best_validation_score,
+            'adaptive_validation': None
+        }
+        
+        # Add adaptive validation info if available
+        if self.adaptive_validation:
+            try:
+                result['adaptive_validation'] = self.adaptive_validation.get_diagnostic_info()
+            except:
+                result['adaptive_validation'] = {'status': 'error_getting_info'}
+        
+        # Save to iterations directory
+        iteration_file = os.path.join(
+            self.iterations_dir, 
+            f"iteration_{self.iteration}_step_{self.n_calls}_validation.json"
+        )
+        with open(iteration_file, 'w') as f:
+            json.dump(result, f, indent=2)
+        
+        # Save to validation results directory with timestamped name
+        validation_file = os.path.join(
+            self.validation_dir,
+            f"validation_step_{self.n_calls:06d}.json"
+        )
+        with open(validation_file, 'w') as f:
+            json.dump(result, f, indent=2)
+        
+        if self.verbose > 1:
+            print(f"📁 Validation results saved:")
+            print(f"   Iteration: {iteration_file}")
+            print(f"   Validation: {validation_file}")
+    
+    def _save_checkpoint_model(self):
+        """Save checkpoint model for analysis and recovery."""
+        if not self.best_model_save_path:
+            return
+            
+        # Create checkpoint filename with detailed info
+        checkpoint_name = f"checkpoint_iter_{self.iteration}_step_{self.n_calls:06d}.zip"
+        checkpoint_path = os.path.join(self.checkpoints_dir, checkpoint_name)
+        
+        # Save model checkpoint
+        self.model.save(checkpoint_path)
+        
+        # Create checkpoint metadata
+        metadata = {
+            'iteration': self.iteration,
+            'training_step': self.n_calls,
+            'timestamp': datetime.now().isoformat(),
+            'model_path': checkpoint_path,
+            'validation_history_length': len(self.validation_history),
+            'best_validation_score': self.best_validation_score,
+            'no_improvement_count': self.no_improvement_count,
+            'progress_percent': self.n_calls / self.training_timesteps * 100
+        }
+        
+        # Save metadata alongside model
+        metadata_path = checkpoint_path.replace('.zip', '_metadata.json')
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        if self.verbose > 1:
+            print(f"🔄 Checkpoint saved: {checkpoint_name}")
+    
+    # ...existing code...
 def create_data_splits(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Create data splits for training, validation, and testing.

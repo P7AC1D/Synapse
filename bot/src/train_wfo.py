@@ -17,6 +17,9 @@ import pandas as pd
 from datetime import datetime
 import json
 
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable oneDNN custom operations
+
 # Add src directory to path
 src_dir = os.path.dirname(os.path.abspath(__file__))
 if src_dir not in sys.path:
