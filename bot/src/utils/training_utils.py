@@ -194,19 +194,22 @@ class EvalCallback(BaseCallback):
                 env_metrics = self.eval_env.metrics.get_performance_summary()
             
             validation_return = env_metrics.get('return_pct', 0.0) / 100.0
-            
-            # Validation metrics
+              # Validation metrics
             validation_metrics = {
                 'return': validation_return,
                 'total_trades': env_metrics.get('total_trades', 0),
                 'win_rate': env_metrics.get('win_rate', 0.0) / 100.0,
                 'profit_factor': env_metrics.get('profit_factor', 0.0),
                 'max_drawdown': env_metrics.get('max_drawdown_pct', 0.0) / 100.0,
+                'max_equity_drawdown': env_metrics.get('max_equity_drawdown_pct', 0.0) / 100.0,
                 'sharpe_ratio': env_metrics.get('sharpe_ratio', 0.0),
                 'episode_reward': episode_reward,
-                'steps': step_count
-            }
-            
+                'steps': step_count,
+                'long_trades': env_metrics.get('long_trades', 0),
+                'short_trades': env_metrics.get('short_trades', 0),
+                'long_win_rate': env_metrics.get('long_win_rate', 0.0) / 100.0,
+                'short_win_rate': env_metrics.get('short_win_rate', 0.0) / 100.0
+            }            
             return validation_metrics
             
         except Exception as e:
@@ -219,7 +222,11 @@ class EvalCallback(BaseCallback):
                 'max_drawdown': 1.0,
                 'sharpe_ratio': -1.0,
                 'episode_reward': -1000,
-                'steps': 0
+                'steps': 0,
+                'long_trades': 0,
+                'short_trades': 0,
+                'long_win_rate': 0.0,
+                'short_win_rate': 0.0
             }
     
     def _should_save_model(self, validation_metrics: Dict[str, float]) -> bool:
@@ -321,17 +328,19 @@ class EvalCallback(BaseCallback):
             
             # Save detailed validation results for analysis
             self._save_validation_results(validation_metrics)
-            
-            # Save checkpoint model for analysis
+              # Save checkpoint model for analysis
             self._save_checkpoint_model()
-              # Log validation performance
+            
+            # Log validation performance
             if self.verbose > 0:
                 print(f"\n📊 Validation Results (Step {self.num_timesteps}):")
                 print(f"   Return: {validation_metrics['return']*100:.2f}%")
                 print(f"   Trades: {validation_metrics['total_trades']}")
                 print(f"   Win Rate: {validation_metrics['win_rate']*100:.1f}%")
                 print(f"   Profit Factor: {validation_metrics['profit_factor']:.2f}")
-                print(f"   Max Drawdown: {validation_metrics['max_drawdown']*100:.1f}%")
+                print(f"   Max Drawdown: {validation_metrics['max_drawdown']*100:.1f}% ({validation_metrics['max_equity_drawdown']*100:.1f}%)")
+                print(f"   Long Trades: {validation_metrics['long_trades']} ({validation_metrics['long_win_rate']*100:.1f}% win)")
+                print(f"   Short Trades: {validation_metrics['short_trades']} ({validation_metrics['short_win_rate']*100:.1f}% win)")
             
             # Save model if performance is good
             if self._should_save_model(validation_metrics):
