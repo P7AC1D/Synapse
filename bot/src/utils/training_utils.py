@@ -381,7 +381,7 @@ class EvalCallback(BaseCallback):
                 print(f"   Steps Completed: {validation_metrics['steps']:,d}")
                 print(f"   Data Utilization: {(validation_metrics['steps'] / len(self.val_data) * 100):.1f}%")
                 
-                print(f"{'='*60}")
+                print(f"{'='*60}\n")
             
             # Save model if performance is good
             if self._should_save_model(validation_metrics):

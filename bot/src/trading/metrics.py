@@ -226,6 +226,7 @@ class MetricsTracker:
             "avg_win_points": 0.0,
             "avg_loss_points": 0.0,
             "profit_factor": 0.0,
+            "sharpe_ratio": 0.0,
             
             # Risk metrics
             "max_drawdown_pct": self.get_drawdown() * 100,
@@ -263,6 +264,22 @@ class MetricsTracker:
             long_wins = long_trades[long_trades["pnl"].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
             short_wins = short_trades[short_trades["pnl"].apply(lambda x: x > 0 and abs(x) >= 1e-8)]
 
+            # Calculate Sharpe ratio based on trade returns
+            sharpe_ratio = 0.0
+            if len(trades_df) > 1:  # Need at least 2 trades for standard deviation
+                # Calculate returns as percentage of initial balance for each trade
+                trade_returns = trades_df["pnl"] / self.initial_balance
+                mean_return = trade_returns.mean()
+                std_return = trade_returns.std()
+                
+                # Sharpe ratio = (mean return - risk free rate) / std deviation
+                # Assuming risk-free rate of 0 for simplicity (can be adjusted)
+                if std_return > 0:
+                    sharpe_ratio = mean_return / std_return
+                    # Annualize the Sharpe ratio (assuming daily trades, adjust as needed)
+                    # For trading systems, we often use sqrt(252) for daily or sqrt(number of periods per year)
+                    sharpe_ratio = sharpe_ratio * np.sqrt(252)  # Annualized for daily trading
+
             summary.update({
                 "total_trades": len(trades_df),
                 "win_rate": len(winning_trades) / len(trades_df) * 100,
@@ -271,6 +288,7 @@ class MetricsTracker:
                 "avg_win_points": winning_trades["profit_points"].mean() if not winning_trades.empty else 0.0,
                 "avg_loss_points": losing_trades["profit_points"].mean() if not losing_trades.empty else 0.0,
                 "profit_factor": abs(winning_trades["pnl"].sum() / losing_trades["pnl"].sum()) if not losing_trades.empty else float('inf'),
+                "sharpe_ratio": sharpe_ratio,
                 
                 # Directional metrics
                 "long_trades": len(long_trades),
