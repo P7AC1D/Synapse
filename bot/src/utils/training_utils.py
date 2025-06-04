@@ -324,10 +324,9 @@ class EvalCallback(BaseCallback):
             
             # Save checkpoint model for analysis
             self._save_checkpoint_model()
-            
-            # Log validation performance
+              # Log validation performance
             if self.verbose > 0:
-                print(f"\n📊 Validation Results (Step {self.n_calls}):")
+                print(f"\n📊 Validation Results (Step {self.num_timesteps}):")
                 print(f"   Return: {validation_metrics['return']*100:.2f}%")
                 print(f"   Trades: {validation_metrics['total_trades']}")
                 print(f"   Win Rate: {validation_metrics['win_rate']*100:.1f}%")
@@ -340,14 +339,13 @@ class EvalCallback(BaseCallback):
                     # Save as current best model
                     curr_best_path = os.path.join(self.best_model_save_path, "curr_best_model.zip")
                     self.model.save(curr_best_path)
-                    
-                    # Save validation metrics
+                      # Save validation metrics
                     metrics_path = curr_best_path.replace(".zip", "_metrics.json")
                     metrics_to_save = {
                         'validation_score': self.best_validation_score,
                         'validation_metrics': validation_metrics,
                         'iteration': self.iteration,
-                        'training_step': self.n_calls,
+                        'training_step': self.num_timesteps,
                         'timestamp': datetime.now().isoformat()
                     }
                     
@@ -366,14 +364,13 @@ class EvalCallback(BaseCallback):
         """Save detailed validation results for analysis."""
         if not self.best_model_save_path:
             return
-            
-        # Create comprehensive validation result
+              # Create comprehensive validation result
         result = {
             'iteration': self.iteration,
-            'training_step': self.n_calls,
+            'training_step': self.num_timesteps,
             'timestamp': datetime.now().isoformat(),
             'progress': {
-                'step_progress': self.n_calls / self.training_timesteps * 100,
+                'step_progress': self.num_timesteps / self.training_timesteps * 100,
                 'eval_number': len(self.validation_history),
                 'no_improvement_count': self.no_improvement_count,
                 'early_stopping_patience': self.early_stopping_patience
@@ -389,11 +386,10 @@ class EvalCallback(BaseCallback):
                 result['adaptive_validation'] = self.adaptive_validation.get_diagnostic_info()
             except:
                 result['adaptive_validation'] = {'status': 'error_getting_info'}
-        
-        # Save to iterations directory
+          # Save to iterations directory
         iteration_file = os.path.join(
             self.iterations_dir, 
-            f"iteration_{self.iteration}_step_{self.n_calls}_validation.json"
+            f"iteration_{self.iteration}_step_{self.num_timesteps}_validation.json"
         )
         with open(iteration_file, 'w') as f:
             json.dump(result, f, indent=2)
@@ -401,7 +397,7 @@ class EvalCallback(BaseCallback):
         # Save to validation results directory with timestamped name
         validation_file = os.path.join(
             self.validation_dir,
-            f"validation_step_{self.n_calls:06d}.json"
+            f"validation_step_{self.num_timesteps:06d}.json"
         )
         with open(validation_file, 'w') as f:
             json.dump(result, f, indent=2)
@@ -415,9 +411,8 @@ class EvalCallback(BaseCallback):
         """Save checkpoint model for analysis and recovery."""
         if not self.best_model_save_path:
             return
-            
-        # Create checkpoint filename with detailed info
-        checkpoint_name = f"checkpoint_iter_{self.iteration}_step_{self.n_calls:06d}.zip"
+              # Create checkpoint filename with detailed info
+        checkpoint_name = f"checkpoint_iter_{self.iteration}_step_{self.num_timesteps:06d}.zip"
         checkpoint_path = os.path.join(self.checkpoints_dir, checkpoint_name)
         
         # Save model checkpoint
@@ -426,13 +421,13 @@ class EvalCallback(BaseCallback):
         # Create checkpoint metadata
         metadata = {
             'iteration': self.iteration,
-            'training_step': self.n_calls,
+            'training_step': self.num_timesteps,
             'timestamp': datetime.now().isoformat(),
             'model_path': checkpoint_path,
             'validation_history_length': len(self.validation_history),
             'best_validation_score': self.best_validation_score,
             'no_improvement_count': self.no_improvement_count,
-            'progress_percent': self.n_calls / self.training_timesteps * 100
+            'progress_percent': self.num_timesteps / self.training_timesteps * 100
         }
         
         # Save metadata alongside model
