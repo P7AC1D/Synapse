@@ -193,8 +193,7 @@ class EvalCallback(BaseCallback):
             else:
                 env_metrics = self.eval_env.metrics.get_performance_summary()
             
-            validation_return = env_metrics.get('return_pct', 0.0) / 100.0
-              # Validation metrics
+            validation_return = env_metrics.get('return_pct', 0.0) / 100.0            # Validation metrics
             validation_metrics = {
                 'return': validation_return,
                 'total_trades': env_metrics.get('total_trades', 0),
@@ -208,8 +207,15 @@ class EvalCallback(BaseCallback):
                 'long_trades': env_metrics.get('long_trades', 0),
                 'short_trades': env_metrics.get('short_trades', 0),
                 'long_win_rate': env_metrics.get('long_win_rate', 0.0) / 100.0,
-                'short_win_rate': env_metrics.get('short_win_rate', 0.0) / 100.0
-            }            
+                'short_win_rate': env_metrics.get('short_win_rate', 0.0) / 100.0,
+                'avg_win_points': env_metrics.get('avg_win_points', 0.0),
+                'avg_loss_points': env_metrics.get('avg_loss_points', 0.0),
+                'avg_win': env_metrics.get('avg_win', 0.0),
+                'avg_loss': env_metrics.get('avg_loss', 0.0),
+                'win_hold_time': env_metrics.get('win_hold_time', 0.0),
+                'loss_hold_time': env_metrics.get('loss_hold_time', 0.0),
+                'avg_hold_time': env_metrics.get('avg_hold_time', 0.0)            }
+            
             return validation_metrics
             
         except Exception as e:
@@ -220,13 +226,21 @@ class EvalCallback(BaseCallback):
                 'win_rate': 0.0,
                 'profit_factor': 0.0,                
                 'max_drawdown': 1.0,
+                'max_equity_drawdown': 1.0,
                 'sharpe_ratio': -1.0,
                 'episode_reward': -1000,
                 'steps': 0,
                 'long_trades': 0,
                 'short_trades': 0,
                 'long_win_rate': 0.0,
-                'short_win_rate': 0.0
+                'short_win_rate': 0.0,
+                'avg_win_points': 0.0,
+                'avg_loss_points': 0.0,
+                'avg_win': 0.0,
+                'avg_loss': 0.0,
+                'win_hold_time': 0.0,
+                'loss_hold_time': 0.0,
+                'avg_hold_time': 0.0
             }
     
     def _should_save_model(self, validation_metrics: Dict[str, float]) -> bool:
@@ -330,17 +344,44 @@ class EvalCallback(BaseCallback):
             self._save_validation_results(validation_metrics)
               # Save checkpoint model for analysis
             self._save_checkpoint_model()
-            
-            # Log validation performance
+              # Log validation performance
             if self.verbose > 0:
-                print(f"\n📊 Validation Results (Step {self.num_timesteps}):")
+                print(f"\n{'='*60}")
+                print(f"📊 VALIDATION RESULTS (Step {self.num_timesteps:,d})")
+                print(f"{'='*60}")
+                
+                # Performance Overview Section
+                print(f"\n💰 PERFORMANCE OVERVIEW:")
                 print(f"   Return: {validation_metrics['return']*100:.2f}%")
-                print(f"   Trades: {validation_metrics['total_trades']}")
-                print(f"   Win Rate: {validation_metrics['win_rate']*100:.1f}%")
+                print(f"   Total Reward: {validation_metrics['episode_reward']:.2f}")
+                print(f"   Sharpe Ratio: {validation_metrics['sharpe_ratio']:.2f}")
+                print(f"   Max Drawdown: {validation_metrics['max_drawdown']*100:.1f}% (Equity: {validation_metrics['max_equity_drawdown']*100:.1f}%)")
+                
+                # Trading Statistics Section
+                print(f"\n📈 TRADING STATISTICS:")
+                print(f"   Total Trades: {validation_metrics['total_trades']}")
+                print(f"   Overall Win Rate: {validation_metrics['win_rate']*100:.1f}%")
                 print(f"   Profit Factor: {validation_metrics['profit_factor']:.2f}")
-                print(f"   Max Drawdown: {validation_metrics['max_drawdown']*100:.1f}% ({validation_metrics['max_equity_drawdown']*100:.1f}%)")
+                print(f"   Average Win: ${validation_metrics['avg_win']:.2f} ({validation_metrics['avg_win_points']:.1f} points)")
+                print(f"   Average Loss: ${validation_metrics['avg_loss']:.2f} ({validation_metrics['avg_loss_points']:.1f} points)")
+                
+                # Directional Analysis Section
+                print(f"\n🎯 DIRECTIONAL ANALYSIS:")
                 print(f"   Long Trades: {validation_metrics['long_trades']} ({validation_metrics['long_win_rate']*100:.1f}% win)")
                 print(f"   Short Trades: {validation_metrics['short_trades']} ({validation_metrics['short_win_rate']*100:.1f}% win)")
+                
+                # Timing Analysis Section
+                print(f"\n⏱️ TIMING ANALYSIS:")
+                print(f"   Average Hold Time: {validation_metrics['avg_hold_time']:.1f} bars")
+                print(f"   Winning Trades Hold: {validation_metrics['win_hold_time']:.1f} bars")
+                print(f"   Losing Trades Hold: {validation_metrics['loss_hold_time']:.1f} bars")
+                
+                # Execution Summary
+                print(f"\n🔄 EXECUTION SUMMARY:")
+                print(f"   Steps Completed: {validation_metrics['steps']:,d}")
+                print(f"   Data Utilization: {(validation_metrics['steps'] / len(self.val_data) * 100):.1f}%")
+                
+                print(f"{'='*60}")
             
             # Save model if performance is good
             if self._should_save_model(validation_metrics):
