@@ -242,22 +242,22 @@ class EvalCallback(BaseCallback):
                     
                     if self.verbose > 0:
                         threshold = decision_info.get('adaptive_threshold', 0)
-                        print(f"✅ 🧠 Enhanced validation - New best score: {score*100:.2f}%")
+                        print(f"✅ Enhanced validation - New best score: {score*100:.2f}%")
                         print(f"   Return: {validation_return*100:.2f}% (threshold: {threshold*100:.2f}%)")
                         print(f"   Composite score: {decision_info.get('composite_score', 0)*100:.2f}%")
                 else:
                     self.no_improvement_count += 1
                     if self.verbose > 0:
-                        print(f"✅ 🧠 Enhanced validation - Model saved (meets criteria)")
+                        print(f"✅ Enhanced validation - Model saved (meets criteria)")
                         print(f"   Return: {validation_return*100:.2f}%, Score: {score*100:.2f}%")
             else:
                 self.no_improvement_count += 1
                 if self.verbose > 0:
-                    reason = decision_info.get('reason', 'Unknown')
+                    reasoning = decision_info.get('reasoning', 'Unknown')
                     threshold = decision_info.get('adaptive_threshold', 0)
-                    print(f"❌ 🧠 Enhanced validation - Model rejected")
+                    print(f"❌ Enhanced validation - Model rejected")
                     print(f"   Return: {validation_return*100:.2f}% (threshold: {threshold*100:.2f}%)")
-                    print(f"   Reason: {reason}")
+                    print(f"   Reason: {reasoning}")
                     print(f"   No improvement: {self.no_improvement_count}/{self.early_stopping_patience}")
             
             # Save validation state after processing
