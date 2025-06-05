@@ -10,7 +10,7 @@ from .actions import Action, ActionHandler
 from .enhanced_features import EnhancedFeatureProcessor as FeatureProcessor
 from .metrics import MetricsTracker
 from .rendering import Renderer
-from .rewards import RewardCalculator
+from .rewards import SimpleRewardCalculator
 
 class TradingEnv(gym.Env, EzPickle):
     """Trading environment for single-position trading with PPO-LSTM."""
@@ -75,13 +75,12 @@ class TradingEnv(gym.Env, EzPickle):
         # Market simulation settings
         self.spread_variation = spread_variation
         self.slippage_range = slippage_range
-        
-        # Initialize components
+          # Initialize components
         self.feature_processor = FeatureProcessor()
         self.metrics = MetricsTracker(initial_balance)
         self.action_handler = ActionHandler(self)
         self.renderer = Renderer()
-        self.reward_calculator = RewardCalculator(self)
+        self.reward_calculator = SimpleRewardCalculator(self)
         
         # Verify required columns
         required_columns = ['open', 'close', 'high', 'low', 'spread']
@@ -236,7 +235,7 @@ class TradingEnv(gym.Env, EzPickle):
             # HOLD action with position - PnL already updated above
             pass
 
-        # Calculate reward using RewardCalculator
+        # Calculate reward using SimpleRewardCalculator
         reward = self.reward_calculator.calculate_reward(
             action=action,
             position_type=position_type,

@@ -4,7 +4,7 @@ from .actions import Action, ActionHandler
 from .features import FeatureProcessor
 from .metrics import MetricsTracker
 from .rendering import Renderer
-from .rewards import RewardCalculator
+from .rewards import SimpleRewardCalculator
 
 __all__ = [
     'TradingEnv',
@@ -13,5 +13,5 @@ __all__ = [
     'FeatureProcessor',
     'MetricsTracker',
     'Renderer',
-    'RewardCalculator'
+    'SimpleRewardCalculator'
 ]
