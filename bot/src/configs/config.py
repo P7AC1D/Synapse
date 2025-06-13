@@ -14,7 +14,7 @@ Key optimizations:
 
 import torch as th
 from torch import nn
-from ..trading.features import FeatureProcessor
+from trading.features import FeatureProcessor
 
 # Core training configuration
 TRAINING_CONFIG = {
