@@ -1,7 +1,7 @@
 """Trading package for reinforcement learning environment."""
 from .environment import TradingEnv
 from .actions import Action, ActionHandler 
-from .paper_inspired_features import PaperInspiredFeatureProcessor as FeatureProcessor
+from .features import FeatureProcessor
 from .metrics import MetricsTracker
 from .rendering import Renderer
 from .rewards import SimpleRewardCalculator

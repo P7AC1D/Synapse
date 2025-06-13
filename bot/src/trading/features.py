@@ -4,7 +4,7 @@ import pandas as pd
 from typing import Tuple
 from gymnasium import spaces
 
-class PaperInspiredFeatureProcessor:
+class FeatureProcessor:
     """Feature processor implementing paper's price ratio methodology."""
     
     def __init__(self, window_size: int = 10):

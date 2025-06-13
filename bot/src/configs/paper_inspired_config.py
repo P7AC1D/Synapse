@@ -13,7 +13,7 @@ Key components:
 
 import torch as th
 from torch import nn
-from ..trading.paper_inspired_features import PaperInspiredFeatureProcessor
+from ..trading.features import FeatureProcessor
 
 # Core training configuration
 TRAINING_CONFIG = {
@@ -24,7 +24,7 @@ TRAINING_CONFIG = {
     'validation_split': 0.2,          # Validation data proportion
     'test_split': 0.1,               # Test data proportion
     'random_start': False,           # Deterministic start for validation consistency
-    'feature_processor': PaperInspiredFeatureProcessor,  # Use paper's feature processing
+    'feature_processor': FeatureProcessor,  # Use paper's feature processing
     'window_size': 10                # Time window for feature calculation
 }
 

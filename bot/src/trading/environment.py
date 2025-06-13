@@ -7,7 +7,7 @@ from gymnasium.utils import EzPickle
 import gymnasium as gym
 
 from .actions import Action, ActionHandler
-from .paper_inspired_features import PaperInspiredFeatureProcessor
+from .features import FeatureProcessor
 from .metrics import MetricsTracker
 from .rendering import Renderer
 from .rewards import SimpleRewardCalculator
@@ -76,7 +76,7 @@ class TradingEnv(gym.Env, EzPickle):
         # Market simulation settings
         self.spread_variation = spread_variation
         self.slippage_range = slippage_range        # Initialize components with specified or default feature processor
-        self.feature_processor = (feature_processor_class or PaperInspiredFeatureProcessor)()
+        self.feature_processor = (feature_processor_class or FeatureProcessor)()
         self.metrics = MetricsTracker(initial_balance)
         self.action_handler = ActionHandler(self)
         self.renderer = Renderer()
