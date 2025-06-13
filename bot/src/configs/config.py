@@ -1,15 +1,15 @@
 """
 Main Training Configuration
 
-This configuration implements the optimized feature processing methodology using 
-price ratio features for normalized market data representation.
+This configuration implements optimized network architecture for price ratio features.
 
-Key components:
-1. Price ratio-based feature processing (6 core features)
-2. Optimized model architecture for price ratios
-3. Time-series window alignment
-4. Normalized feature representation
-5. Regularized model architecture
+Key optimizations:
+1. Price ratio-based feature processing (8 total features: 6 ratios + 2 runtime)
+2. Right-sized model architecture (~20K parameters vs 79K)
+3. Smaller LSTM (64 units) and dense layers [32,16] for simple features
+4. Time-series window alignment
+5. Normalized feature representation
+6. Regularized training parameters
 """
 
 import torch as th
@@ -32,13 +32,13 @@ TRAINING_CONFIG = {
 # Model architecture configured for price ratio features
 POLICY_KWARGS = {
     'optimizer_class': th.optim.AdamW,  # AdamW for better regularization
-    'lstm_hidden_size': 128,            # Reduced size for price ratio features
+    'lstm_hidden_size': 64,             # Reduced size optimized for 8 simple features
     'n_lstm_layers': 2,                 # Two-layer LSTM for temporal processing
     'enable_critic_lstm': True,         # Use LSTM for value function
     'shared_lstm': False,               # Separate policy and value networks
     'net_arch': {                       
-        'pi': [64, 64],                # Policy network - reduced for price ratios
-        'vf': [64, 64]                 # Value network
+        'pi': [32, 16],                # Smaller policy network for price ratios
+        'vf': [32, 16]                 # Smaller value network for price ratios
     },
     'activation_fn': nn.ReLU,           # ReLU activation
     'ortho_init': True,                 # Orthogonal initialization
@@ -48,9 +48,9 @@ POLICY_KWARGS = {
     }
 }
 
-# Training parameters optimized for price ratio features
+# Training parameters optimized for smaller network with price ratio features
 MODEL_KWARGS = {
-    'learning_rate': 3e-4,             # Conservative learning rate
+    'learning_rate': 4e-4,             # Slightly higher LR for smaller network
     'n_steps': 512,                    # Reduced sequence length
     'batch_size': 32,                  # Small batches for better generalization
     'n_epochs': 4,                     # Reduced epochs
