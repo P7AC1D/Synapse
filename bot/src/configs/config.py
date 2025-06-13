@@ -18,8 +18,8 @@ from trading.features import FeatureProcessor
 
 # Core training configuration
 TRAINING_CONFIG = {
-    'total_timesteps': 150000,        # Total training steps
-    'eval_freq': 10000,               # Evaluation frequency
+    'total_timesteps': 52000,         # Reduced for WFO: ~3x through 6-month window (prevents overfitting)
+    'eval_freq': 4000,                # More frequent evaluation for overfitting detection
     'learning_starts': 1000,          # Initial learning delay
     'train_split': 0.7,              # Training data proportion
     'validation_split': 0.2,          # Validation data proportion
@@ -74,13 +74,13 @@ ENHANCED_EPSILON_CONFIG = {
     'min_exploration_rate': 0.5        # Higher minimum exploration rate
 }
 
-# Validation configuration
+# Validation configuration optimized for WFO
 VALIDATION_CONFIG = {
     'early_stopping': {
         'enabled': True,                
         'metric': 'validation_return',  
-        'patience': 15,                 # Increased patience for RL exploration
-        'min_improvement': 0.01,        # Higher improvement threshold
+        'patience': 8,                  # 8 evals = 32k steps (61% of training) - balanced for WFO
+        'min_improvement': 0.005,       # Lower threshold for gradual WFO improvement
         'mode': 'maximize',            
         'restore_best_weights': True    
     },
@@ -113,6 +113,33 @@ ENVIRONMENT_CONFIG = {
     'min_lots': 0.01,
     'max_lots': 1.0,
     'contract_size': 100000
+}
+
+# Walk-Forward Optimization Configuration
+# Optimized for 3.81 years of data (2021-07-09 to 2025-05-01)
+# Now actively used by train_wfo.py
+WFO_CONFIG = {
+    'training_window_months': 6,          # 6-month training windows
+    'step_forward_months': 1.5,           # 1.5-month step forward (balanced overlap)
+    'training_window_days': 180,          # ≈6 months in days
+    'step_forward_days': 45,              # ≈1.5 months in days
+    'min_validation_days': 30,            # Minimum validation period
+    'overlapping_windows': True,          # Maintain continuity to prevent forgetting
+    'market_regime_adaptation': True,     # Allow model to adapt to changing conditions
+    
+    # Catastrophic forgetting prevention
+    'knowledge_retention': {
+        'enabled': True,
+        'overlap_ratio': 0.75,            # 75% overlap between consecutive windows
+        'experience_replay': True,        # Keep samples from previous windows
+        'replay_buffer_size': 0.2,        # 20% of training data from previous window
+        'gradual_transition': True,       # Smooth transition between windows
+    },
+    
+    # Expected iteration count for full dataset
+    'expected_iterations': 15,            # ~15 iterations across 3.81 years
+    'total_dataset_days': 1391,          # Total days in dataset
+    'data_frequency': '15min',            # Data granularity
 }
 
 def get_training_args():

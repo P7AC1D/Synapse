@@ -29,6 +29,7 @@ from utils.training_utils import (
     train_walk_forward
 )
 from utils.adaptive_validation_utils import AdaptiveValidationManager
+from configs.config import WFO_CONFIG, TRAINING_CONFIG
 
 def load_and_prepare_data(args):
     """Load and prepare data for training."""
@@ -61,11 +62,20 @@ def load_and_prepare_data(args):
 def main():
     parser = argparse.ArgumentParser(description="Walk-Forward Training for DRL Trading Bot")
     
-    # Core training parameters
+    # Calculate defaults from WFO_CONFIG (6 months = 17,280 periods, 1.5 months = 4,320 periods)
+    periods_per_day = 96  # 24 hours * 4 (15-min periods)
+    default_initial_window = WFO_CONFIG['training_window_days'] * periods_per_day  # 17,280
+    default_step_size = WFO_CONFIG['step_forward_days'] * periods_per_day  # 4,320
+    default_timesteps = TRAINING_CONFIG['total_timesteps']  # 52,000
+    
+    # Core training parameters (now using WFO_CONFIG)
     parser.add_argument('--seed', type=int, default=1007, help='Random seed for reproducibility')
-    parser.add_argument('--total-timesteps', type=int, default=150000, dest='total_timesteps', help='Total timesteps for training')
-    parser.add_argument('--initial-window', type=int, default=18000, dest='initial_window', help='Initial training window size')
-    parser.add_argument('--step-size', type=int, default=1500, dest='step_size', help='Walk-forward step size')
+    parser.add_argument('--total-timesteps', type=int, default=default_timesteps, dest='total_timesteps', 
+                       help=f'Total timesteps for training (default: {default_timesteps:,} - optimized for WFO)')
+    parser.add_argument('--initial-window', type=int, default=default_initial_window, dest='initial_window', 
+                       help=f'Initial training window size (default: {default_initial_window:,} - 6 months)')
+    parser.add_argument('--step-size', type=int, default=default_step_size, dest='step_size', 
+                       help=f'Walk-forward step size (default: {default_step_size:,} - 1.5 months)')
     
     # Environment parameters
     parser.add_argument('--initial-balance', type=float, default=10000, dest='initial_balance', help='Initial account balance')
@@ -85,8 +95,7 @@ def main():
                        dest='model_selection', help='Model selection strategy for walk-forward optimization')
     parser.add_argument('--disable-improved-selection', action='store_true', dest='disable_improved_selection',
                        help='Disable improved model selection and use legacy comparison')
-    parser.add_argument('--no-legacy-warnings', action='store_true', dest='no_legacy_warnings',
-                       help='Suppress warnings when using legacy model selection')
+    parser.add_argument('--no-legacy-warnings', action='store_true', dest='no_legacy_warnings',                       help='Suppress warnings when using legacy model selection')
     
     args = parser.parse_args()
     
@@ -96,6 +105,15 @@ def main():
     print(f"Seed: {args.seed}")
     print(f"Model Selection: {args.model_selection}")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'='*60}")
+    
+    # Display WFO configuration
+    print(f"\n📊 WFO Configuration (from WFO_CONFIG):")
+    print(f"   Training Window: {args.initial_window:,} periods ({args.initial_window/96:.0f} days)")
+    print(f"   Step Forward: {args.step_size:,} periods ({args.step_size/96:.0f} days)")
+    print(f"   Total Timesteps: {args.total_timesteps:,} per window")
+    print(f"   Expected Iterations: ~{WFO_CONFIG['expected_iterations']} across dataset")
+    print(f"   Overlap Ratio: {WFO_CONFIG['knowledge_retention']['overlap_ratio']*100:.0f}% (prevents forgetting)")
     print(f"{'='*60}")
     
     # Update configuration based on command line arguments
