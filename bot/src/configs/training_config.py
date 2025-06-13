@@ -75,9 +75,9 @@ VALIDATION_CONFIG = {
     'selection_criterion': 'validation_return',  # Use validation instead of combined
     'save_best_only': True,
     'save_frequency': 1,                # Save every iteration
-    'validation_frequency': 1,          # Validate every iteration
-    'detailed_validation_logging': True,
-      # Adaptive validation settings
+    'validation_frequency': 1,          # Validate every iteration    'detailed_validation_logging': True,
+    'use_live_sim_validation': True,    # Use live trading simulation for validation instead of env.step()
+    # Adaptive validation settings
     'adaptive': {
         'enabled': True,                # Enable adaptive validation
         'base_return_threshold': -0.05,  # Start with -5% threshold

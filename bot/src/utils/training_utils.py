@@ -12,6 +12,7 @@ The implementation includes:
 import os
 import json
 import pandas as pd
+import numpy as np
 import time
 import shutil
 from datetime import datetime
@@ -62,12 +63,11 @@ def load_validation_state(load_path: str) -> Dict[str, Any]:
 class EvalCallback(BaseCallback):
     """
     Evaluation callback that tracks model performance during training.
-    Uses validation data to assess model performance and save the best models.
-    """
+    Uses validation data to assess model performance and save the best models.    """
     
     def __init__(self, eval_env, train_data, val_data, eval_freq=5000, 
                  best_model_save_path=None, log_path=None, deterministic=True, 
-                 verbose=0, iteration=0, training_timesteps=40000):
+                 verbose=0, iteration=0, training_timesteps=40000, use_live_sim_validation=True):
         super().__init__(verbose)
         
         self.eval_env = eval_env
@@ -77,6 +77,7 @@ class EvalCallback(BaseCallback):
         self.best_model_save_path = best_model_save_path
         self.log_path = log_path
         self.deterministic = deterministic
+        self.use_live_sim_validation = use_live_sim_validation
         self.verbose = verbose
         self.iteration = iteration
         self.training_timesteps = training_timesteps
@@ -240,9 +241,159 @@ class EvalCallback(BaseCallback):
                 'avg_loss': 0.0,
                 'win_hold_time': 0.0,
                 'loss_hold_time': 0.0,
-                'avg_hold_time': 0.0
-            }
+                'avg_hold_time': 0.0            }
     
+    def _evaluate_on_validation_live_sim(self) -> Dict[str, Any]:
+        """
+        Evaluate model on validation data using live trading simulation.
+        This method maintains LSTM states properly and simulates real trading conditions.
+        """
+        try:
+            # Create a fresh trading environment for validation
+            from trade_model import TradeModel
+            
+            # Extract underlying environment attributes safely
+            def get_env_attr(env, attr_name, default_value):
+                """Safely extract environment attribute from potentially wrapped environment."""
+                # Try direct access first
+                if hasattr(env, attr_name):
+                    return getattr(env, attr_name)
+                # Try unwrapped environment
+                elif hasattr(env, 'unwrapped') and hasattr(env.unwrapped, attr_name):
+                    return getattr(env.unwrapped, attr_name)
+                # Try env attribute (for Monitor wrapper)
+                elif hasattr(env, 'env') and hasattr(env.env, attr_name):
+                    return getattr(env.env, attr_name)
+                # Try going deeper if needed
+                elif hasattr(env, 'env') and hasattr(env.env, 'unwrapped') and hasattr(env.env.unwrapped, attr_name):
+                    return getattr(env.env.unwrapped, attr_name)
+                else:
+                    return default_value
+            
+            # Extract environment parameters with safe defaults
+            balance_per_lot = get_env_attr(self.eval_env, 'BALANCE_PER_LOT', 500.0)
+            initial_balance = get_env_attr(self.eval_env, 'initial_balance', 10000.0)
+            point_value = get_env_attr(self.eval_env, 'POINT_VALUE', 0.001)
+            min_lots = get_env_attr(self.eval_env, 'MIN_LOTS', 0.01)
+            max_lots = get_env_attr(self.eval_env, 'MAX_LOTS', 200.0)
+            contract_size = get_env_attr(self.eval_env, 'CONTRACT_SIZE', 100.0)
+            
+            # Create temporary model wrapper for evaluation
+            temp_model = TradeModel(
+                model_path=None,  # We'll set the model directly
+                balance_per_lot=balance_per_lot,
+                initial_balance=initial_balance,
+                point_value=point_value,
+                min_lots=min_lots,
+                max_lots=max_lots,
+                contract_size=contract_size
+            )
+            temp_model.model = self.model  # Use the current training model
+            
+            # Create validation data DataFrame
+            val_data_df = self.val_data.copy()
+            if not isinstance(val_data_df.index, pd.DatetimeIndex):
+                # Ensure we have a datetime index for the simulation
+                val_data_df.index = pd.date_range(start='2020-01-01', periods=len(val_data_df), freq='15min')
+              # Initialize LSTM states for live simulation
+            if hasattr(temp_model, 'reset_states'):
+                temp_model.reset_states()
+            temp_model.lstm_states = None
+            
+            # Create environment for the validation run
+            env = TradingEnv(
+                data=val_data_df,
+                initial_balance=temp_model.initial_balance,
+                balance_per_lot=temp_model.balance_per_lot,
+                random_start=False,
+                point_value=temp_model.point_value,
+                min_lots=temp_model.min_lots,
+                max_lots=temp_model.max_lots,
+                contract_size=temp_model.contract_size
+            )
+            
+            obs, _ = env.reset()
+            
+            # Main prediction loop - similar to predict_single but simplified
+            total_steps = 0
+            current_position = None
+            
+            while total_steps < len(val_data_df):
+                try:
+                    # Get prediction with maintained LSTM states
+                    action, new_lstm_states = temp_model.model.predict(
+                        obs,
+                        state=temp_model.lstm_states,
+                        deterministic=True
+                    )
+                    temp_model.lstm_states = new_lstm_states  # Maintain states like in live trading
+                    
+                    # Convert action to discrete value
+                    if isinstance(action, np.ndarray):
+                        action_value = int(action.item())
+                    else:
+                        action_value = int(action)
+                    discrete_action = action_value % 4
+                    
+                    # Force HOLD if trying to open new position while one exists
+                    if env.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
+                        discrete_action = 0  # Force HOLD
+                    
+                    # Execute step
+                    obs, reward, done, truncated, info = env.step(discrete_action)
+                    total_steps += 1
+                    
+                    if done or truncated:
+                        break
+                        
+                except Exception as step_e:
+                    # Continue on step errors like in predict_single
+                    total_steps += 1
+                    continue
+            
+            # Handle any open position at the end
+            if env.current_position:
+                env.current_step = min(total_steps - 1, len(val_data_df) - 1)
+                pnl, trade_info = env.action_handler.close_position()
+                if pnl != 0:
+                    env.trades.append(trade_info)
+                    env.metrics.add_trade(trade_info)
+                    env.metrics.update_balance(pnl)
+            
+            # Calculate metrics using the same method as live trading
+            results = temp_model._calculate_backtest_metrics(env, total_steps, 0.0)
+            
+            # Convert to validation format
+            validation_metrics = {
+                'return': results.get('return_pct', 0.0) / 100.0,
+                'total_trades': results.get('total_trades', 0),
+                'win_rate': results.get('win_rate', 0.0) / 100.0,
+                'profit_factor': results.get('profit_factor', 0.0),
+                'max_drawdown': results.get('max_drawdown_pct', 0.0) / 100.0,
+                'max_equity_drawdown': results.get('max_equity_drawdown_pct', 0.0) / 100.0,
+                'sharpe_ratio': results.get('sharpe_ratio', 0.0),
+                'episode_reward': 0.0,  # Not used in live sim
+                'steps': total_steps,
+                'long_trades': results.get('long_trades', 0),
+                'short_trades': results.get('short_trades', 0),
+                'long_win_rate': results.get('long_win_rate', 0.0) / 100.0,
+                'short_win_rate': results.get('short_win_rate', 0.0) / 100.0,
+                'avg_win_points': results.get('avg_win_points', 0.0),
+                'avg_loss_points': results.get('avg_loss_points', 0.0),
+                'avg_win': results.get('avg_win', 0.0),
+                'avg_loss': results.get('avg_loss', 0.0),
+                'win_hold_time': results.get('win_hold_time', 0.0),
+                'loss_hold_time': results.get('loss_hold_time', 0.0),
+                'avg_hold_time': results.get('avg_hold_time', 0.0)
+            }
+            
+            return validation_metrics
+            
+        except Exception as e:
+            print(f"⚠️ Live simulation validation error: {e}")
+            # Return the original validation method as fallback
+            return self._evaluate_on_validation()
+
     def _should_save_model(self, validation_metrics: Dict[str, float]) -> bool:
         """Determine if model should be saved based on validation performance."""
         validation_return = validation_metrics['return']
@@ -337,10 +488,15 @@ class EvalCallback(BaseCallback):
         
         if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
             # Debug: Log evaluation trigger
-            print(f"🔍 Evaluation triggered: n_calls={self.n_calls}, eval_freq={self.eval_freq}, timestep={self.num_timesteps}")
-            
-            # Evaluate on validation set
-            validation_metrics = self._evaluate_on_validation()
+            print(f"🔍 Evaluation triggered: n_calls={self.n_calls}, eval_freq={self.eval_freq}, timestep={self.num_timesteps}")            # Evaluate on validation set using appropriate method
+            if self.use_live_sim_validation:
+                validation_metrics = self._evaluate_on_validation_live_sim()
+                if self.verbose > 0:
+                    print(f"🔄 Using live trading simulation for validation")
+            else:
+                validation_metrics = self._evaluate_on_validation()
+                if self.verbose > 0:
+                    print(f"📊 Using standard environment-based validation")
             self.validation_history.append(validation_metrics)
             
             # Save detailed validation results for analysis
@@ -650,8 +806,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             else:
                 print(f"\n⚡ Continuing training with warm start...")
                 model.set_env(train_env)
-            
-            # Create evaluation callback
+              # Create evaluation callback
             eval_cb = EvalCallback(
                 val_env,
                 train_data=train_data,
@@ -660,7 +815,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 best_model_save_path=results_path,
                 verbose=1,
                 iteration=iteration,
-                training_timesteps=current_timesteps
+                training_timesteps=current_timesteps,
+                use_live_sim_validation=VALIDATION_CONFIG.get('use_live_sim_validation', True)
             )
             
             # Debug: Print eval frequency configuration
