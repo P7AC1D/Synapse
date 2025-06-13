@@ -143,10 +143,8 @@ WFO_CONFIG = {
 def get_training_args():
     """Get complete training arguments optimized for price ratio features."""
     return {
-        # Data splits
-        'train_split': TRAINING_CONFIG['train_split'],
+        # Data splits (training calculated as 1.0 - validation_split in WFO)
         'validation_split': TRAINING_CONFIG['validation_split'],
-        'test_split': TRAINING_CONFIG['test_split'],
 
         # Feature processing
         'feature_processor': TRAINING_CONFIG['feature_processor'],

@@ -313,9 +313,9 @@ class EvalCallback(BaseCallback):
             )
             
             obs, _ = env.reset()
-            
-            # Main prediction loop - similar to predict_single but simplified
+              # Main prediction loop - similar to predict_single but simplified
             total_steps = 0
+            total_reward = 0.0  # Track total episode reward
             current_position = None
             
             while total_steps < len(val_data_df):
@@ -338,9 +338,9 @@ class EvalCallback(BaseCallback):
                     # Force HOLD if trying to open new position while one exists
                     if env.current_position is not None and discrete_action in [1, 2]:  # Buy or Sell
                         discrete_action = 0  # Force HOLD
-                    
-                    # Execute step
+                      # Execute step
                     obs, reward, done, truncated, info = env.step(discrete_action)
+                    total_reward += reward  # Accumulate episode reward
                     total_steps += 1
                     
                     if done or truncated:
@@ -359,9 +359,8 @@ class EvalCallback(BaseCallback):
                     env.trades.append(trade_info)
                     env.metrics.add_trade(trade_info)
                     env.metrics.update_balance(pnl)
-            
-            # Calculate metrics using the same method as live trading
-            results = temp_model._calculate_backtest_metrics(env, total_steps, 0.0)
+              # Calculate metrics using the same method as live trading
+            results = temp_model._calculate_backtest_metrics(env, total_steps, total_reward)
             
             # Convert to validation format
             validation_metrics = {
@@ -372,7 +371,7 @@ class EvalCallback(BaseCallback):
                 'max_drawdown': results.get('max_drawdown_pct', 0.0) / 100.0,
                 'max_equity_drawdown': results.get('max_equity_drawdown_pct', 0.0) / 100.0,
                 'sharpe_ratio': results.get('sharpe_ratio', 0.0),
-                'episode_reward': 0.0,  # Not used in live sim
+                'episode_reward': total_reward,  # Now properly tracked
                 'steps': total_steps,
                 'long_trades': results.get('long_trades', 0),
                 'short_trades': results.get('short_trades', 0),

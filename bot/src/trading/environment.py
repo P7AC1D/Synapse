@@ -249,9 +249,10 @@ class TradingEnv(gym.Env, EzPickle):
         end_of_data = self.current_step >= self.data_length - 1
         max_drawdown = self.metrics.get_equity_drawdown()
         done = end_of_data or self.metrics.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
-        
-        # Force close any open position at episode end
+          # Force close any open position at episode end
         if done and self.current_position:
+            # Store position info before closing for correct reward calculation
+            closing_position_type = self.current_position["direction"]
             forced_pnl, forced_trade_info = self.action_handler.close_position()
             if forced_pnl != 0:
                 self.trades.append(forced_trade_info)
@@ -260,13 +261,12 @@ class TradingEnv(gym.Env, EzPickle):
                 # Add the forced close reward to the current reward
                 forced_close_reward = self.reward_calculator.calculate_reward(
                     action=Action.CLOSE,
-                    position_type=self.current_position.get('direction', 0),
+                    position_type=closing_position_type,  # Use stored position type
                     pnl=forced_pnl,
                     atr=current_atr,
                     current_hold=self.current_hold_time,
                     optimal_hold=None,
-                    invalid_action=False
-                )
+                    invalid_action=False                )
                 reward += forced_close_reward
             self.current_position = None
             self.current_hold_time = 0
