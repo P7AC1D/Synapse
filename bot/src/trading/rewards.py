@@ -21,6 +21,7 @@ class SimpleRewardCalculator:
         # Simple parameters
         self.INVALID_ACTION_PENALTY = -1.0
         self.RISK_FREE_RATE = 0.02  # 2% annual risk-free rate
+        self.ACTIVITY_BONUS = 0.1   # Small bonus for taking positions
         
         # Track for Sharpe calculation
         self.returns = []
@@ -62,11 +63,14 @@ class SimpleRewardCalculator:
                 
             # Scale the reward to reasonable magnitude
             reward = risk_adjusted_return * 100.0
-            
-            # Track returns for Sharpe calculation
+              # Track returns for Sharpe calculation
             self.returns.append(trade_return)
             
             return float(reward)
+        
+        # Small activity bonus for taking positions (encourages exploration)
+        if action in [Action.BUY, Action.SELL] and position_type == 0:
+            return self.ACTIVITY_BONUS
         
         # All other actions get zero reward
         return 0.0

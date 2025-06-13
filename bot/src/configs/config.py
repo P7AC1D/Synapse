@@ -50,18 +50,17 @@ POLICY_KWARGS = {
 
 # Training parameters optimized for smaller network with price ratio features
 MODEL_KWARGS = {
-    'learning_rate': 4e-4,             # Slightly higher LR for smaller network
+    'learning_rate': 6e-4,             # Higher LR to escape local minimum
     'n_steps': 512,                    # Reduced sequence length
     'batch_size': 32,                  # Small batches for better generalization
-    'n_epochs': 4,                     # Reduced epochs
+    'n_epochs': 6,                     # More epochs for better learning
     'gamma': 0.99,                     # Discount factor
     'gae_lambda': 0.9,                 # GAE lambda
-    'clip_range': 0.1,                 # Conservative clipping
-    'clip_range_vf': 0.1,              # Value function clipping
+    'clip_range': 0.2,                 # Higher clipping for more aggressive updates
+    'clip_range_vf': 0.2,              # Value function clipping
     'normalize_advantage': True,        # Normalize advantages
-    'ent_coef': 0.01,                  # Entropy coefficient
-    'vf_coef': 0.5,                    # Value function coefficient
-    'max_grad_norm': 0.5,              # Gradient clipping
+    'ent_coef': 0.05,                  # Much higher entropy for exploration
+    'vf_coef': 0.5,                    # Value function coefficient    'max_grad_norm': 0.5,              # Gradient clipping
     'use_sde': False,                  # No state-dependent exploration
     'sde_sample_freq': -1,             # SDE sampling frequency
     'target_kl': None,                 # Target KL divergence
@@ -70,9 +69,9 @@ MODEL_KWARGS = {
 
 # Enhanced epsilon configuration for exploration
 ENHANCED_EPSILON_CONFIG = {
-    'start_eps': 0.9,                  # Starting epsilon value
-    'end_eps': 0.2,                    # Final epsilon value after decay
-    'min_exploration_rate': 0.4        # Minimum exploration rate to maintain
+    'start_eps': 0.95,                 # Much higher starting exploration
+    'end_eps': 0.4,                    # Higher final exploration
+    'min_exploration_rate': 0.5        # Higher minimum exploration rate
 }
 
 # Validation configuration
@@ -80,8 +79,8 @@ VALIDATION_CONFIG = {
     'early_stopping': {
         'enabled': True,                
         'metric': 'validation_return',  
-        'patience': 10,                 # Reduced patience for faster adaptation
-        'min_improvement': 0.005,       
+        'patience': 15,                 # Increased patience for RL exploration
+        'min_improvement': 0.01,        # Higher improvement threshold
         'mode': 'maximize',            
         'restore_best_weights': True    
     },

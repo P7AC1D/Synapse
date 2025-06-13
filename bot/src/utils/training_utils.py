@@ -129,7 +129,7 @@ class EvalCallback(BaseCallback):
                 self.validation_history = state.get('validation_history', [])
                 self.best_validation_metrics = state.get('best_validation_metrics', None)
                 self.n_calls = state.get('n_calls', 0)
-                  # Reset validation state if starting a new iteration
+                # Reset validation state if starting a new iteration
                 if loaded_iteration != self.iteration:
                     self.no_improvement_count = 0
                     # Start fresh for new iteration - each iteration is independent
@@ -792,21 +792,26 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             
             # Get training timesteps 
             current_timesteps = TRAINING_CONFIG['total_timesteps']
-            
             if model is None:
                 print(f"\n🚀 Creating new model...")
+                # Clear any existing validation state for fresh start
+                validation_state_file = os.path.join(results_path, 'validation_state.json')
+                if os.path.exists(validation_state_file):
+                    os.remove(validation_state_file)
+                    print(f"🗑️ Cleared previous validation state for fresh start")
+                
                 model = RecurrentPPO(
                     "MlpLstmPolicy",
                     train_env,
                     policy_kwargs=POLICY_KWARGS,
                     device=getattr(args, 'device', 'auto'),
-                    seed=getattr(args, 'seed', None),
-                    **MODEL_KWARGS
+                    seed=getattr(args, 'seed', None),                    **MODEL_KWARGS
                 )
             else:
                 print(f"\n⚡ Continuing training with warm start...")
                 model.set_env(train_env)
-              # Create evaluation callback
+            
+            # Create evaluation callback
             eval_cb = EvalCallback(
                 val_env,
                 train_data=train_data,
