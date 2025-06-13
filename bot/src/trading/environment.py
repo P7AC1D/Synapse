@@ -252,17 +252,8 @@ class TradingEnv(gym.Env, EzPickle):
         max_drawdown = self.metrics.get_equity_drawdown()
         done = end_of_data or self.metrics.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
         
-        # Auto-close position at end of episode and handle terminal rewards
+        # Calculate terminal reward
         if done:
-            if self.current_position:
-                pnl, trade_info = self.action_handler.close_position()
-                if pnl != 0:
-                    self.trades.append(trade_info)
-                    self.metrics.add_trade(trade_info)
-                    self.metrics.update_balance(pnl)
-            self.current_hold_time = 0  # Reset hold time at end of episode
-            
-            # Calculate terminal reward
             terminal_reward = self.reward_calculator.calculate_terminal_reward(self.metrics.balance, self.initial_balance)
             reward += terminal_reward
         

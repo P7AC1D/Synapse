@@ -21,6 +21,30 @@ class ActionHandler:
         """
         self.env = env
 
+    def _safe_get_price_data(self, price_type: str, step: int = None) -> float:
+        """Safely get price data with bounds checking.
+        
+        Args:
+            price_type: Type of price data ('close', 'spread', 'atr', etc.)
+            step: Step index to retrieve (uses current_step if None)
+            
+        Returns:
+            Price value at the specified step
+        """
+        if step is None:
+            step = self.env.current_step
+            
+        max_index = len(self.env.prices[price_type]) - 1
+        
+        if step > max_index:
+            print(f"WARNING: step {step} exceeds {price_type} data bounds {max_index}. Using last available index.")
+            step = max_index
+        elif step < 0:
+            print(f"WARNING: step {step} is negative for {price_type} data. Using index 0.")
+            step = 0
+            
+        return self.env.prices[price_type][step]
+
     def process_action(self, action: Union[int, np.ndarray]) -> int:
         """Convert action to trading decision.
         
@@ -44,11 +68,9 @@ class ActionHandler:
         
         Args:
             direction: Direction of the trade (1: buy, 2: sell)
-            raw_spread: Current spread to adjust entry price
-        """
-            
-        current_price = self.env.prices['close'][self.env.current_step]
-        current_atr = self.env.prices['atr'][self.env.current_step]
+            raw_spread: Current spread to adjust entry price        """
+        current_price = self._safe_get_price_data('close')
+        current_atr = self._safe_get_price_data('atr')
         
         # Apply slippage if configured
         slippage = 0.0
@@ -99,15 +121,15 @@ class ActionHandler:
         """
         if not self.env.current_position:
             return 0.0, {}
-        
-        current_price = self.env.prices['close'][self.env.current_step]
+          # Validate current_step is within bounds and get price data safely
+        current_price = self._safe_get_price_data('close')
         direction = self.env.current_position["direction"]
         entry_price = self.env.current_position["entry_price"]
         lot_size = self.env.current_position["lot_size"]
         entry_step = self.env.current_position["entry_step"]
         
-        # Get current spread for exit price adjustment
-        current_spread = self.env.prices['spread'][self.env.current_step] * self.env.POINT_VALUE
+        # Get current spread for exit price adjustment with bounds checking
+        current_spread = self._safe_get_price_data('spread') * self.env.POINT_VALUE
         
         # Apply slippage if configured
         slippage = 0.0
@@ -162,13 +184,13 @@ class ActionHandler:
         if not self.env.current_position:
             return 0.0, 0.0
             
-        current_price = self.env.prices['close'][self.env.current_step]    
+        current_price = self._safe_get_price_data('close')
         direction = self.env.current_position["direction"]
         entry_price = self.env.current_position["entry_price"]
         lot_size = self.env.current_position["lot_size"]
         
         # Get current spread for unrealized P&L calculation
-        current_spread = self.env.prices['spread'][self.env.current_step] * self.env.POINT_VALUE
+        current_spread = self._safe_get_price_data('spread') * self.env.POINT_VALUE
         
         # Calculate raw P&L first - use current price without spread for display
         if direction == 1:  # Long position
