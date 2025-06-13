@@ -1,14 +1,15 @@
 """
-Paper-Inspired Training Configuration
+Main Training Configuration
 
-This configuration implements the feature processing methodology from the research paper,
-using price ratio features for normalized market data representation.
+This configuration implements the optimized feature processing methodology using 
+price ratio features for normalized market data representation.
 
 Key components:
-1. Price ratio-based feature processing
-2. Time-series window alignment
-3. Normalized feature representation
-4. Regularized model architecture
+1. Price ratio-based feature processing (6 core features)
+2. Optimized model architecture for price ratios
+3. Time-series window alignment
+4. Normalized feature representation
+5. Regularized model architecture
 """
 
 import torch as th
@@ -65,6 +66,13 @@ MODEL_KWARGS = {
     'sde_sample_freq': -1,             # SDE sampling frequency
     'target_kl': None,                 # Target KL divergence
     'verbose': 0                       # Verbosity level
+}
+
+# Enhanced epsilon configuration for exploration
+ENHANCED_EPSILON_CONFIG = {
+    'start_eps': 0.9,                  # Starting epsilon value
+    'end_eps': 0.2,                    # Final epsilon value after decay
+    'min_exploration_rate': 0.4        # Minimum exploration rate to maintain
 }
 
 # Validation configuration

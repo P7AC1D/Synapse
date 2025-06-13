@@ -24,7 +24,7 @@ from trading.environment import TradingEnv
 
 from callbacks.epsilon_callback import CustomEpsilonCallback
 from callbacks.anti_collapse_callback import AntiCollapseCallback
-from configs.training_config import (
+from configs.config import (
     TRAINING_CONFIG,
     POLICY_KWARGS,
     MODEL_KWARGS,

@@ -5,7 +5,7 @@ from gym.spaces import Discrete
 from typing import Optional
 import torch as th
 import os
-from configs.training_config import ENHANCED_EPSILON_CONFIG
+from configs.config import ENHANCED_EPSILON_CONFIG
 
 class CustomEpsilonCallback(BaseCallback):
     """Custom callback for epsilon-greedy exploration during training"""
