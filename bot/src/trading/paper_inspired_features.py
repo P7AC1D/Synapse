@@ -3,9 +3,8 @@ import numpy as np
 import pandas as pd
 from typing import Tuple
 from gymnasium import spaces
-from .features import FeatureProcessor
 
-class PaperInspiredFeatureProcessor(FeatureProcessor):
+class PaperInspiredFeatureProcessor:
     """Feature processor implementing paper's price ratio methodology."""
     
     def __init__(self, window_size: int = 10):
@@ -14,9 +13,9 @@ class PaperInspiredFeatureProcessor(FeatureProcessor):
         Args:
             window_size: Size of the rolling window for temporal alignment
         """
-        super().__init__()
         self.window_size = window_size
         self.lookback = window_size  # Required for proper temporal alignment
+        self.atr_period = 14  # Standard ATR period
         
     def setup_observation_space(self, feature_count: int = 6) -> spaces.Box:
         """Setup observation space for price ratio features.
