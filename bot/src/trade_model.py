@@ -31,7 +31,7 @@ class TradeModel:
             contract_size: Standard contract size (default: 100.0)
         """
         self.logger = logging.getLogger(__name__)
-        self.model_path = Path(model_path)
+        self.model_path = Path(model_path) if model_path is not None else None
         self.model = None
         self.balance_per_lot = balance_per_lot
         self.initial_balance = initial_balance
@@ -49,8 +49,9 @@ class TradeModel:
         
         self.lstm_states = None  # Store LSTM states between predictions
         
-        # Load the model
-        self.load_model()
+        # Load the model if path is provided
+        if self.model_path is not None:
+            self.load_model()
         
     def load_model(self) -> bool:
         """Load the pre-trained PPO-LSTM model.
@@ -58,6 +59,10 @@ class TradeModel:
         Returns:
             bool: True if model loaded successfully, False otherwise
         """
+        if self.model_path is None:
+            self.logger.warning("No model path provided, model not loaded")
+            return False
+            
         try:
             # Load the PPO model with saved hyperparameters
             self.model = RecurrentPPO.load(
