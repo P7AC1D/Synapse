@@ -251,6 +251,9 @@ class MetricsTracker:
             "current_consecutive_wins": self.current_win_streak,
             "current_consecutive_losses": self.current_loss_streak
         }
+          # Initialize empty DataFrames to avoid UnboundLocalError
+        winning_trades = pd.DataFrame()
+        losing_trades = pd.DataFrame()
         
         # If we have trades, update the summary with actual values
         if self.trades:
@@ -298,8 +301,8 @@ class MetricsTracker:
                 
                 # Hold time analysis
                 "avg_hold_time": trades_df["hold_time"].mean() if "hold_time" in trades_df else 0,
-                "win_hold_time": winning_trades["hold_time"].mean() if "hold_time" in winning_trades else 0,
-                "loss_hold_time": losing_trades["hold_time"].mean() if "hold_time" in losing_trades else 0
+                "win_hold_time": winning_trades["hold_time"].mean() if not winning_trades.empty and "hold_time" in winning_trades else 0,
+                "loss_hold_time": losing_trades["hold_time"].mean() if not losing_trades.empty and "hold_time" in losing_trades else 0
             })
         
         return {k: float(v) if isinstance(v, (np.float32, np.float64)) else v 
