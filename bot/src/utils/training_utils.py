@@ -486,7 +486,8 @@ class EvalCallback(BaseCallback):
         """Evaluation logic called during training."""
         self.n_calls += 1
         
-        if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+        # Use num_timesteps (environment steps) instead of n_calls for proper eval frequency
+        if self.eval_freq > 0 and self.num_timesteps % self.eval_freq == 0 and self.num_timesteps > 0:
             # Debug: Log evaluation trigger
             print(f"🔍 Evaluation triggered: n_calls={self.n_calls}, eval_freq={self.eval_freq}, timestep={self.num_timesteps}")            # Evaluate on validation set using appropriate method
             if self.use_live_sim_validation:
