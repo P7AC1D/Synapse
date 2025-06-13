@@ -21,9 +21,7 @@ TRAINING_CONFIG = {
     'total_timesteps': 52000,         # Reduced for WFO: ~3x through 6-month window (prevents overfitting)
     'eval_freq': 4000,                # More frequent evaluation for overfitting detection
     'learning_starts': 1000,          # Initial learning delay
-    'train_split': 0.7,              # Training data proportion
-    'validation_split': 0.2,          # Validation data proportion
-    'test_split': 0.1,               # Test data proportion
+    'validation_split': 0.2,          # Validation percentage (training gets remainder: 80%)
     'random_start': False,           # Deterministic start for validation consistency
     'feature_processor': FeatureProcessor,  # Use paper's feature processing
     'window_size': 10                # Time window for feature calculation

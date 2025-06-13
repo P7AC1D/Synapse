@@ -750,20 +750,23 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
         print(f"📊 Target iterations: {total_iterations}")
         
         for iteration in range(training_start, total_iterations):
-            iteration_start_time = time.time()
+            iteration_start_time = time.time()            # Create data splits for this iteration
+            # Use validation_split from config, training gets the remainder
+            val_ratio = TRAINING_CONFIG['validation_split']  # e.g., 0.2 (20%)
+            train_ratio = 1.0 - val_ratio  # e.g., 0.8 (80%) - automatically calculated
             
-            # Create data splits for this iteration
-            val_size = min(step_size, 2000)  # Limit validation size
-            train_size = initial_window - val_size
+            val_size = int(initial_window * val_ratio)  # 20% for validation (~3,456 samples)
+            train_size = int(initial_window * train_ratio)  # 80% for training (~13,824 samples)
             
             train_start = iteration * step_size
             train_end = train_start + train_size
             val_end = min(train_end + val_size, total_periods)
             
-            if val_end - train_end < val_size * 0.3:
-                print(f"\n⚠️ Insufficient validation data at iteration {iteration + 1}, stopping")
+            if val_end - train_end < val_size * 0.5:  # Require at least 50% of intended validation size
+                print(f"\n⚠️ Insufficient validation data at iteration {iteration + 1} ({val_end - train_end} < {val_size * 0.5:.0f}), stopping")
                 break
-              # Get iteration data - PROPER WFO Implementation
+            
+            # Get iteration data - PROPER WFO Implementation
             # Use FULL iteration window for training (no internal splits)
             train_data = data.iloc[train_start:train_end].copy()
             
@@ -771,9 +774,9 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             val_data = data.iloc[train_end:val_end].copy()
             
             print(f"📊 WFO Window {iteration + 1}:")
-            print(f"   Training: {len(train_data):,} samples ({train_start}-{train_end})")
-            print(f"   Validation: {len(val_data):,} samples ({train_end}-{val_end})")
-            print(f"   ✅ No data waste - Using full training window")
+            print(f"   Training: {len(train_data):,} samples ({train_start}-{train_end}) [{train_ratio*100:.0f}%]")
+            print(f"   Validation: {len(val_data):,} samples ({train_end}-{val_end}) [{val_ratio*100:.0f}%]")
+            print(f"   ✅ Using config-based splits (train: {train_ratio}, val: {val_ratio})")
             print(f"   ✅ Temporal separation - No future leakage")
             
             # Environment parameters
