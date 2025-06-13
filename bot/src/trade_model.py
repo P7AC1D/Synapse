@@ -259,6 +259,10 @@ class TradeModel:
             'median_loss_points': 0.0,
         })
         
+        # Initialize default empty DataFrames for winning/losing trades
+        winning_trades = pd.DataFrame()
+        losing_trades = pd.DataFrame()
+        
         # Only calculate detailed metrics if trades exist
         if env.trades:
             trades_df = pd.DataFrame(env.trades)
@@ -352,66 +356,66 @@ class TradeModel:
                         'loss_hold_time_99th': float(losing_trades['hold_time'].quantile(0.99)),
                         'loss_hold_time_100th': float(losing_trades['hold_time'].max())
                     })
+            
+            # Calculate points metrics including averages, medians, and 90th percentiles
+            if not winning_trades.empty:
+                metrics.update({
+                    'avg_win_points': float(winning_trades["profit_points"].mean()),
+                    'win_points_0th': float(winning_trades["profit_points"].min()),
+                    'win_points_1st': float(winning_trades["profit_points"].quantile(0.01)),
+                    'win_points_10th': float(winning_trades["profit_points"].quantile(0.1)),
+                    'win_points_20th': float(winning_trades["profit_points"].quantile(0.2)),
+                    'median_win_points': float(winning_trades["profit_points"].median()),
+                    'win_points_80th': float(winning_trades["profit_points"].quantile(0.8)),
+                    'win_points_90th': float(winning_trades["profit_points"].quantile(0.9)),
+                    'win_points_99th': float(winning_trades["profit_points"].quantile(0.99)),
+                    'win_points_100th': float(winning_trades["profit_points"].max())
+                })
+            
+            if not losing_trades.empty:
+                # Calculate stats on absolute values, then make negative
+                abs_loss_points = losing_trades["profit_points"].abs()
+                metrics.update({
+                    'avg_loss_points': -float(abs_loss_points.mean()),
+                    'loss_points_0th': -float(abs_loss_points.min()),
+                    'loss_points_1st': -float(abs_loss_points.quantile(0.01)),
+                    'loss_points_10th': -float(abs_loss_points.quantile(0.1)),
+                    'loss_points_20th': -float(abs_loss_points.quantile(0.2)),
+                    'median_loss_points': -float(abs_loss_points.median()),
+                    'loss_points_80th': -float(abs_loss_points.quantile(0.8)),
+                    'loss_points_90th': -float(abs_loss_points.quantile(0.9)),
+                    'loss_points_99th': -float(abs_loss_points.quantile(0.99)),
+                    'loss_points_100th': -float(abs_loss_points.max())
+                })
+            
+            # Calculate consecutive trade metrics
+            current_win_streak = 0
+            current_loss_streak = 0
+            max_win_streak = 0
+            max_loss_streak = 0
+            
+            # Process trades chronologically to track streaks
+            for trade in env.trades:
+                pnl = trade.get('pnl', 0)
+                if pnl > 0 and abs(pnl) >= 1e-8:  # Clear win
+                    current_win_streak += 1
+                    current_loss_streak = 0
+                    max_win_streak = max(max_win_streak, current_win_streak)
+                else:  # Loss or zero PnL
+                    current_loss_streak += 1
+                    current_win_streak = 0
+                    max_loss_streak = max(max_loss_streak, current_loss_streak)
+
+            # Add streak metrics
+            metrics.update({
+                'max_consecutive_wins': max_win_streak,
+                'max_consecutive_losses': max_loss_streak,
+                'current_consecutive_wins': current_win_streak,
+                'current_consecutive_losses': current_loss_streak
+            })
         
         # Include trade history
         metrics['trades'] = env.trades
-
-        # Calculate points metrics including averages, medians, and 90th percentiles
-        if not winning_trades.empty:
-            metrics.update({
-                'avg_win_points': float(winning_trades["profit_points"].mean()),
-                'win_points_0th': float(winning_trades["profit_points"].min()),
-                'win_points_1st': float(winning_trades["profit_points"].quantile(0.01)),
-                'win_points_10th': float(winning_trades["profit_points"].quantile(0.1)),
-                'win_points_20th': float(winning_trades["profit_points"].quantile(0.2)),
-                'median_win_points': float(winning_trades["profit_points"].median()),
-                'win_points_80th': float(winning_trades["profit_points"].quantile(0.8)),
-                'win_points_90th': float(winning_trades["profit_points"].quantile(0.9)),
-                'win_points_99th': float(winning_trades["profit_points"].quantile(0.99)),
-                'win_points_100th': float(winning_trades["profit_points"].max())
-            })
-        
-        if not losing_trades.empty:
-            # Calculate stats on absolute values, then make negative
-            abs_loss_points = losing_trades["profit_points"].abs()
-            metrics.update({
-                'avg_loss_points': -float(abs_loss_points.mean()),
-                'loss_points_0th': -float(abs_loss_points.min()),
-                'loss_points_1st': -float(abs_loss_points.quantile(0.01)),
-                'loss_points_10th': -float(abs_loss_points.quantile(0.1)),
-                'loss_points_20th': -float(abs_loss_points.quantile(0.2)),
-                'median_loss_points': -float(abs_loss_points.median()),
-                'loss_points_80th': -float(abs_loss_points.quantile(0.8)),
-                'loss_points_90th': -float(abs_loss_points.quantile(0.9)),
-                'loss_points_99th': -float(abs_loss_points.quantile(0.99)),
-                'loss_points_100th': -float(abs_loss_points.max())
-            })
-        
-        # Calculate consecutive trade metrics
-        current_win_streak = 0
-        current_loss_streak = 0
-        max_win_streak = 0
-        max_loss_streak = 0
-        
-        # Process trades chronologically to track streaks
-        for trade in env.trades:
-            pnl = trade.get('pnl', 0)
-            if pnl > 0 and abs(pnl) >= 1e-8:  # Clear win
-                current_win_streak += 1
-                current_loss_streak = 0
-                max_win_streak = max(max_win_streak, current_win_streak)
-            else:  # Loss or zero PnL
-                current_loss_streak += 1
-                current_win_streak = 0
-                max_loss_streak = max(max_loss_streak, current_loss_streak)
-
-        # Add streak metrics
-        metrics.update({
-            'max_consecutive_wins': max_win_streak,
-            'max_consecutive_losses': max_loss_streak,
-            'current_consecutive_wins': current_win_streak,
-            'current_consecutive_losses': current_loss_streak
-        })
         
         return metrics
 
