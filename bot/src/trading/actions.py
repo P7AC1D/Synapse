@@ -207,3 +207,179 @@ class ActionHandler:
         profit_points_normalized = profit_points / self.env.POINT_VALUE
 
         return unrealized_pnl, profit_points_normalized
+
+    def check_force_close(self) -> Tuple[bool, Optional[Dict]]:
+        """Check if position should be force-closed and lock in exit price.
+        
+        Returns:
+            Tuple of (should_close, locked_exit_data)
+        """
+        if not self.env.current_position:
+            return False, None
+            
+        # Skip force-close check if max_loss_points is not set
+        if not hasattr(self.env, 'max_loss_points') or self.env.max_loss_points <= 0:
+            return False, None
+            
+        # Get current profit points
+        _, profit_points = self.manage_position()
+        
+        # Force close if loss exceeds threshold (profit_points will be negative for losses)
+        if profit_points <= -self.env.max_loss_points:
+            # CRITICAL FIX: Lock in exit price immediately when threshold breached
+            locked_exit_data = self._lock_exit_price()
+            print(f"FORCE-CLOSE TRIGGERED: Loss {profit_points:.1f} points exceeds limit {-self.env.max_loss_points:.1f}")
+            return True, locked_exit_data
+            
+        return False, None
+
+    def _lock_exit_price(self) -> Dict[str, Any]:
+        """Lock in exit price when force-close triggers to prevent further deterioration.
+        
+        Returns:
+            Dictionary containing locked exit price and related data
+        """
+        current_price = self._safe_get_price_data('close')
+        current_spread = self._safe_get_price_data('spread') * self.env.POINT_VALUE
+        direction = self.env.current_position["direction"]
+        entry_price = self.env.current_position["entry_price"]
+        
+        # Calculate exact exit price based on position direction
+        if direction == 1:  # Long position
+            locked_exit_price = current_price  # Sell at bid (current price)
+        else:  # Short position  
+            locked_exit_price = current_price + current_spread  # Buy at ask (current price + spread)
+        
+        # Calculate locked profit points for validation
+        if direction == 1:
+            locked_profit_points = locked_exit_price - entry_price
+        else:
+            locked_profit_points = entry_price - locked_exit_price
+            
+        locked_profit_points_normalized = locked_profit_points / self.env.POINT_VALUE
+        
+        return {
+            'locked_exit_price': locked_exit_price,
+            'locked_profit_points': locked_profit_points_normalized,
+            'lock_timestamp': self.env.current_step,
+            'market_price': current_price,
+            'spread_used': current_spread,
+            'direction': direction,
+            'entry_price': entry_price
+        }
+
+    def execute_force_close(self, locked_exit_data: Optional[Dict] = None) -> Tuple[float, Dict[str, Any]]:
+        """Execute a forced closure using locked exit price to prevent timing issues.
+        
+        Args:
+            locked_exit_data: Dictionary containing locked exit price data
+            
+        Returns:
+            Tuple of (pnl, trade_info)
+        """
+        if not self.env.current_position:
+            return 0.0, {}
+        
+        # Use locked exit data if provided, otherwise fall back to regular close logic
+        if locked_exit_data:
+            return self._execute_force_close_with_locked_price(locked_exit_data)
+        else:
+            # Fallback to regular close logic (for backward compatibility)
+            print("WARNING: Force-close executed without locked price data - timing bug may occur")
+            pnl, trade_info = self.close_position()
+            
+            # Mark the trade as force-closed
+            if trade_info:
+                trade_info['force_closed'] = True
+                trade_info['close_reason'] = 'max_loss_reached'
+                
+            return pnl, trade_info
+    
+    def _execute_force_close_with_locked_price(self, locked_exit_data: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
+        """Execute force-close using locked exit price to ensure consistent timing.
+        
+        Args:
+            locked_exit_data: Dictionary containing locked exit price and related data
+            
+        Returns:
+            Tuple of (pnl, trade_info)
+        """
+        position = self.env.current_position
+        direction = position["direction"]
+        entry_price = position["entry_price"]
+        lot_size = position["lot_size"]
+        entry_step = position["entry_step"]
+        
+        # Use LOCKED exit price instead of recalculating
+        exit_price = locked_exit_data['locked_exit_price']
+        profit_points_normalized = locked_exit_data['locked_profit_points']
+        
+        # CRITICAL VALIDATION: Ensure we don't exceed threshold due to timing
+        if profit_points_normalized < -self.env.max_loss_points:
+            # Safety fallback - adjust to exact threshold
+            target_loss_points = -self.env.max_loss_points
+            original_exit_price = exit_price
+            
+            print(f"WARNING: Locked price would exceed threshold ({profit_points_normalized:.1f} vs {target_loss_points:.1f})")
+            print(f"Adjusting exit price from {original_exit_price:.5f} to enforce limit")
+            
+            # Recalculate exit price to exactly meet threshold
+            if direction == 1:
+                exit_price = entry_price + (target_loss_points * self.env.POINT_VALUE)
+            else:
+                exit_price = entry_price - (target_loss_points * self.env.POINT_VALUE)
+                
+            profit_points_normalized = target_loss_points
+            print(f"Adjusted exit price to {exit_price:.5f} for exact {target_loss_points:.1f} point loss")
+        
+        # Calculate profit points for PnL calculation
+        if direction == 1:  # Long position
+            profit_points = exit_price - entry_price
+        else:  # Short position
+            profit_points = entry_price - exit_price
+        
+        # Calculate P&L in USD then convert to account currency
+        usd_pnl = profit_points * lot_size * self.env.CONTRACT_SIZE
+        pnl = usd_pnl * self.env.currency_conversion
+        
+        # Create comprehensive trade info
+        trade_info = {
+            "direction": direction,
+            "entry_price": entry_price,
+            "exit_price": exit_price,
+            "entry_time": position["entry_time"],
+            "exit_time": str(self.env.original_index[self.env.current_step]),
+            "profit_points": profit_points_normalized,
+            "pnl": pnl,
+            "hold_time": self.env.current_step - entry_step,
+            "lot_size": lot_size,
+            "entry_spread": position["entry_spread"],
+            "exit_spread": locked_exit_data["spread_used"],
+            "entry_step": entry_step,
+            "exit_step": self.env.current_step,
+            "force_closed": True,
+            "close_reason": "max_loss_reached",
+            "locked_price_used": True,
+            "lock_timestamp": locked_exit_data["lock_timestamp"],
+            "market_price_at_lock": locked_exit_data["market_price"]
+        }
+        
+        # Enhanced logging for force-close
+        direction_str = "LONG" if direction == 1 else "SHORT"
+        print(f"FORCE-CLOSE EXECUTED:")
+        print(f"  Position: {direction_str} at {entry_price:.5f}")
+        print(f"  Locked Exit: {exit_price:.5f}")
+        print(f"  Final Loss: {profit_points_normalized:.1f} points")
+        print(f"  Threshold: {-self.env.max_loss_points:.1f} points")
+        print(f"  Market Price: {locked_exit_data['market_price']:.5f}")
+        print(f"  Spread Used: {locked_exit_data['spread_used']:.5f}")
+        print(f"  Hold Time: {trade_info['hold_time']} bars")
+        print(f"  PnL: {pnl:+.2f}")
+        
+        # Final validation
+        if profit_points_normalized < -self.env.max_loss_points - 0.1:  # Small tolerance for rounding
+            print(f"ERROR: Force-close validation failed! Loss {profit_points_normalized:.1f} exceeds limit {-self.env.max_loss_points:.1f}")
+        else:
+            print(f"✓ Force-close validation passed: {profit_points_normalized:.1f} <= {-self.env.max_loss_points:.1f}")
+        
+        return pnl, trade_info

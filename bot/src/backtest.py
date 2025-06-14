@@ -476,6 +476,7 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             max_lots=max_lots,
             contract_size=contract_size,
             currency_conversion=currency_conversion,
+            max_loss_points=25000.0,  # Force-close losing positions at 25,000 points
             context="creating TradingEnv"
         )
         

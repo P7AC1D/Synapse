@@ -42,6 +42,7 @@ class TradingEnv(gym.Env, EzPickle):
                  contract_size: float = 100.0,
                  spread_variation: float = 0.0,
                  slippage_range: float = 0.0,
+                 max_loss_points: float = 25000.0,
                  feature_processor_class=None):
         """Initialize trading environment.
         
@@ -56,6 +57,9 @@ class TradingEnv(gym.Env, EzPickle):
             min_lots: Minimum lot size (default: 0.01)
             max_lots: Maximum lot size (default: 200.0)
             contract_size: Standard contract size (default: 100.0 for Gold)
+            spread_variation: Random spread variation range (default: 0.0)
+            slippage_range: Maximum price slippage range in points (default: 0.0)
+            max_loss_points: Force-close losing positions at this loss threshold (default: 25000.0)
         """
         super().__init__()
         EzPickle.__init__(self)
@@ -69,13 +73,16 @@ class TradingEnv(gym.Env, EzPickle):
         self.MAX_DRAWDOWN = 1.0      # Maximum drawdown
         self.initial_balance = initial_balance
         self.currency_conversion = currency_conversion or 1.0  # Default to 1.0 if not provided
+        self.max_loss_points = max_loss_points  # Force-close threshold
         
         # Set predict_context flag for live trading vs backtesting
         self.predict_context = predict_mode
         
         # Market simulation settings
         self.spread_variation = spread_variation
-        self.slippage_range = slippage_range        # Initialize components with specified or default feature processor
+        self.slippage_range = slippage_range
+        
+        # Initialize components with specified or default feature processor
         self.feature_processor = (feature_processor_class or FeatureProcessor)()
         self.metrics = MetricsTracker(initial_balance)
         self.action_handler = ActionHandler(self)
@@ -189,31 +196,46 @@ class TradingEnv(gym.Env, EzPickle):
         self.episode_steps += 1
         self.current_step += 1
         
-        
         # Update hold time for existing positions
         if self.current_position:
             self.current_hold_time += 1
 
-        # Initialize state variables
+        # FORCE-CLOSE CHECK: Check if position should be force-closed BEFORE processing regular actions
+        force_closed = False
         pnl = 0.0
         unrealized_pnl = 0.0
         trade_info = None
-
-        # Handle different actions
-        if action in [Action.BUY, Action.SELL]:
-            if self.current_position is None:
-                direction = 1 if action == Action.BUY else 2
-                self.action_handler.execute_trade(direction, current_spread)
+        
+        if self.current_position:
+            should_force_close, locked_exit_data = self.action_handler.check_force_close()
+            if should_force_close:
+                # Execute force close with locked exit data to prevent timing issues
+                pnl, trade_info = self.action_handler.execute_force_close(locked_exit_data)
+                if trade_info:
+                    self.trades.append(trade_info)
+                    self.metrics.add_trade(trade_info)
+                    self.metrics.update_balance(pnl)
+                self.current_position = None
                 self.current_hold_time = 0
-                
-        elif action == Action.CLOSE and self.current_position:
-            pnl, trade_info = self.action_handler.close_position()
-            if pnl != 0:
-                self.trades.append(trade_info)
-                self.metrics.add_trade(trade_info)
-                self.metrics.update_balance(pnl)
-            self.current_position = None
-            self.current_hold_time = 0
+                force_closed = True
+        
+        # Only process regular actions if no force-close occurred
+        if not force_closed:
+            # Handle different actions
+            if action in [Action.BUY, Action.SELL]:
+                if self.current_position is None:
+                    direction = 1 if action == Action.BUY else 2
+                    self.action_handler.execute_trade(direction, current_spread)
+                    self.current_hold_time = 0
+                    
+            elif action == Action.CLOSE and self.current_position:
+                pnl, trade_info = self.action_handler.close_position()
+                if pnl != 0:
+                    self.trades.append(trade_info)
+                    self.metrics.add_trade(trade_info)
+                    self.metrics.update_balance(pnl)
+                self.current_position = None
+                self.current_hold_time = 0
                 
         # Track unrealized PnL for any active position
         if self.current_position:
@@ -239,12 +261,13 @@ class TradingEnv(gym.Env, EzPickle):
         reward = self.reward_calculator.calculate_reward(
             action=action,
             position_type=position_type,
-            pnl=pnl if action == Action.CLOSE else unrealized_pnl,
+            pnl=pnl if (action == Action.CLOSE or force_closed) else unrealized_pnl,
             atr=current_atr,
             current_hold=self.current_hold_time,
             optimal_hold=None,
             invalid_action=invalid_action
         )
+        
         # Calculate terminal conditions
         end_of_data = self.current_step >= self.data_length - 1
         max_drawdown = self.metrics.get_equity_drawdown()
