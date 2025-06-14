@@ -114,15 +114,10 @@ ENVIRONMENT_CONFIG = {
 }
 
 # Walk-Forward Optimization Configuration
-# Optimized for 3.81 years of data (2021-07-09 to 2025-05-01)
-# Cleaned up to include only actively used parameters
+# Minimal config with only essential parameters - metadata calculated dynamically
 WFO_CONFIG = {
-    'training_window_days': 180,          # ≈6 months in days (used for default_initial_window calculation)
-    'step_forward_days': 45,              # ≈1.5 months in days (used for default_step_size calculation)
-    
-    # Dataset metadata (used for logging and display)
-    'expected_iterations': 15,            # ~15 iterations across 3.81 years
-    'total_dataset_days': 1391,          # Total days in dataset
+    'training_window_days': 60,          # ≈6 months in days (used for default_initial_window calculation)
+    'step_forward_days': 14,              # ≈1.5 months in days (used for default_step_size calculation)
     
     # Knowledge retention (used for display only)
     'knowledge_retention': {

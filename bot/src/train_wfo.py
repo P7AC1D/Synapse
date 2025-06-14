@@ -112,7 +112,6 @@ def main():
     print(f"   Training Window: {args.initial_window:,} periods ({args.initial_window/96:.0f} days)")
     print(f"   Step Forward: {args.step_size:,} periods ({args.step_size/96:.0f} days)")
     print(f"   Total Timesteps: {args.total_timesteps:,} per window")
-    print(f"   Expected Iterations: ~{WFO_CONFIG['expected_iterations']} across dataset")
     print(f"   Overlap Ratio: {WFO_CONFIG['knowledge_retention']['overlap_ratio']*100:.0f}% (prevents forgetting)")
     print(f"{'='*60}")
     
@@ -132,6 +131,19 @@ def main():
     data = load_and_prepare_data(args)
     if data is None:
         return 1
+    
+    # Calculate dynamic WFO metadata from actual data
+    total_periods = len(data)
+    expected_iterations = (total_periods - args.initial_window) // args.step_size + 1
+    total_dataset_days = len(data) // 96  # 96 periods per day for 15-min data
+    
+    # Update WFO display with calculated values
+    print(f"\n📊 Dynamic WFO Metadata (calculated from actual data):")
+    print(f"   Total Data Periods: {total_periods:,}")
+    print(f"   Total Dataset Days: {total_dataset_days:,}")
+    print(f"   Expected Iterations: {expected_iterations} (calculated)")
+    print(f"   Data Utilization: {((expected_iterations * args.step_size + args.initial_window) / total_periods * 100):.1f}%")
+    print(f"{'='*60}")
     
     # Run training
     try:
