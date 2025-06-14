@@ -673,30 +673,10 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
         
         print(f"\nBacktest completed: {total_steps} steps processed")
         logger.info(f"Backtest completed: {total_steps} steps processed")
-          # Handle any open position at the end
-        try:
-            if env.current_position:
-                # Use the actual last processed step, not len(data) - 1
-                # total_steps represents the number of steps processed (1-indexed count)
-                # The last valid data index is total_steps - 1 (0-indexed)
-                final_step = min(total_steps - 1, len(data) - 1)
-                env.current_step = max(0, final_step)  # Ensure non-negative
-                
-                logger.info(f"Closing final position at step {env.current_step} (total_steps: {total_steps}, data_len: {len(data)})")
-                
-                # Validate that the step is within bounds
-                if env.current_step >= len(data):
-                    logger.error(f"Final step {env.current_step} is out of bounds for data size {len(data)}")
-                    env.current_step = len(data) - 1
-                
-                pnl, trade_info = action_handler.close_position()
-                if pnl != 0:
-                    env.trades.append(trade_info)
-                    env.metrics.add_trade(trade_info)
-                    env.metrics.update_balance(pnl)
-                logger.info("Open position closed at end of backtest")
-        except Exception as e:
-            log_exception(e, "closing final position")
+        
+        # Leave any open positions as-is (no automatic closing)
+        if env.current_position:
+            logger.info(f"Backtest ended with open position: {env.current_position['direction']} at {env.current_position['entry_price']}")
         
         # Return metrics using same method as evaluate
         try:

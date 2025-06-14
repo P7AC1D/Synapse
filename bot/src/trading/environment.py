@@ -66,7 +66,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.MAX_LOTS = max_lots
         self.CONTRACT_SIZE = contract_size
         self.BALANCE_PER_LOT = balance_per_lot
-        self.MAX_DRAWDOWN = 0.4      # Maximum drawdown
+        self.MAX_DRAWDOWN = 1.0      # Maximum drawdown
         self.initial_balance = initial_balance
         self.currency_conversion = currency_conversion or 1.0  # Default to 1.0 if not provided
         
@@ -245,31 +245,13 @@ class TradingEnv(gym.Env, EzPickle):
             optimal_hold=None,
             invalid_action=invalid_action
         )
-          # Calculate terminal conditions
+        # Calculate terminal conditions
         end_of_data = self.current_step >= self.data_length - 1
         max_drawdown = self.metrics.get_equity_drawdown()
         done = end_of_data or self.metrics.balance <= 0 or max_drawdown >= self.MAX_DRAWDOWN
-          # Force close any open position at episode end
-        if done and self.current_position:
-            # Store position info before closing for correct reward calculation
-            closing_position_type = self.current_position["direction"]
-            forced_pnl, forced_trade_info = self.action_handler.close_position()
-            if forced_pnl != 0:
-                self.trades.append(forced_trade_info)
-                self.metrics.add_trade(forced_trade_info)
-                self.metrics.update_balance(forced_pnl)
-                # Add the forced close reward to the current reward
-                forced_close_reward = self.reward_calculator.calculate_reward(
-                    action=Action.CLOSE,
-                    position_type=closing_position_type,  # Use stored position type
-                    pnl=forced_pnl,
-                    atr=current_atr,
-                    current_hold=self.current_hold_time,
-                    optimal_hold=None,
-                    invalid_action=False                )
-                reward += forced_close_reward
-            self.current_position = None
-            self.current_hold_time = 0
+        
+        # Leave any open positions as-is (no automatic closing)
+        # Open positions will be handled by the position details in metrics
         
         # Calculate terminal reward
         if done:
