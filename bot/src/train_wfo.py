@@ -90,6 +90,14 @@ def main():
     parser.add_argument('--warm-start-lr', type=float, dest='warm_start_learning_rate',
                        help='Learning rate for warm-start training (recommended: 2e-4 for refinement)')
     
+    # Warm-start epsilon exploration parameters
+    parser.add_argument('--warm-start-eps-start', type=float, default=0.25, dest='warm_start_eps_start',
+                       help='Starting epsilon for warm-start training (default: 0.25, original: 0.95)')
+    parser.add_argument('--warm-start-eps-end', type=float, default=0.1, dest='warm_start_eps_end',
+                       help='Ending epsilon for warm-start training (default: 0.1, original: 0.4)')
+    parser.add_argument('--warm-start-eps-min', type=float, default=0.15, dest='warm_start_eps_min',
+                       help='Minimum epsilon for warm-start training (default: 0.15, original: 0.5)')
+    
     # Data and paths
     parser.add_argument('--data-path', type=str, default='../data/XAUUSDm_15min.csv', 
                        dest='data_path', help='Path to training data')
@@ -120,8 +128,18 @@ def main():
             print(f"   Learning Rate: {args.warm_start_learning_rate:.2e} (reduced for refinement)")
         else:
             print(f"   Learning Rate: Using default (6e-4)")
+        
+        # Display epsilon parameters
+        print(f"   Epsilon Exploration (warm-start):")
+        print(f"     Start: {args.warm_start_eps_start} (vs 0.95 for fresh training)")
+        print(f"     End: {args.warm_start_eps_end} (vs 0.4 for fresh training)")
+        print(f"     Min: {args.warm_start_eps_min} (vs 0.5 for fresh training)")
     else:
         print(f"🆕 Training Mode: Fresh model training")
+        print(f"   Epsilon Exploration (fresh):")
+        print(f"     Start: 0.95 (high exploration for discovery)")
+        print(f"     End: 0.4 (moderate final exploration)")
+        print(f"     Min: 0.5 (high minimum exploration)")
     
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}")

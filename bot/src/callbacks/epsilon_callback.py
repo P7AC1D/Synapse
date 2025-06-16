@@ -5,28 +5,55 @@ from gym.spaces import Discrete
 from typing import Optional
 import torch as th
 import os
-from configs.config import ENHANCED_EPSILON_CONFIG
+from configs.config import ENHANCED_EPSILON_CONFIG, WARM_START_EPSILON_CONFIG
 
 class CustomEpsilonCallback(BaseCallback):
     """Custom callback for epsilon-greedy exploration during training"""
     
-    def __init__(self, start_eps=1.0, end_eps=0.05, decay_timesteps=40000, iteration=0):
+    def __init__(self, start_eps=1.0, end_eps=0.05, decay_timesteps=40000, iteration=0, 
+                 warm_start_mode=False, warm_start_eps_start=None, warm_start_eps_end=None, 
+                 warm_start_eps_min=None):
         super().__init__()
         
-        # Load exploration parameters from enhanced config
-        epsilon_config = ENHANCED_EPSILON_CONFIG.copy()  # Create a copy to avoid modifying original
+        # Choose configuration based on warm-start mode
+        if warm_start_mode:
+            epsilon_config = WARM_START_EPSILON_CONFIG.copy()
+            mode_name = "warm-start exploration"
+        else:
+            epsilon_config = ENHANCED_EPSILON_CONFIG.copy()
+            mode_name = "enhanced exploration"
         
-        # Apply exploration parameters with overrides if explicitly provided
-        self.start_eps = start_eps if start_eps != 1.0 else epsilon_config.get('start_eps', 0.9)
-        self.end_eps = end_eps if end_eps != 0.05 else epsilon_config.get('end_eps', 0.2)
+        # Apply exploration parameters with CLI overrides taking highest priority
+        if warm_start_mode and warm_start_eps_start is not None:
+            self.start_eps = warm_start_eps_start
+        elif start_eps != 1.0:  # CLI override provided
+            self.start_eps = start_eps
+        else:  # Use config default
+            self.start_eps = epsilon_config.get('start_eps', 0.9)
+            
+        if warm_start_mode and warm_start_eps_end is not None:
+            self.end_eps = warm_start_eps_end
+        elif end_eps != 0.05:  # CLI override provided
+            self.end_eps = end_eps
+        else:  # Use config default
+            self.end_eps = epsilon_config.get('end_eps', 0.2)
+            
+        if warm_start_mode and warm_start_eps_min is not None:
+            self.min_exploration_rate = warm_start_eps_min
+        else:  # Use config default
+            self.min_exploration_rate = epsilon_config.get('min_exploration_rate', 0.4)
+            
         self.decay_timesteps = decay_timesteps
-        self.min_exploration_rate = epsilon_config.get('min_exploration_rate', 0.4)
         
         # Print active configuration
-        print("✅ Using enhanced exploration parameters:")
+        print(f"✅ Using {mode_name} parameters:")
         print(f"   - Start epsilon: {self.start_eps}")
         print(f"   - End epsilon: {self.end_eps}")
         print(f"   - Min exploration rate: {self.min_exploration_rate}")
+        if warm_start_mode:
+            print(f"   - Mode: Warm-start (reduced exploration for refinement)")
+        else:
+            print(f"   - Mode: Fresh training (high exploration for discovery)")
         
         self.iteration = iteration
         self.original_forward = None

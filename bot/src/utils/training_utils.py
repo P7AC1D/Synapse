@@ -835,7 +835,7 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 
                 # Create new model if warm-start failed or wasn't requested
                 if model is None:
-                    print(f"\n�🚀 Creating new model...")
+                    print(f"\n�� Creating new model...")
                     # Clear any existing validation state for fresh start
                     validation_state_file = os.path.join(results_path, 'validation_state.json')
                     if os.path.exists(validation_state_file):
@@ -891,14 +891,33 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 verbose=1
             )
             
-            callbacks = [
-                anti_collapse_cb,
-                CustomEpsilonCallback(
+            # Determine if this is warm-start mode
+            warm_start_mode = hasattr(args, 'warm_start_model_path') and args.warm_start_model_path is not None
+            
+            # Create epsilon callback with appropriate parameters
+            if warm_start_mode:
+                epsilon_cb = CustomEpsilonCallback(
+                    start_eps=0.15,  # Default will be overridden by warm-start config
+                    end_eps=0.05,    # Default will be overridden by warm-start config
+                    decay_timesteps=int(current_timesteps * 0.7),
+                    iteration=iteration,
+                    warm_start_mode=True,
+                    warm_start_eps_start=getattr(args, 'warm_start_eps_start', None),
+                    warm_start_eps_end=getattr(args, 'warm_start_eps_end', None),
+                    warm_start_eps_min=getattr(args, 'warm_start_eps_min', None)
+                )
+            else:
+                epsilon_cb = CustomEpsilonCallback(
                     start_eps=0.15,
                     end_eps=0.05,
                     decay_timesteps=int(current_timesteps * 0.7),
-                    iteration=iteration
-                ),
+                    iteration=iteration,
+                    warm_start_mode=False
+                )
+            
+            callbacks = [
+                anti_collapse_cb,
+                epsilon_cb,
                 eval_cb
             ]
             

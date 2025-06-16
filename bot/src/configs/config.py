@@ -72,6 +72,13 @@ ENHANCED_EPSILON_CONFIG = {
     'min_exploration_rate': 0.5        # Higher minimum exploration rate
 }
 
+# Warm-start epsilon configuration for reduced exploration
+WARM_START_EPSILON_CONFIG = {
+    'start_eps': 0.25,                 # Much lower starting exploration for warm-start
+    'end_eps': 0.1,                    # Lower final exploration for warm-start
+    'min_exploration_rate': 0.15       # Lower minimum exploration rate for warm-start
+}
+
 # Validation configuration optimized for WFO
 VALIDATION_CONFIG = {
     'early_stopping': {
