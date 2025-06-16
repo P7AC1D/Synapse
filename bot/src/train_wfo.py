@@ -104,8 +104,8 @@ def main():
     parser.add_argument('--device', type=str, default='auto', help='Device for training (auto/cpu/cuda)')
     
     # Model selection strategy arguments
-    parser.add_argument('--model-selection', type=str, default='ensemble_validation',
-                       choices=['ensemble_validation', 'rolling_validation', 'random_sequential_validation', 'risk_adjusted', 'legacy'],
+    parser.add_argument('--model-selection', type=str, default='rolling_validation',
+                       choices=['rolling_validation', 'random_sequential_validation', 'risk_adjusted', 'legacy'],
                        dest='model_selection', help='Model selection strategy for walk-forward optimization')
     parser.add_argument('--disable-improved-selection', action='store_true', dest='disable_improved_selection',
                        help='Disable improved model selection and use legacy comparison')

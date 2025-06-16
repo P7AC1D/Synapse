@@ -35,13 +35,13 @@ class WFOModelSelector:
     4. Market regime detection and adaptive thresholds
     """
     
-    def __init__(self, results_path: str, strategy: str = "ensemble_validation"):
+    def __init__(self, results_path: str, strategy: str = "rolling_validation"):
         """
         Initialize the WFO Model Selector.
         
         Args:
             results_path: Path to store results and models
-            strategy: Selection strategy ('ensemble_validation', 'rolling_validation', 
+            strategy: Selection strategy ('rolling_validation', 'random_sequential_validation', 
                      'risk_adjusted', 'market_regime_adaptive')
         """
         self.results_path = results_path
@@ -51,15 +51,11 @@ class WFOModelSelector:
         
         # Configuration for different strategies
         self.config = {
-            'ensemble_validation': {
-                'num_validation_periods': 3,  # Use last 3 periods for validation
-                'min_validation_size': 1000,  # Minimum samples per validation
-                'weights': {'return': 0.4, 'sharpe': 0.3, 'max_dd': 0.3}
-            },
             'rolling_validation': {
                 'validation_window_size': 2000,  # Fixed validation window size
                 'num_rolling_windows': 5,  # Number of rolling windows to test
-                'consistency_weight': 0.3  # Weight for performance consistency
+                'consistency_weight': 0.3,  # Weight for performance consistency
+                'weights': {'return': 0.4, 'sharpe': 0.3, 'max_dd': 0.3}  # Ensemble scoring weights
             },
             'random_sequential_validation': {
                 'validation_window_size': 2000,  # Size of each random sequential block
@@ -69,7 +65,7 @@ class WFOModelSelector:
                 'max_lookback_periods': 50000,  # Maximum lookback (avoid very old data)
                 'temporal_weighting': True,  # Weight more recent blocks higher
                 'random_seed_base': 42,  # Base seed for reproducibility
-                'weights': {'return': 0.4, 'sharpe': 0.3, 'max_dd': 0.3}  # Same as ensemble
+                'weights': {'return': 0.4, 'sharpe': 0.3, 'max_dd': 0.3}  # Ensemble scoring weights
             },
             'risk_adjusted': {
                 'sharpe_threshold': 0.5,   # Minimum Sharpe ratio
@@ -115,20 +111,7 @@ class WFOModelSelector:
         validation_sets = []
         config = self.config[self.strategy]
         
-        if self.strategy == "ensemble_validation":
-            # Create multiple validation periods of equal size
-            val_size = config['min_validation_size']
-            num_periods = config['num_validation_periods']
-            
-            for i in range(num_periods):
-                start_idx = max(0, current_end_idx - (i + 1) * val_size)
-                end_idx = max(val_size, current_end_idx - i * val_size)
-                
-                if end_idx - start_idx >= val_size * 0.8:  # At least 80% of desired size
-                    val_set = data.iloc[start_idx:end_idx].copy()
-                    validation_sets.append(val_set)
-        
-        elif self.strategy == "rolling_validation":
+        if self.strategy == "rolling_validation":
             # Create rolling windows of fixed size
             window_size = config['validation_window_size']
             num_windows = config['num_rolling_windows']
@@ -309,11 +292,11 @@ class WFOModelSelector:
             return {'score': -float('inf'), 'details': {}}
         
         # Get weights from appropriate config (all strategies that use ensemble scoring have weights)
-        if self.strategy in ['ensemble_validation', 'random_sequential_validation']:
+        if self.strategy in ['rolling_validation', 'random_sequential_validation']:
             config = self.config[self.strategy]
             weights = config['weights']
         else:
-            # Fallback weights for rolling_validation
+            # Fallback weights
             weights = {'return': 0.4, 'sharpe': 0.3, 'max_dd': 0.3}
         
         # Calculate average metrics
@@ -453,7 +436,7 @@ class WFOModelSelector:
             current_results.append(result)
         
         # Calculate current model score based on strategy
-        if self.strategy in ['ensemble_validation', 'rolling_validation', 'random_sequential_validation']:
+        if self.strategy in ['rolling_validation', 'random_sequential_validation']:
             current_score_info = self._calculate_ensemble_score(current_results)
         elif self.strategy == 'risk_adjusted':
             current_score_info = self._calculate_risk_adjusted_score(current_results)
@@ -485,7 +468,7 @@ class WFOModelSelector:
                 best_results.append(result)
             
             # Calculate best model score
-            if self.strategy in ['ensemble_validation', 'rolling_validation', 'random_sequential_validation']:
+            if self.strategy in ['rolling_validation', 'random_sequential_validation']:
                 best_score_info = self._calculate_ensemble_score(best_results)
             elif self.strategy == 'risk_adjusted':
                 best_score_info = self._calculate_risk_adjusted_score(best_results)
@@ -533,7 +516,7 @@ class WFOModelSelector:
 def apply_improved_model_selection(results_path: str, current_model_path: str, 
                                  best_model_path: str, data: pd.DataFrame,
                                  current_end_idx: int, env_params: Dict[str, Any],
-                                 iteration: int, strategy: str = "ensemble_validation") -> bool:
+                                 iteration: int, strategy: str = "rolling_validation") -> bool:
     """
     Apply improved model selection and return whether model was updated.
     
