@@ -160,19 +160,25 @@ class TradingBot:
             # Initialize components
             self.data_fetcher = DataFetcher(
                 self.mt5, self.symbol, MT5_TIMEFRAME_MINUTES, BARS_TO_FETCH + 1
-            )
+            )            
             # Initialize trading model with actual balance
             self.logger.info(f"Loading trading model from: {self.model_path}")
             account_balance = self.mt5.get_account_balance()
-            self.model = TradeModel(
-                self.model_path,
-                balance_per_lot=self.balance_per_lot,
-                initial_balance=account_balance,
-                point_value=point_value,
-                min_lots=min_lots,
-                max_lots=max_lots,
-                contract_size=contract_size
-            )
+            try:
+                self.model = TradeModel(
+                    self.model_path,
+                    balance_per_lot=self.balance_per_lot,
+                    initial_balance=account_balance,
+                    point_value=point_value,
+                    min_lots=min_lots,
+                    max_lots=max_lots,
+                    contract_size=contract_size
+                )
+                self.logger.info(f"TradeModel instantiated successfully. initial_warmup = {self.model.initial_warmup}")
+            except Exception as e:
+                self.logger.error(f"Failed to instantiate TradeModel: {e}")
+                return False
+                
             if not self.model.model:  # Check if model loaded successfully
                 self.logger.error("Failed to load trading model")
                 return False
@@ -184,9 +190,14 @@ class TradingBot:
                 balance_per_lot=self.balance_per_lot,
                 stop_loss_pips=self.stop_loss_pips
             )
-            
-            # Get initial data for warmup
+              # Get initial data for warmup
             initial_data = self.data_fetcher.fetch_data()
+            
+            # Check if the model has the initial_warmup attribute
+            if not hasattr(self.model, 'initial_warmup'):
+                self.logger.error("TradeModel does not have 'initial_warmup' attribute. This indicates an incomplete initialization.")
+                return False
+                
             if initial_data is None or len(initial_data) < self.model.initial_warmup:
                 self.logger.error(f"Failed to fetch enough initial data (need {self.model.initial_warmup} bars)")
                 return False
@@ -397,27 +408,20 @@ class TradingBot:
             # Get observation with updated position metrics
             obs = env.get_observation()
             
-            # Log raw feature values for debugging
+            # Log current market data for debugging (using actual price ratio features)
             rates_data = data_for_prediction.copy()
-            feature_processor = env.feature_processor
-            atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
-                rates_data['high'].values,
-                rates_data['low'].values,
-                rates_data['close'].values
-            )
             
-            # Log raw feature values for the last bar
-            self.logger.debug("\nRaw feature values (last bar):")
-            if len(atr) > 0:
-                self.logger.debug(f"ATR: {atr[-1]:.6f}")
-            if len(rsi) > 0:
-                self.logger.debug(f"RSI: {rsi[-1]:.6f}")
-            if len(upper_band) > 0:
-                self.logger.debug(f"BB Upper: {upper_band[-1]:.6f}")
-            if len(lower_band) > 0:
-                self.logger.debug(f"BB Lower: {lower_band[-1]:.6f}")
-            if len(trend_strength) > 0:
-                self.logger.debug(f"Trend Strength: {trend_strength[-1]:.6f}")
+            # Log current OHLC values for the last bar
+            if len(rates_data) > 0:
+                last_bar = rates_data.iloc[-1]
+                self.logger.debug("\nCurrent market data (last bar):")
+                self.logger.debug(f"Open: {last_bar['open']:.5f}")
+                self.logger.debug(f"High: {last_bar['high']:.5f}")
+                self.logger.debug(f"Low: {last_bar['low']:.5f}")
+                self.logger.debug(f"Close: {last_bar['close']:.5f}")
+                self.logger.debug(f"Spread: {last_bar['spread']:.5f}")
+                if 'volume' in last_bar:
+                    self.logger.debug(f"Volume: {last_bar['volume']:.0f}")
             
             # Create normalized feature dictionary for tracking
             feature_dict = {}

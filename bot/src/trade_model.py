@@ -39,6 +39,15 @@ class TradeModel:
         self.min_lots = min_lots
         self.max_lots = max_lots
         self.contract_size = contract_size
+        
+        # Feature processor settings for warmup calculation
+        self.window_size = 10  # Default window size for feature processor
+        self.atr_period = 14   # ATR calculation period
+        
+        # Calculate minimum warmup period needed
+        # Need enough data for: feature lookback + ATR calculation + buffer
+        self.initial_warmup = max(self.window_size, self.atr_period) + 500  # 64 bars minimum
+        
         self.required_columns = [
             'open',   # Required for price action features
             'close',  # Price data
