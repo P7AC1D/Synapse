@@ -228,7 +228,6 @@ class ActionHandler:
         if profit_points <= -self.env.max_loss_points:
             # CRITICAL FIX: Lock in exit price immediately when threshold breached
             locked_exit_data = self._lock_exit_price()
-            print(f"FORCE-CLOSE TRIGGERED: Loss {profit_points:.1f} points exceeds limit {-self.env.max_loss_points:.1f}")
             return True, locked_exit_data
             
         return False, None
@@ -318,10 +317,6 @@ class ActionHandler:
         if profit_points_normalized < -self.env.max_loss_points:
             # Safety fallback - adjust to exact threshold
             target_loss_points = -self.env.max_loss_points
-            original_exit_price = exit_price
-            
-            print(f"WARNING: Locked price would exceed threshold ({profit_points_normalized:.1f} vs {target_loss_points:.1f})")
-            print(f"Adjusting exit price from {original_exit_price:.5f} to enforce limit")
             
             # Recalculate exit price to exactly meet threshold
             if direction == 1:
@@ -330,7 +325,6 @@ class ActionHandler:
                 exit_price = entry_price - (target_loss_points * self.env.POINT_VALUE)
                 
             profit_points_normalized = target_loss_points
-            print(f"Adjusted exit price to {exit_price:.5f} for exact {target_loss_points:.1f} point loss")
         
         # Calculate profit points for PnL calculation
         if direction == 1:  # Long position
@@ -364,22 +358,8 @@ class ActionHandler:
             "market_price_at_lock": locked_exit_data["market_price"]
         }
         
-        # Enhanced logging for force-close
-        direction_str = "LONG" if direction == 1 else "SHORT"
-        print(f"FORCE-CLOSE EXECUTED:")
-        print(f"  Position: {direction_str} at {entry_price:.5f}")
-        print(f"  Locked Exit: {exit_price:.5f}")
-        print(f"  Final Loss: {profit_points_normalized:.1f} points")
-        print(f"  Threshold: {-self.env.max_loss_points:.1f} points")
-        print(f"  Market Price: {locked_exit_data['market_price']:.5f}")
-        print(f"  Spread Used: {locked_exit_data['spread_used']:.5f}")
-        print(f"  Hold Time: {trade_info['hold_time']} bars")
-        print(f"  PnL: {pnl:+.2f}")
-        
         # Final validation
         if profit_points_normalized < -self.env.max_loss_points - 0.1:  # Small tolerance for rounding
             print(f"ERROR: Force-close validation failed! Loss {profit_points_normalized:.1f} exceeds limit {-self.env.max_loss_points:.1f}")
-        else:
-            print(f"✓ Force-close validation passed: {profit_points_normalized:.1f} <= {-self.env.max_loss_points:.1f}")
         
         return pnl, trade_info

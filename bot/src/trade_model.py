@@ -420,7 +420,7 @@ class TradeModel:
         return metrics
 
     def evaluate(self, data: pd.DataFrame, initial_balance: float = 10000.0, balance_per_lot: Optional[float] = None,
-                spread_variation: float = 0.0, slippage_range: float = 0.0) -> Dict[str, Any]:
+                spread_variation: float = 0.0, slippage_range: float = 0.0, max_loss_points: float = 25000.0) -> Dict[str, Any]:
         """
         Evaluate model performance without verbose logging.
         
@@ -455,7 +455,7 @@ class TradeModel:
             contract_size=self.contract_size,
             spread_variation=spread_variation,
             slippage_range=slippage_range,
-            max_loss_points=25000.0  # Force-close losing positions at 25,000 points
+            max_loss_points=max_loss_points  # Use configurable stop-loss value
         )
         
         # Initialize LSTM states

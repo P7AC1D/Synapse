@@ -457,7 +457,8 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                             reset_states_on_gap: bool = True,
                             spread_variation: float = 0.0,
                             slippage_range: float = 0.0,
-                            balance_recheck_bars: int = 0) -> Dict[str, Any]:
+                            balance_recheck_bars: int = 0,
+                            max_loss_points: float = 25000.0) -> Dict[str, Any]:
     """Run a backtest using the predict_single method to simulate the live trading process."""
     
     try:
@@ -476,7 +477,7 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
             max_lots=max_lots,
             contract_size=contract_size,
             currency_conversion=currency_conversion,
-            max_loss_points=25000.0,  # Force-close losing positions at 25,000 points
+            max_loss_points=max_loss_points,  # Use configurable stop-loss value
             context="creating TradingEnv"
         )
         
@@ -709,7 +710,8 @@ def main():
                       help='Initial account balance in account currency (default: 190,000 ZAR)')
     parser.add_argument('--balance_per_lot', type=float, default=default_balance_per_lot,
                       help='Account balance required per 0.01 lot in account currency (default: 19,000 ZAR)')
-    parser.add_argument('--currency_conversion', type=float, default=1.0,                      help='Conversion rate from USD to account currency (default: 1.0)')
+    parser.add_argument('--currency_conversion', type=float, default=1.0,                      
+                      help='Conversion rate from USD to account currency (default: 1.0)')
                       
     # Market simulation settings
     parser.add_argument('--reset_states_on_gap', action='store_true',
@@ -740,6 +742,8 @@ def main():
                       help='Maximum lot size (default: 200.0)')
     parser.add_argument('--contract_size', type=float, default=100.0,
                       help='Standard contract size (default: 100.0)')
+    parser.add_argument('--max_loss_points', type=float, default=25000.0,
+                      help='Maximum loss in points before force-closing position (default: 25000.0, set to 0 to disable)')
     
     parser.add_argument('--method', type=str, choices=['evaluate', 'predict_single'], default='evaluate',
                       help='Backtesting method to use: evaluate (quiet) or predict_single (simulates live trading)')
@@ -839,7 +843,8 @@ def main():
                     spread_variation=args.spread_variation,
                     slippage_range=args.slippage_range,
                     balance_recheck_bars=args.balance_recheck_bars,
-                    trades_log_path=args.trades_log_path
+                    trades_log_path=args.trades_log_path,
+                    max_loss_points=args.max_loss_points
                 )
             else:  # method == 'evaluate' or args.quiet
                 print("\nRunning quiet backtest with evaluate method...")
@@ -865,7 +870,8 @@ def main():
                         initial_balance=args.initial_balance,
                         balance_per_lot=args.balance_per_lot,
                         spread_variation=args.spread_variation,
-                        slippage_range=args.slippage_range
+                        slippage_range=args.slippage_range,
+                        max_loss_points=args.max_loss_points
                     )
                     logger.info("Model evaluation completed successfully")
                 except Exception as e:
