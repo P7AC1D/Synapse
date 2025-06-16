@@ -72,7 +72,7 @@ class TradingEnv(gym.Env, EzPickle):
         self.BALANCE_PER_LOT = balance_per_lot
         self.MAX_DRAWDOWN = 1.0      # Maximum drawdown
         self.initial_balance = initial_balance
-        self.currency_conversion = currency_conversion or 1.0  # Default to 1.0 if not provided
+        self.currency_conversion = currency_conversion if currency_conversion is not None else 1.0  # Default to 1.0 if not provided
         self.max_loss_points = max_loss_points  # Force-close threshold
         
         # Set predict_context flag for live trading vs backtesting
