@@ -60,12 +60,11 @@ class WFOModelSelector:
             'random_sequential_validation': {
                 'validation_window_size': 2000,  # Size of each random sequential block
                 'num_validation_periods': 5,  # Number of random blocks to select
-                'min_gap_from_current': 2000,  # Don't pick blocks too close to current position
                 'min_block_spacing': 1000,  # Minimum gap between selected blocks
-                'max_lookback_periods': 50000,  # Maximum lookback (avoid very old data)
-                'temporal_weighting': True,  # Weight more recent blocks higher
+                'temporal_weighting': True,  # Weight blocks by temporal position if needed
                 'random_seed_base': 42,  # Base seed for reproducibility
                 'weights': {'return': 0.4, 'sharpe': 0.3, 'max_dd': 0.3}  # Ensemble scoring weights
+                # NOTE: Now samples from ENTIRE dataset for maximum market regime diversity
             },
             'risk_adjusted': {
                 'sharpe_threshold': 0.5,   # Minimum Sharpe ratio
@@ -135,10 +134,11 @@ class WFOModelSelector:
                                                 config: Dict[str, Any]) -> List[pd.DataFrame]:
         """
         Create random sequential validation blocks for diverse market regime testing.
+        Now samples from the ENTIRE dataset for maximum market regime diversity.
         
         Args:
             data: Full dataset
-            current_end_idx: Current position in dataset
+            current_end_idx: Current position in dataset (used for seeding only)
             config: Configuration for random sequential validation
             
         Returns:
@@ -148,17 +148,15 @@ class WFOModelSelector:
         
         window_size = config['validation_window_size']
         num_periods = config['num_validation_periods']
-        min_gap = config['min_gap_from_current']
         min_spacing = config['min_block_spacing']
-        max_lookback = config['max_lookback_periods']
         
-        # Define available range for random selection
-        # Don't go too far back (avoid very old data) or too close to current
-        earliest_start = max(0, current_end_idx - max_lookback)
-        latest_start = max(0, current_end_idx - min_gap - window_size)
+        # NEW: Use ENTIRE dataset range for maximum market regime diversity
+        earliest_start = 0  # Start of entire dataset
+        latest_start = len(data) - window_size  # End of entire dataset
         
         if latest_start <= earliest_start:
-            print(f"   ⚠️ Insufficient data range for random sequential validation")
+            print(f"   ⚠️ Insufficient dataset size for random sequential validation")
+            print(f"      Need at least {window_size} samples, got {len(data)}")
             return validation_sets
         
         # Set reproducible seed based on iteration and base seed
@@ -188,7 +186,9 @@ class WFOModelSelector:
         selected_starts.sort()
         
         # Create validation sets from selected positions
-        temporal_positions = []
+        dataset_start_date = data.index[0] if hasattr(data.index[0], 'strftime') else 'N/A'
+        dataset_end_date = data.index[-1] if hasattr(data.index[-1], 'strftime') else 'N/A'
+        
         for i, start_idx in enumerate(selected_starts):
             end_idx = min(start_idx + window_size, len(data))
             
@@ -196,20 +196,36 @@ class WFOModelSelector:
                 val_set = data.iloc[start_idx:end_idx].copy()
                 validation_sets.append(val_set)
                 
-                # Calculate temporal position for logging (how far back from current)
-                days_back = (current_end_idx - start_idx) // 96  # Assuming 96 periods per day
-                temporal_positions.append(days_back)
+                # Enhanced logging with absolute position and date info
+                position_pct = (start_idx / len(data)) * 100
                 
-                print(f"   🎲 Random block {i+1}: samples {start_idx}-{end_idx} "
-                      f"({len(val_set)} samples, ~{days_back} days back)")
+                # Get date info if available
+                block_start_date = val_set.index[0] if hasattr(val_set.index[0], 'strftime') else 'N/A'
+                block_end_date = val_set.index[-1] if hasattr(val_set.index[-1], 'strftime') else 'N/A'
+                
+                if block_start_date != 'N/A':
+                    print(f"   🎲 Random block {i+1}: samples {start_idx}-{end_idx} "
+                          f"({len(val_set)} samples, {position_pct:.1f}% into dataset)")
+                    print(f"      📅 Date range: {block_start_date.strftime('%Y-%m-%d')} to {block_end_date.strftime('%Y-%m-%d')}")
+                else:
+                    print(f"   🎲 Random block {i+1}: samples {start_idx}-{end_idx} "
+                          f"({len(val_set)} samples, {position_pct:.1f}% into dataset)")
         
-        if config.get('temporal_weighting', False) and validation_sets:
-            # Store temporal positions for potential weighting in scoring
-            # More recent blocks could get higher weights
-            self._temporal_positions = temporal_positions
-        
-        print(f"   📊 Created {len(validation_sets)} random sequential validation blocks")
-        print(f"   🌍 Market regime diversity: ~{max(temporal_positions) - min(temporal_positions)} days span")
+        if validation_sets:
+            # Calculate actual dataset span coverage
+            first_block_start = min(selected_starts)
+            last_block_end = max(start + window_size for start in selected_starts)
+            dataset_coverage = ((last_block_end - first_block_start) / len(data)) * 100
+            
+            print(f"   📊 Created {len(validation_sets)} random sequential validation blocks")
+            print(f"   🌍 Market regime diversity: {dataset_coverage:.1f}% of total dataset span")
+            print(f"   📈 Dataset range: {dataset_start_date} to {dataset_end_date}")
+            
+            # Store enhanced temporal information for weighting if needed
+            if config.get('temporal_weighting', False):
+                self._temporal_positions = [
+                    (start_idx / len(data)) for start_idx in selected_starts
+                ]
         
         return validation_sets
     
