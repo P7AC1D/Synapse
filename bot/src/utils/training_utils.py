@@ -792,24 +792,70 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
             # Create environments
             train_env = Monitor(TradingEnv(train_data, **env_params))
             val_env = Monitor(TradingEnv(val_data, **{**env_params, 'random_start': False}))
-            
-            # Get training timesteps 
+              # Get training timesteps 
             current_timesteps = TRAINING_CONFIG['total_timesteps']
             if model is None:
-                print(f"\n🚀 Creating new model...")
-                # Clear any existing validation state for fresh start
-                validation_state_file = os.path.join(results_path, 'validation_state.json')
-                if os.path.exists(validation_state_file):
-                    os.remove(validation_state_file)
-                    print(f"🗑️ Cleared previous validation state for fresh start")
+                # Check for warm-start model
+                warm_start_path = getattr(args, 'warm_start_model_path', None)
+                warm_start_lr = getattr(args, 'warm_start_learning_rate', None)
                 
-                model = RecurrentPPO(
-                    "MlpLstmPolicy",
-                    train_env,
-                    policy_kwargs=POLICY_KWARGS,
-                    device=getattr(args, 'device', 'auto'),
-                    seed=getattr(args, 'seed', None),                    **MODEL_KWARGS
-                )
+                if warm_start_path and os.path.exists(warm_start_path):
+                    print(f"\n� Loading warm-start model from: {warm_start_path}")
+                    
+                    try:
+                        # Load the existing model
+                        model = RecurrentPPO.load(warm_start_path, env=train_env)
+                        
+                        # Override learning rate if specified
+                        if warm_start_lr:
+                            print(f"🎯 Overriding learning rate: {model.learning_rate:.2e} → {warm_start_lr:.2e}")
+                            model.learning_rate = warm_start_lr
+                            # Also update the optimizer's learning rate
+                            for param_group in model.policy.optimizer.param_groups:
+                                param_group['lr'] = warm_start_lr
+                        else:
+                            print(f"📊 Using original learning rate: {model.learning_rate:.2e}")
+                        
+                        print(f"✅ Warm-start model loaded successfully")
+                        
+                        # Clear any existing validation state for fresh start
+                        validation_state_file = os.path.join(results_path, 'validation_state.json')
+                        if os.path.exists(validation_state_file):
+                            os.remove(validation_state_file)
+                            print(f"🗑️ Cleared previous validation state for fresh warm-start")
+                            
+                    except Exception as e:
+                        print(f"❌ Failed to load warm-start model: {e}")
+                        print(f"💡 Falling back to creating new model...")
+                        model = None  # Force creation of new model below
+                        
+                elif warm_start_path:
+                    print(f"❌ Warm-start model file not found: {warm_start_path}")
+                    print(f"💡 Creating new model instead...")
+                
+                # Create new model if warm-start failed or wasn't requested
+                if model is None:
+                    print(f"\n�🚀 Creating new model...")
+                    # Clear any existing validation state for fresh start
+                    validation_state_file = os.path.join(results_path, 'validation_state.json')
+                    if os.path.exists(validation_state_file):
+                        os.remove(validation_state_file)
+                        print(f"🗑️ Cleared previous validation state for fresh start")
+                    
+                    # Prepare model kwargs (handle warm-start learning rate override for new models)
+                    model_kwargs = MODEL_KWARGS.copy()
+                    if warm_start_lr:
+                        print(f"🎯 Using warm-start learning rate for new model: {warm_start_lr:.2e}")
+                        model_kwargs['learning_rate'] = warm_start_lr
+                    
+                    model = RecurrentPPO(
+                        "MlpLstmPolicy",
+                        train_env,
+                        policy_kwargs=POLICY_KWARGS,
+                        device=getattr(args, 'device', 'auto'),
+                        seed=getattr(args, 'seed', None),
+                        **model_kwargs
+                    )
             else:
                 print(f"\n⚡ Continuing training with warm start...")
                 model.set_env(train_env)

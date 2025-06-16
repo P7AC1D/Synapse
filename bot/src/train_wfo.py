@@ -76,15 +76,21 @@ def main():
                        help=f'Initial training window size (default: {default_initial_window:,} - 6 months)')
     parser.add_argument('--step-size', type=int, default=default_step_size, dest='step_size', 
                        help=f'Walk-forward step size (default: {default_step_size:,} - 1.5 months)')
-    
-    # Environment parameters
+      # Environment parameters
     parser.add_argument('--initial-balance', type=float, default=10000, dest='initial_balance', help='Initial account balance')
     parser.add_argument('--balance-per-lot', type=float, default=500, dest='balance_per_lot', help='Balance per lot sizing')
     parser.add_argument('--point-value', type=float, default=0.01, dest='point_value', help='Point value for XAUUSD')
     parser.add_argument('--min-lots', type=float, default=0.01, dest='min_lots', help='Minimum lot size')
     parser.add_argument('--max-lots', type=float, default=1.0, dest='max_lots', help='Maximum lot size')
     parser.add_argument('--contract-size', type=float, default=100000, dest='contract_size', help='Contract size')
-      # Data and paths
+    
+    # Warm-start training parameters
+    parser.add_argument('--warm-start-model', type=str, dest='warm_start_model_path',
+                       help='Path to existing model (.zip) to continue training from')
+    parser.add_argument('--warm-start-lr', type=float, dest='warm_start_learning_rate',
+                       help='Learning rate for warm-start training (recommended: 2e-4 for refinement)')
+    
+    # Data and paths
     parser.add_argument('--data-path', type=str, default='../data/XAUUSDm_15min.csv', 
                        dest='data_path', help='Path to training data')
     parser.add_argument('--device', type=str, default='auto', help='Device for training (auto/cpu/cuda)')
@@ -95,7 +101,8 @@ def main():
                        dest='model_selection', help='Model selection strategy for walk-forward optimization')
     parser.add_argument('--disable-improved-selection', action='store_true', dest='disable_improved_selection',
                        help='Disable improved model selection and use legacy comparison')
-    parser.add_argument('--no-legacy-warnings', action='store_true', dest='no_legacy_warnings',                       help='Suppress warnings when using legacy model selection')
+    parser.add_argument('--no-legacy-warnings', action='store_true', dest='no_legacy_warnings',
+                       help='Suppress warnings when using legacy model selection')
     
     args = parser.parse_args()
     
@@ -104,6 +111,18 @@ def main():
     print(f"{'='*60}")
     print(f"Seed: {args.seed}")
     print(f"Model Selection: {args.model_selection}")
+    
+    # Display warm-start information if enabled
+    if hasattr(args, 'warm_start_model_path') and args.warm_start_model_path:
+        print(f"🔥 Warm-Start Mode: ENABLED")
+        print(f"   Source Model: {args.warm_start_model_path}")
+        if hasattr(args, 'warm_start_learning_rate') and args.warm_start_learning_rate:
+            print(f"   Learning Rate: {args.warm_start_learning_rate:.2e} (reduced for refinement)")
+        else:
+            print(f"   Learning Rate: Using default (6e-4)")
+    else:
+        print(f"🆕 Training Mode: Fresh model training")
+    
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}")
     
@@ -163,8 +182,7 @@ def main():
         print(f"\n✅ TRAINING COMPLETED!")
         print(f"Training Duration: {training_duration}")
         print(f"Results Directory: {results_dir}")
-        
-        # Save training summary
+          # Save training summary
         summary = {
             'training_type': 'walk_forward',
             'seed': args.seed,
@@ -175,7 +193,10 @@ def main():
             'end_time': end_time.isoformat(),
             'duration_seconds': training_duration.total_seconds(),
             'data_samples': len(data),
-            'results_directory': results_dir
+            'results_directory': results_dir,
+            'warm_start_enabled': hasattr(args, 'warm_start_model_path') and args.warm_start_model_path is not None,
+            'warm_start_model_path': getattr(args, 'warm_start_model_path', None),
+            'warm_start_learning_rate': getattr(args, 'warm_start_learning_rate', None)
         }
         
         summary_path = os.path.join(results_dir, 'training_summary.json')
