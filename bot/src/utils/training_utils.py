@@ -277,6 +277,7 @@ class EvalCallback(BaseCallback):
             min_lots = get_env_attr(self.eval_env, 'MIN_LOTS', 0.01)
             max_lots = get_env_attr(self.eval_env, 'MAX_LOTS', 200.0)
             contract_size = get_env_attr(self.eval_env, 'CONTRACT_SIZE', 100.0)
+            max_loss_points = get_env_attr(self.eval_env, 'max_loss_points', 25000.0)
             
             # Create temporary model wrapper for evaluation
             temp_model = TradeModel(
@@ -309,7 +310,8 @@ class EvalCallback(BaseCallback):
                 point_value=temp_model.point_value,
                 min_lots=temp_model.min_lots,
                 max_lots=temp_model.max_lots,
-                contract_size=temp_model.contract_size
+                contract_size=temp_model.contract_size,
+                max_loss_points=max_loss_points
             )
             
             obs, _ = env.reset()
@@ -786,7 +788,8 @@ def train_walk_forward(data: pd.DataFrame, initial_window: int, step_size: int, 
                 'point_value': getattr(args, 'point_value', 0.01),
                 'min_lots': getattr(args, 'min_lots', 0.01),
                 'max_lots': getattr(args, 'max_lots', 1.0),
-                'contract_size': getattr(args, 'contract_size', 100000)
+                'contract_size': getattr(args, 'contract_size', 100000),
+                'max_loss_points': getattr(args, 'max_loss_points', 25000.0)
             }
             
             # Create environments
