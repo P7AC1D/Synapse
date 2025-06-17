@@ -83,8 +83,8 @@ def main():
     parser.add_argument('--min-lots', type=float, default=0.01, dest='min_lots', help='Minimum lot size')
     parser.add_argument('--max-lots', type=float, default=1.0, dest='max_lots', help='Maximum lot size')
     parser.add_argument('--contract-size', type=float, default=100000, dest='contract_size', help='Contract size')
-    parser.add_argument('--max-loss-points', type=float, default=25000.0, dest='max_loss_points', 
-                       help='Maximum loss in points before force-closing position (default: 25000.0, set to 0 to disable)')
+    parser.add_argument('--max-loss-points', type=float, default=0.0, dest='max_loss_points', 
+                       help='Maximum loss in points before force-closing position (default: 0.0, set to 0 to disable)')
     
     # Warm-start training parameters
     parser.add_argument('--warm-start-model', type=str, dest='warm_start_model_path',
