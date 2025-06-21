@@ -530,26 +530,7 @@ def backtest_with_predictions(model: TradeModel, data: pd.DataFrame, initial_bal
                 if total_steps % progress_steps == 0:
                     progress = (total_steps / len(data)) * 100
                     print(f"\rProgress: {progress:.1f}% (step {total_steps}/{len(data)})", end="")
-                    
-                    # Log raw features periodically if verbose
-                    if verbose:
-                        try:
-                            current_data = data.iloc[:total_steps+1]
-                            feature_processor = env.feature_processor
-                            atr, rsi, (upper_band, lower_band), trend_strength = feature_processor._calculate_indicators(
-                                current_data['high'].values,
-                                current_data['low'].values,
-                                current_data['close'].values
-                            )
-                            print(f"\nRaw features at step {total_steps}:")
-                            print(f"ATR: {atr[-1]:.6f}")
-                            print(f"RSI: {rsi[-1]:.6f}")
-                            print(f"BB Upper: {upper_band[-1]:.6f}")
-                            print(f"BB Lower: {lower_band[-1]:.6f}")
-                            print(f"Trend Strength: {trend_strength[-1]:.6f}")
-                        except Exception as e:
-                            log_exception(e, f"calculating verbose features at step {total_steps}", total_steps)
-                
+                                    
                 # Recheck balance if configured
                 if balance_recheck_bars > 0 and total_steps % balance_recheck_bars == 0:
                     try:

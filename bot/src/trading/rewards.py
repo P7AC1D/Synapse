@@ -9,11 +9,12 @@ from .actions import Action
 class SimpleRewardCalculator:
     """Simple reward calculator focused on risk-adjusted returns."""
     
-    def __init__(self, env):
+    def __init__(self, env, hold_penalty_factor: float = 0.01):
         """Initialize simple reward calculator.
         
         Args:
             env: Trading environment instance
+            hold_penalty_factor: Penalty per bar held for losing trades
         """
         self.env = env
         self.initial_balance = env.initial_balance
@@ -22,6 +23,7 @@ class SimpleRewardCalculator:
         self.INVALID_ACTION_PENALTY = -1.0
         self.RISK_FREE_RATE = 0.02  # 2% annual risk-free rate
         self.ACTIVITY_BONUS = 0.1   # Small bonus for taking positions
+        self.HOLD_PENALTY_FACTOR = hold_penalty_factor  # Penalty per bar held for losing trades
         
         # Track for Sharpe calculation
         self.returns = []
@@ -32,7 +34,7 @@ class SimpleRewardCalculator:
                         optimal_hold: Optional[int] = None,
                         invalid_action: bool = False) -> float:
         """Calculate simple risk-adjusted reward.
-        
+
         Args:
             action: Action taken (0=HOLD, 1=BUY, 2=SELL, 3=CLOSE)
             position_type: Current position (0=none, 1=long, -1=short)
@@ -41,37 +43,43 @@ class SimpleRewardCalculator:
             current_hold: Current holding time
             optimal_hold: Optimal holding time (unused in simple version)
             invalid_action: Whether action was invalid
-            
+
         Returns:
-            Simple risk-adjusted reward
+            Simple risk-adjusted reward. For losing trades, a penalty proportional to holding duration is subtracted.
         """
-        
+
         # Handle invalid actions
         if invalid_action:
             return self.INVALID_ACTION_PENALTY
-              # Only give rewards when trades are closed (realized P&L)
+        # Only give rewards when trades are closed (realized P&L)
         if action == Action.CLOSE and pnl != 0:
             # Calculate return as percentage of current balance
             trade_return = pnl / self.env.balance
-            
+
             # Risk-adjust using ATR (market volatility)
             if atr > 0:
                 # Normalize return by volatility
                 risk_adjusted_return = trade_return / (atr / self.env.prices['close'][self.env.current_step])
             else:
                 risk_adjusted_return = trade_return
-                
+
             # Scale the reward to reasonable magnitude
             reward = risk_adjusted_return * 100.0
-              # Track returns for Sharpe calculation
+
+            # Apply holding penalty for losing trades
+            if pnl < 0 and current_hold > 0:
+                penalty = -self.HOLD_PENALTY_FACTOR * current_hold
+                reward += penalty
+
+            # Track returns for Sharpe calculation
             self.returns.append(trade_return)
-            
+
             return float(reward)
-        
+
         # Small activity bonus for taking positions (encourages exploration)
         if action in [Action.BUY, Action.SELL] and position_type == 0:
             return self.ACTIVITY_BONUS
-        
+
         # All other actions get zero reward
         return 0.0
 
