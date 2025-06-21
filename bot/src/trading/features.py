@@ -7,7 +7,7 @@ from gymnasium import spaces
 class FeatureProcessor:
     """Feature processor implementing paper's price ratio methodology."""
     
-    def __init__(self, window_size: int = 10):
+    def __init__(self, window_size: int = 30):
         """Initialize paper-inspired feature processor.
         
         Args:
@@ -77,7 +77,7 @@ class FeatureProcessor:
                 where=volume[:-1] != 0
             )
             volume_pct = np.clip(volume_pct, -1, 1)
-            
+
             # Create features DataFrame
             features = {
                 'close_ratio': close_ratio,
@@ -88,6 +88,18 @@ class FeatureProcessor:
                 'volume_change': volume_pct
             }
             features_df = pd.DataFrame(features, index=data.index)
+
+            # Calculate rolling volatility (standard deviation of close ratio)
+            features_df['rolling_volatility'] = features_df['close_ratio'].rolling(window=self.window_size).std().fillna(0).clip(0, 1)
+
+            # Calculate trend strength as rolling mean of close ratio
+            features_df['trend_strength'] = features_df['close_ratio'].rolling(window=self.window_size).mean().fillna(0).clip(-1, 1)
+
+            # Calculate rolling volume volatility (standard deviation of volume percentage change)
+            features_df['volume_volatility'] = features_df['volume_change'].rolling(window=self.window_size).std().fillna(0).clip(0, 1)
+
+            # Calculate price range percentage
+            features_df['price_range_pct'] = ((data['high'] - data['low']) / data['close']).fillna(0).clip(0, 1)
             
             # Calculate ATR for position sizing (maintain compatibility)
             atr = self._calculate_atr(data)
