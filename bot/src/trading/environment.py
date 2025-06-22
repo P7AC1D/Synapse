@@ -320,12 +320,12 @@ class TradingEnv(gym.Env, EzPickle):
         self.renderer.render_episode_stats(self)
         
     def get_observation(self) -> np.ndarray:
-        """Get current observation."""
+        """Get current observation, including normalized hold time as a feature."""
         # In predict context, we want the most recent data point
         features = self.raw_data.values[-1] if self.predict_context else self.raw_data.values[self.current_step]
-        
+
         position_type = self.current_position["direction"] if self.current_position else 0
-        
+
         if self.current_position:
             # For live trading, use position's profit if available
             if self.predict_context and "profit" in self.current_position:
@@ -335,10 +335,16 @@ class TradingEnv(gym.Env, EzPickle):
                 unrealized_pnl, _ = self.action_handler.manage_position()
             # Normalize unrealized PnL to be between -1 and 1 based on balance
             normalized_pnl = np.clip(unrealized_pnl / self.metrics.balance, -1, 1)
+            hold_time = self.current_hold_time
         else:
             normalized_pnl = 0.0
-            
-        return np.append(features, [position_type, normalized_pnl])
+            hold_time = 0
+
+        # Normalize hold time to [0, 1] using max_hold_time=100
+        max_hold_time = 100
+        normalized_hold_time = min(hold_time, max_hold_time) / max_hold_time
+
+        return np.append(features, [position_type, normalized_pnl, normalized_hold_time])
         
     def _get_info(self) -> Dict[str, Any]:
         """Get current environment information."""

@@ -159,5 +159,6 @@ class FeatureProcessor:
             'lower_shadow',   # [-1, 1] Normalized lower shadow
             'volume_change',  # [-1, 1] Volume percentage change
             'position_type',  # [-1, 0, 1] Current position (added by env)
-            'unrealized_pnl'  # [-1, 1] Current position P&L (added by env)
+            'unrealized_pnl', # [-1, 1] Current position P&L (added by env)
+            'hold_time'       # [0, 1] Normalized position hold time (added by env)
         ]
