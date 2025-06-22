@@ -401,7 +401,30 @@ class TradingBot:
                 # Update environment position state
                 env.current_position = self.current_position.copy()
                 env.metrics.update_unrealized_pnl(unrealized_pnl)
-            
+
+                # --- HOLD TIME UPDATE FOR LIVE TRADING ---
+                try:
+                    import pytz
+                    from datetime import datetime, timezone
+                    # Parse entry_time as UTC
+                    entry_time_str = self.current_position["entry_time"]
+                    if isinstance(entry_time_str, (int, float)) or (isinstance(entry_time_str, str) and entry_time_str.isdigit()):
+                        timestamp = int(float(entry_time_str))
+                        if timestamp > 1000000000000:
+                            timestamp = timestamp / 1000
+                        entry_time = datetime.utcfromtimestamp(timestamp).replace(tzinfo=timezone.utc)
+                    else:
+                        entry_time = pd.to_datetime(entry_time_str, utc=True)
+                    now_utc = datetime.now(timezone.utc)
+                    hold_minutes = (now_utc - entry_time).total_seconds() / 60
+                    from config import MT5_TIMEFRAME_MINUTES
+                    hold_bars = int(hold_minutes // MT5_TIMEFRAME_MINUTES)
+                    env.current_hold_time = max(0, hold_bars)
+                except Exception as e:
+                    self.logger.warning(f"Failed to calculate live hold time: {e}")
+                    env.current_hold_time = 0
+                # --- END HOLD TIME UPDATE ---
+
             # Position environment at the last step 
             env.current_step = env.data_length - 1
             
