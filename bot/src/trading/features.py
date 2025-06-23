@@ -150,15 +150,19 @@ class FeatureProcessor:
         return atr
 
     def get_feature_names(self) -> list:
-        """Get list of feature names."""
+        """Get list of feature names in the correct order for the full feature vector."""
         return [
-            'close_ratio',    # [-1, 1] Normalized close price change
-            'high_ratio',     # [-1, 1] Normalized high price change
-            'low_ratio',      # [-1, 1] Normalized low price change
-            'upper_shadow',   # [-1, 1] Normalized upper shadow
-            'lower_shadow',   # [-1, 1] Normalized lower shadow
-            'volume_change',  # [-1, 1] Volume percentage change
-            'position_type',  # [-1, 0, 1] Current position (added by env)
-            'unrealized_pnl', # [-1, 1] Current position P&L (added by env)
-            'hold_time'       # [0, 1] Normalized position hold time (added by env)
+            'close_ratio',        # [-1, 1] Normalized close price change
+            'high_ratio',         # [-1, 1] Normalized high price change
+            'low_ratio',          # [-1, 1] Normalized low price change
+            'upper_shadow',       # [-1, 1] Normalized upper shadow
+            'lower_shadow',       # [-1, 1] Normalized lower shadow
+            'volume_change',      # [-1, 1] Volume percentage change
+            'rolling_volatility', # [0, 1] Rolling std of close_ratio
+            'trend_strength',     # [-1, 1] Rolling mean of close_ratio
+            'volume_volatility',  # [0, 1] Rolling std of volume_change
+            'price_range_pct',    # [0, 1] (high-low)/close
+            'position_type',      # [-1, 0, 1] Current position (added by env)
+            'unrealized_pnl',     # [-1, 1] Current position P&L (added by env)
+            'hold_time'           # [0, 1] Normalized position hold time (added by env)
         ]
