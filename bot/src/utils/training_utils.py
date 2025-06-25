@@ -385,7 +385,9 @@ class EvalCallback(BaseCallback):
                 'avg_loss': results.get('avg_loss', 0.0),
                 'win_hold_time': results.get('win_hold_time', 0.0),
                 'loss_hold_time': results.get('loss_hold_time', 0.0),
-                'avg_hold_time': results.get('avg_hold_time', 0.0)
+                'avg_hold_time': results.get('avg_hold_time', 0.0),
+                'win_hold_time_100th': results.get('win_hold_time_100th', 0.0),
+                'loss_hold_time_100th': results.get('loss_hold_time_100th', 0.0)
             }
             
             return validation_metrics
@@ -536,6 +538,9 @@ class EvalCallback(BaseCallback):
                 print(f"   Average Hold Time: {validation_metrics['avg_hold_time']:.1f} bars")
                 print(f"   Winning Trades Hold: {validation_metrics['win_hold_time']:.1f} bars")
                 print(f"   Losing Trades Hold: {validation_metrics['loss_hold_time']:.1f} bars")
+                # Max hold times for winners and losers
+                print(f"   Max Winning Trade Hold: {validation_metrics.get('win_hold_time_100th', 0):.1f} bars")
+                print(f"   Max Losing Trade Hold: {validation_metrics.get('loss_hold_time_100th', 0):.1f} bars")
                 
                 # Execution Summary
                 print(f"\n🔄 EXECUTION SUMMARY:")
