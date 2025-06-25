@@ -118,7 +118,7 @@ ENVIRONMENT_CONFIG = {
     'min_lots': 0.01,
     'max_lots': 1.0,
     'contract_size': 100000,
-    'max_loss_points': 25000  # Force-close losing positions at -25,000 points
+    'max_loss_points': 0
 }
 
 # Walk-Forward Optimization Configuration

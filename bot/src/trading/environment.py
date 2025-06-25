@@ -42,7 +42,7 @@ class TradingEnv(gym.Env, EzPickle):
                  contract_size: float = 100.0,
                  spread_variation: float = 0.0,
                  slippage_range: float = 0.0,
-                 max_loss_points: float = 25000.0,
+                 max_loss_points: float = 0.0,
                  feature_processor_class=None):
         """Initialize trading environment.
         
@@ -59,7 +59,7 @@ class TradingEnv(gym.Env, EzPickle):
             contract_size: Standard contract size (default: 100.0 for Gold)
             spread_variation: Random spread variation range (default: 0.0)
             slippage_range: Maximum price slippage range in points (default: 0.0)
-            max_loss_points: Force-close losing positions at this loss threshold (default: 25000.0)
+            max_loss_points: Force-close losing positions at this loss threshold (default: 0.0)
         """
         super().__init__()
         EzPickle.__init__(self)
